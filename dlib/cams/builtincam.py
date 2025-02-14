@@ -532,7 +532,7 @@ class SegmentationCam:
         return f"{self.__class__.__name__}({self.extra_repr()})"
 
 
-class EnergyCAM:
+class PixelCAM:
     """Extract CAM frpm segmentation model.
 
     Args:

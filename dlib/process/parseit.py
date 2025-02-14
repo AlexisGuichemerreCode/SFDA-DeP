@@ -200,7 +200,7 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument("--path_pre_trained", type=str, default=None,
                         help="Absolute/relative path to file of weights.")
     parser.add_argument("--path_pre_trained_model_cl", type=str, default=None,
-                        help="Absolute/relative path to file of weights for EnergyCAM.")
+                        help="Absolute/relative path to file of weights for PixelCAM.")
     parser.add_argument("--support_background", type=str2bool, default=None,
                         help="use or not 1 extra plan for background cams.")
     parser.add_argument("--scale_in", type=float, default=None,
@@ -978,7 +978,7 @@ def get_args(args: dict, eval: bool = False):
             std_cl_args['task'] = constants.STD_CL
             tag = get_tag(Dict2Obj(std_cl_args), checkpoint_type=cl_cp)
 
-        elif args['method'] == constants.METHOD_ENERGY:
+        elif args['method'] == constants.METHOD_PIXELCAM:
             tag = args['model']['path_pre_trained_model_cl']
         else:
             cl_cp = args['eval_checkpoint_type']
@@ -1242,7 +1242,7 @@ def get_args(args: dict, eval: bool = False):
     if args.task == constants.SEG:
         assert args.dataset in [constants.GLAS, constants.CAMELYON512]
 
-    if args.method != constants.METHOD_ENERGY:
+    if args.method != constants.METHOD_PIXELCAM:
         assert args.spatial_pooling == constants.METHOD_2_POOLINGHEAD[args.method]
 
     assert args.model['encoder_name'] in constants.BACKBONES
@@ -1259,7 +1259,7 @@ def get_args(args: dict, eval: bool = False):
     assert isinstance(args.model['scale_in'], float)
 
     if args.task == constants.STD_CL:
-        if args.method != constants.METHOD_ENERGY:
+        if args.method != constants.METHOD_PIXELCAM:
             assert not args.model['freeze_cl']
             assert args.model['folder_pre_trained_cl'] in [None, '', 'None']
 
@@ -1273,7 +1273,7 @@ def get_args(args: dict, eval: bool = False):
                               args.max_sizepos_ng,
                               args.neg_samples_ng]
 
-    if args.task == constants.STD_CL and args.method != constants.METHOD_ENERGY:
+    if args.task == constants.STD_CL and args.method != constants.METHOD_PIXELCAM:
         assert not any(used_constraints_f_cl)
         assert not any(used_constraints_negev)
 

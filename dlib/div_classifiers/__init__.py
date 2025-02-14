@@ -36,8 +36,8 @@ for method in [constants.METHOD_SPG, constants.METHOD_ADL,
                constants.METHOD_ACOL]:
     models[method] = dict()
 
-#models[constants.METHOD_ENERGY] = dict()
-#models[constants.METHOD_ENERGY][constants.RESNET50_ENERGY] = ResNet50Energy
+#models[constants.METHOD_PIXELCAM] = dict()
+#models[constants.METHOD_PIXELCAM][constants.RESNET50_ENERGY] = ResNet50Energy
 
 models[constants.METHOD_SPG][constants.RESNET50] = ResNet50Spg
 models[constants.METHOD_SPG][constants.INCEPTIONV3] = InceptionV3Spg
@@ -68,10 +68,10 @@ models[constants.METHOD_SAT][
     constants.DEIT_SAT_BASE_P16_224] = deit_sat_base_patch16_224
 
 
-models[constants.METHOD_ENERGY] = dict()
-models[constants.METHOD_ENERGY][
+models[constants.METHOD_PIXELCAM] = dict()
+models[constants.METHOD_PIXELCAM][
     constants.DEIT_SAT_TINY_P16_224] = deit_sat_tiny_patch16_224
-models[constants.METHOD_ENERGY][
+models[constants.METHOD_PIXELCAM][
     constants.DEIT_SAT_SMALL_P16_224] = deit_sat_small_patch16_224
-models[constants.METHOD_ENERGY][
+models[constants.METHOD_PIXELCAM][
     constants.DEIT_SAT_BASE_P16_224] = deit_sat_base_patch16_224

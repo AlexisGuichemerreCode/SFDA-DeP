@@ -36,7 +36,7 @@ METHOD_LSE = 'LogSumExp'  # pooling: logsumexp.
 # -- all methods below use WGAP.
 
 METHOD_CAM = 'CAM'
-METHOD_ENERGY = 'EnergyCAM'
+METHOD_PIXELCAM = 'PixelCAM'
 METHOD_SCORECAM = 'ScoreCAM'
 METHOD_SSCAM = 'SSCAM'
 METHOD_ISCAM = 'ISCAM'
@@ -90,7 +90,7 @@ METHODS = [METHOD_WILDCAT,
            METHOD_PRM,
            METHOD_TSCAM,
            METHOD_SEG,
-           METHOD_ENERGY]
+           METHOD_PIXELCAM]
 
 METHOD_2_POOLINGHEAD = {
         METHOD_WILDCAT: WILDCATHEAD,
@@ -117,7 +117,7 @@ METHOD_2_POOLINGHEAD = {
         METHOD_PRM: PRM,
         METHOD_SAT: GAP,
         METHOD_TSCAM: GAP,
-        METHOD_ENERGY: WGAP
+        METHOD_PIXELCAM: WGAP
     }
 
 METHOD_REQU_GRAD = {
@@ -145,7 +145,7 @@ METHOD_REQU_GRAD = {
         METHOD_PRM: False,
         METHOD_TSCAM: False,
         METHOD_SAT: False,
-        METHOD_ENERGY: False
+        METHOD_PIXELCAM: False
 }
 
 METHOD_LITERAL_NAMES = {
@@ -173,7 +173,7 @@ METHOD_LITERAL_NAMES = {
         METHOD_SAT: 'SAT',
         METHOD_PRM: 'PRM',
         METHOD_TSCAM: 'TS-CAM',
-        METHOD_ENERGY: 'EnergyCAM'
+        METHOD_PIXELCAM: 'PixelCAM'
 }
 # datasets mode
 DS_TRAIN = "TRAIN"
@@ -220,7 +220,7 @@ STDCLASSIFIER = "STDClassifier"
 MaxMinClassifier = 'MaxMinClassifier'
 TSCAMCLASSIFIER = 'TSCAMClassifier'
 SATCLASSIFIER = 'SATClassifier'
-ENEGERYCAMCLASSIFIER = 'EnergyCAMClassifier'
+ENEGERYCAMCLASSIFIER = 'PixelCAMClassifier'
 
 UNETFCAM = 'UnetFCAM'  # USED
 UNETNEGEV = 'UnetNEGEV'
@@ -228,7 +228,7 @@ UNETNEGEV = 'UnetNEGEV'
 ACOLARCH = 'ACOL'
 SPGARCH = 'SPG'
 ADLARCH = 'ADL'
-#EnergyCAMArch = 'EnergyCAMArch'
+#PixelCAMArch = 'PixelCAMArch'
 
 UNET = "Unet"
 UNETPLUPLUS = "UnetPlusPlus"
@@ -270,7 +270,7 @@ STD_CL_METHOD_2_ARCH = {
     METHOD_PRM: STDCLASSIFIER,
     METHOD_SAT: SATCLASSIFIER,
     METHOD_TSCAM: TSCAMCLASSIFIER,
-    #METHOD_ENERGY: ENEGERYCAMCLASSIFIER
+    #METHOD_PIXELCAM: ENEGERYCAMCLASSIFIER
 }
 # encoders
 

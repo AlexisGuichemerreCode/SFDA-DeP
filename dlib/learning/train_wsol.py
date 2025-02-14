@@ -1918,7 +1918,7 @@ class Trainer(Basic):
                     torch.save(_model.mask_head.state_dict(),
                                join(path, 'mask_head.pt'))
 
-            elif self.args.method == constants.METHOD_ENERGY:
+            elif self.args.method == constants.METHOD_PIXELCAM:
                 if "deit" in self.args.model['encoder_name']:
                     torch.save(_model.state_dict(),
                            join(path, 'model.pt'))
@@ -2033,7 +2033,7 @@ class Trainer(Basic):
                         weights, strict=True)
 
             else:
-                if self.args.method == constants.METHOD_ENERGY and "deit" in self.args.model['encoder_name']:
+                if self.args.method == constants.METHOD_PIXELCAM and "deit" in self.args.model['encoder_name']:
                     weights = torch.load(join(path, 'model.pt'),
                                      map_location=self.device)
                     self.model.load_state_dict(weights, strict=True)
@@ -2048,7 +2048,7 @@ class Trainer(Basic):
                     self.model.classification_head.load_state_dict(
                         weights, strict=True)
                     
-                    if self.args.method == constants.METHOD_ENERGY:
+                    if self.args.method == constants.METHOD_PIXELCAM:
                         weights = torch.load(join(path, 'pixel_wise_classification_head.pt'),
                                         map_location=self.device)
                         self.model.pixel_wise_classification_head.load_state_dict(

@@ -1121,7 +1121,7 @@ def get_model(args, eval=False, eval_path_weights=''):
                 freeze_cl=p.freeze_cl
             )
             
-        elif args.method == constants.METHOD_ENERGY:
+        elif args.method == constants.METHOD_PIXELCAM:
                 aux_params = get_aux_params(args)
                 model = create_model(
                     task=args.task,
@@ -1251,7 +1251,7 @@ def get_model(args, eval=False, eval_path_weights=''):
               "model from {} .... [OK]".format(path_cl)
         warnings.warn(msg)
         DLLogger.log(msg)
-        if args.method == constants.METHOD_ENERGY and "deit" in args.model['encoder_name']:
+        if args.method == constants.METHOD_PIXELCAM and "deit" in args.model['encoder_name']:
                     weights = torch.load(join(path_cl, 'model.pt'),
                                      map_location=get_cpu_device())
                     model.load_state_dict(weights, strict=False)
@@ -1314,7 +1314,7 @@ def get_model(args, eval=False, eval_path_weights=''):
                 model.classification_head.load_state_dict(header_w, strict=True)
 
     if args.model['freeze_cl'] and not eval:
-        assert args.task in [constants.F_CL, constants.NEGEV] or args.method == constants.METHOD_ENERGY
+        assert args.task in [constants.F_CL, constants.NEGEV] or args.method == constants.METHOD_PIXELCAM
 
         assert args.model['folder_pre_trained_cl'] not in [None, 'None', '']
 
@@ -1599,7 +1599,7 @@ def sf_uda_load_set_source_weights(model, args: object):
                                  map_location=get_cpu_device())
             model.load_state_dict(weights, strict=True)
         else:
-            if args.method == constants.METHOD_ENERGY and   'deit' in args.model['encoder_name']:
+            if args.method == constants.METHOD_PIXELCAM and   'deit' in args.model['encoder_name']:
                 weights = torch.load(join(path, 'model.pt'),
                                  map_location=get_cpu_device())
                 model.load_state_dict(weights, strict=True)
@@ -1611,7 +1611,7 @@ def sf_uda_load_set_source_weights(model, args: object):
                 weights = torch.load(join(path, 'classification_head.pt'),
                                     map_location=cpu_device)
                 model.classification_head.load_state_dict(weights, strict=True)
-                if args.method == constants.METHOD_ENERGY:
+                if args.method == constants.METHOD_PIXELCAM:
                     weights = torch.load(join(path, 'pixel_wise_classification_head.pt'),
                                         map_location=cpu_device)
                     model.pixel_wise_classification_head.load_state_dict(weights, strict=True)
@@ -1732,7 +1732,7 @@ def _get_model_params_for_opt(args, model):
     architecture = args.model['encoder_name']
     assert architecture in constants.BACKBONES
 
-    if args.method in [constants.METHOD_TSCAM, constants.METHOD_SAT, constants.METHOD_ENERGY]:
+    if args.method in [constants.METHOD_TSCAM, constants.METHOD_SAT, constants.METHOD_PIXELCAM]:
         if 'deit' in architecture:
             return [
                 {'params': model.parameters(), 'lr': hparams.lr}
