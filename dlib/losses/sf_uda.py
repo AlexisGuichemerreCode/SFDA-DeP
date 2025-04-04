@@ -21,6 +21,7 @@ from dlib.losses.elb import ELB
 from dlib.losses.cdd import CDD
 from dlib.losses.cdcl import Cdcl
 from dlib.losses.nrc import NA, ENA, KL
+from dlib.losses.nll import NLL
 from dlib.configure import constants
 
 
@@ -1025,3 +1026,49 @@ class UdaCdcl(ElementaryLoss):
         loss = self.loss.forward(target_features,pseudo_glabel,self.weights).sum()
         
         return loss* self.cdcl_lambda
+
+
+class UdaNLL(ElementaryLoss):
+    """Compute negative log lilkelihood."""
+    def __init__(self, **kwargs):
+        super(UdaNLL, self).__init__(**kwargs)
+        
+        #self.loss = NLL()
+        self.cuda_id = kwargs["cuda_id"]   
+        self.udanll_lambda = 1.0
+        self.already_set = False
+    
+    def set_it(self, nll_lambda: float, mu: torch.Tensor, var: torch.Tensor, pi: torch.Tensor):
+
+        self.nll_lambda_ = nll_lambda
+
+        self.loss = NLL(mu, var, pi) 
+        self.already_set = True
+
+    def forward(self,
+            epoch=0,
+            model=None,
+            cams_inter=None,
+            fcams=None,
+            cl_logits=None,
+            seg_logits=None,
+            glabel=None,
+            pseudo_glabel=None,
+            masks=None,
+            raw_img=None,
+            x_in=None,
+            im_recon=None,
+            seeds=None,
+            cutmix_holder=None,
+            key_arg: dict = None  # holds multiple input at once. access
+            # via appropriate key.
+            ):
+        super(UdaNLL, self).forward(epoch=epoch)
+
+        assert self.already_set
+
+        pixel_features = model.encoder_last_features
+
+        loss = self.loss.forward(pixel_features).sum()
+        
+        return loss* self.nll_lambda_

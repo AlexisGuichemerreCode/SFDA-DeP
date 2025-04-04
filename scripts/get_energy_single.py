@@ -28,6 +28,8 @@ import matplotlib.pyplot as plt
 from skimage.transform import resize
 from sklearn.manifold import TSNE
 
+#import cuml
+#print("cuML version:", cuml.__version__)
 
 # root_dir = dirname(dirname(dirname(abspath(__file__))))
 root_dir = dirname(abspath(__file__))
@@ -96,6 +98,28 @@ def _compute_accuracy(args, model, loader):
 
     classification_acc = num_correct / float(num_images) * 100
     return classification_acc
+
+def extract_pixel_features(mask_source, feature_source, label_source, cam_source, image_id_source, target_method, dataset, parsedargs):
+    _,l,m,n=feature_source.shape
+
+    cancer_features = np.empty((0, l))
+    non_cancer_features = np.empty((0, l))
+    background_features = np.empty((0, l))
+
+    # cancer_features = np.empty((0, 256))
+    # non_cancer_features = np.empty((0, 256))
+    # background_features = np.empty((0, 256))
+
+    #source
+    mask_source = torch.from_numpy(mask_source)
+    non_zero_indices_source = torch.nonzero(mask_source, as_tuple=True)
+    non_zero_feature_source = feature_source[0, :, non_zero_indices_source[0], non_zero_indices_source[1]]
+    zero_indices_source = torch.nonzero(mask_source == 0, as_tuple=True)
+    zero_feature_source = feature_source[0, :, zero_indices_source[0], zero_indices_source[1]]
+    foreground_features = non_zero_feature_source.detach().cpu().numpy().T
+    background_features = zero_feature_source.detach().cpu().numpy().T
+
+    return foreground_features, background_features
 
 def extract_features_source_target(mask_source, feature_source, label_source, cam_source, image_id_source, target_method, dataset, parsedargs):
     _,l,m,n=feature_source.shape
@@ -793,6 +817,22 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
     target_domain_data_paths_CAME = config.configure_data_paths(args_dict, 'CAMELYON512')
 
+    # loaders = get_data_loader(
+    #         data_roots=target_domain_data_paths,
+    #         metadata_root=metadata_root,
+    #         batch_size=32,#args.batch_size,
+    #         workers=args.num_workers,
+    #         resize_size=args.resize_size,
+    #         crop_size=args.crop_size,
+    #         proxy_training_set=args.proxy_training_set,
+    #         num_val_sample_per_class=args.num_val_sample_per_class,
+    #         std_cams_folder=args.std_cams_folder,
+    #         # distributed_eval=False,
+    #         get_splits_eval=['test'],
+    #         #constants.TRAINSET
+    #         eval_batch_size = 32#args.eval_batch_size,
+    #     )
+    
     loaders = get_data_loader(
             data_roots=target_domain_data_paths,
             metadata_root=metadata_root,
@@ -804,10 +844,80 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             num_val_sample_per_class=args.num_val_sample_per_class,
             std_cams_folder=args.std_cams_folder,
             # distributed_eval=False,
-            get_splits_eval=['test'],
+            get_splits_eval=['train'],
             #constants.TRAINSET
             eval_batch_size = 32#args.eval_batch_size,
         )
+    
+
+    # x = torch.randn((1, 2048, 28, 28), device=device, requires_grad=True)
+
+    # step_size = 1.0
+    # noise_scale = 0.01
+    # num_steps = 100
+    # plot_interval = 1 
+    # for step in range(num_steps):
+    #     logits, _ = model.pixel_wise_classification_head(x) 
+    #     energy = -torch.logsumexp(logits, dim=1)
+        
+    #     # Calcul du gradient par rapport à x
+    #     grad_x = torch.autograd.grad(energy, x, grad_outputs=torch.ones_like(energy), create_graph=False)[0]
+
+    #     # Mise à jour avec SGLD
+    #     noise = torch.randn_like(x) * noise_scale
+    #     x = x - step_size * grad_x + noise
+    #     x = x.detach().clone().requires_grad_(True)
+    #     vectors = x.detach().cpu().numpy()
+        
+    #     # Affichage TSNE tous les 'plot_interval' itérations
+    #     if step % plot_interval == 0 or step == num_steps - 1:
+    #         output_dir = os.path.join('visualization', 'energy', dataset, 'sgld')
+    #         os.makedirs(output_dir, exist_ok=True)
+
+    #         weights = model.pixel_wise_classification_head.conv4.weight.data.cpu().numpy()
+    #         weights = weights.reshape(weights.shape[0], -1)
+
+    #         batch_size, vector_dim, height, width = vectors.shape
+    #         vectors_reshaped = vectors.reshape(batch_size, vector_dim, height * width).transpose(0, 2, 1)  
+    #         vectors_flattened = vectors_reshaped.reshape(height * width, vector_dim)  
+
+    #         combined_data = np.vstack([vectors_flattened, weights])
+
+    #         tsne = TSNE(n_components=2, perplexity=1, random_state=42, init="pca")
+
+    #         reduced_vectors = tsne.fit_transform(weights)
+
+    #         plt.figure(figsize=(8, 6))
+    #         plt.scatter(reduced_vectors[:, 0], reduced_vectors[:, 1], alpha=0.6, edgecolors='k')
+    #         plt.title(f"t-SNE à l'itération {step}")
+    #         plt.xlabel("TSNE Dim 1")
+    #         plt.ylabel("TSNE Dim 2")
+    #         plt.grid(True)
+    #         plt.savefig(f"tsne_step_{step}.png", dpi=300)
+    #         plt.close()
+
+    #         reduced_vectors = tsne.fit_transform(combined_data) 
+            
+    #         generated_points = reduced_vectors[:-weights.shape[0], :]
+    #         weight_points = reduced_vectors[-weights.shape[0]:, :]
+
+    #         plt.figure(figsize=(8, 6))
+    #         plt.scatter(generated_points[:, 0], generated_points[:, 1], alpha=0.6, edgecolors='k', label="Generated Samples")
+
+    #         # Afficher le premier poids avec un triangle blanc
+    #         plt.scatter(weight_points[0, 0], weight_points[0, 1], marker="^", s=200, color="white", edgecolors='black', label="First Weight (White Triangle)")
+
+    #         # Afficher le deuxième poids avec un triangle noir
+    #         plt.scatter(weight_points[1, 0], weight_points[1, 1], marker="v", s=200, color="black", edgecolors='black', label="Second Weight (Black Triangle)")
+
+    #         plt.title(f"t-SNE à l'itération {step}")
+    #         plt.xlabel("TSNE Dim 1")
+    #         plt.ylabel("TSNE Dim 2")
+    #         plt.grid(True)
+    #         save_path = os.path.join(output_dir, f"tsne_step_{step}.png")
+    #         plt.savefig(save_path, dpi=300)
+    #         plt.close()
+        
 
     # cam_computer = CAMComputer(
     #         args=deepcopy(args),
@@ -845,16 +955,16 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             else:
                 classe = 'normal'
 
-            if classe == 'cancer': 
+            if classe == 'normal': 
                 cam_computer = CAMComputer(
                         args=deepcopy(args),
                         model=model,
-                        loader=loaders['test'],
-                        metadata_root=os.path.join(metadata_root, 'test'),
+                        loader=loaders['train'],
+                        metadata_root=os.path.join(metadata_root, 'train'),
                         mask_root=args.mask_root,
                         iou_threshold_list=args.iou_threshold_list,
                         dataset_name=args.dataset,
-                        split= 'test',
+                        split= 'train',
                         cam_curve_interval=args.cam_curve_interval,
                         multi_contour_eval=args.multi_contour_eval,
                         out_folder=args.outd,
@@ -933,6 +1043,21 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                 # method = args.method
 
                 #cancer_features, non_cancer_features, background_features = extract_features_source_target(resized_mask_array, pixel_features, target, cam, image_id, target_method, dataset, parsedargs)
+                # foreground_features, background_features = extract_pixel_features(resized_mask_array, pixel_features, target, cam, image_id, target_method, dataset, parsedargs)
+                # features = np.vstack([foreground_features, background_features])
+                # labels = np.array([1] * len(foreground_features) + [0] * len(background_features))
+                # tsne = TSNE(n_components=2, perplexity=30, random_state=42, init="pca")
+                # features_2d = tsne.fit_transform(features)
+                # plt.figure(figsize=(8, 6))
+                # plt.scatter(features_2d[labels == 1, 0], features_2d[labels == 1, 1], c='red', label="Foreground", alpha=0.5, s=5)
+                # plt.scatter(features_2d[labels == 0, 0], features_2d[labels == 0, 1], c='blue', label="Background", alpha=0.5, s=5)
+
+                # plt.legend()
+                # plt.title("t-SNE Visualization of Foreground & Background Features")
+                # plt.xlabel("t-SNE Component 1")
+                # plt.ylabel("t-SNE Component 2")
+                # plt.savefig("tsne_visualization.png", dpi=300, bbox_inches='tight')
+
                 if 'PixelCAM' in target_method:
                     #cam_prob = F.softmax(model.cams, dim=1)
                     #cancer_features, non_cancer_features, background_features = plot_pixel_prob(resized_mask_array, cam_prob, target, cam, image_id, target_method, dataset, parsedargs) 
@@ -1014,7 +1139,7 @@ def fast_eval():
         checkpoint_type = checkpoint_type_extended
         
         #split = parsedargs.split
-        split = "test"
+        split = "train"
         # exp_path = parsedargs.exp_path
         # # checkpoint_type = parsedargs.checkpoint_type
         # # tmp_outd = join(parsedargs.tmp_outd, os.path.split(exp_path)[-1])#, 'split_'+split+'_'+checkpoint_type)

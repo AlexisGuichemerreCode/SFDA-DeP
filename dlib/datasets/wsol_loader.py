@@ -17,6 +17,9 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 import torchvision.transforms.functional as TF
 
+from pathlib import Path
+import torchstain
+
 PROB_THRESHOLD = 0.5  # probability threshold.
 
 "Credit: https://github.com/clovaai/wsolevaluation/blob/master/data_loaders.py"
@@ -322,7 +325,8 @@ class Compose(object):
                         isinstance(t, RandomVerticalFlip),
                         isinstance(t, transforms.ToTensor),
                         isinstance(t, transforms.Normalize),
-                        isinstance(t, transforms.ColorJitter)
+                        isinstance(t, transforms.ColorJitter),
+                        isinstance(t, StainingShiftTransform)
                         ]
                        )
 
@@ -338,6 +342,9 @@ class Compose(object):
                               Resize
                               )):
                 img, raw_img, std_cam, mask = t(img, raw_img, std_cam, mask)
+
+            elif isinstance(t, StainingShiftTransform):
+                img=t(img)
             else:
                 img = t(img)
 
@@ -410,7 +417,101 @@ class RandomVerticalFlip(_BasicTransform):
     def __repr__(self):
         return self.__class__.__name__ + '(p={})'.format(self.p)
 
+class StainingShiftTransform:
+    """ Transformation -> staining shift based on HE and maxC """
+    
+    def __init__(self, path_staining, dist_staining):
+        self.path_staining = path_staining
+        self.dist_staining = int(dist_staining)
+        #self.he_matrices_list, self.maxC_list = self._load_staining_matrices()
+        self.he_matrix, self.maxC_matrix = self._load_staining_matrix()
 
+    def _load_staining_matrices(self):
+        """ Load HE and maxC matrices """
+        he_matrices_list = []
+        maxC_list = []
+
+        for file in Path(self.path_staining).glob("*.pt"):
+            staining_data = torch.load(file)
+            he_matrices_list.append(staining_data["he_matrix"])
+            maxC_list.append(staining_data["maxC"])
+
+        return he_matrices_list, maxC_list
+
+    def _load_staining_matrix(self):
+        """ Load HE and maxC matrices """
+
+        cluster_path = Path(self.path_staining) / f"cluster_{self.dist_staining}"
+        pt_files = list(cluster_path.glob("*.pt"))
+
+        staining_data = torch.load(pt_files[0])
+
+        mean_he = torch.as_tensor(staining_data["mean_he"], dtype=torch.float32)
+        mean_maxC = torch.as_tensor(staining_data["mean_maxC"], dtype=torch.float32)
+
+        return mean_he, mean_maxC
+
+
+    def _find_closest_stain(self, image):
+        """ Find HE matrix """
+       
+        image_cv2 = np.array(image)  
+        T = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Lambda(lambda x: x * 255) 
+        ])
+
+
+        normalizer_target = torchstain.normalizers.MacenkoNormalizer(backend='torch')
+        normalizer_target.fit(T(image_cv2))
+        target_he_matrix, _, _ = normalizer_target._TorchMacenkoNormalizer__compute_matrices(
+            I=T(image_cv2), Io=240, alpha=1, beta=0.15
+        )
+
+
+        staining_matrices_tensor = torch.stack(self.he_matrices_list).to(target_he_matrix.device)
+        distances = np.linalg.norm(staining_matrices_tensor - target_he_matrix, axis=(1, 2))
+
+
+        distance_threshold = np.percentile(distances, self.dist_staining)
+        best_match_index = (np.abs(distances - distance_threshold)).argmin()
+
+
+        closest_staining = self.he_matrices_list[best_match_index]
+        closest_maxC = self.maxC_list[best_match_index]
+
+        return closest_staining, closest_maxC
+
+    def __call__(self, img):
+        """ Apply new stain to the image """
+
+        # Find stain
+        #closest_staining, closest_maxC = self._find_closest_stain(img)
+        closest_staining, closest_maxC = self.he_matrix, self.maxC_matrix
+
+        # Apply Macenko normalization
+        normalizer_shift = torchstain.normalizers.MacenkoNormalizer(backend='torch')
+        normalizer_shift.HERef = closest_staining
+        normalizer_shift.maxCRef = closest_maxC
+
+        img = transforms.ToTensor()(img)
+        image_cv2 = img.permute(1, 2, 0).cpu().numpy()
+
+        T = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Lambda(lambda x: x * 255)  
+        ])
+
+        normalized_image, _, _ = normalizer_shift.normalize(I=T(image_cv2), stains=True)
+        normalized_image = normalized_image.permute(2, 0, 1)
+
+
+        img = transforms.ToPILImage()(normalized_image.clamp(0, 255).byte())
+
+        #return img
+        return img
+
+        
 class RandomCrop(_BasicTransform):
     @staticmethod
     def get_params(img: Tensor, output_size: Tuple[int, int]
@@ -541,15 +642,34 @@ def get_data_loader(data_roots,
                     get_splits_eval=None,
                     per_split_sfuda_select_ids_pl: dict = None,
                     sfuda_faust: bool = False,  # FAUST
-                    sfuda_n_rnd_views: int = 0  # FAUST
+                    sfuda_n_rnd_views: int = 0,  # FAUST
+                    chg_staining: bool = False,
+                    path_staining: str =None,
+                    dist_staining: float =0.0
                     ):
 
-    def get_eval_tranforms():
-        return Compose([
-            Resize((crop_size, crop_size)),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
-        ])
+    # def get_eval_tranforms():
+    #     return Compose([
+    #         Resize((crop_size, crop_size)),
+    #         transforms.ToTensor(),
+    #         transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
+    #     ])
+
+    def get_eval_tranforms(chg_staining=False, path_staining = None, dist_staining=0):
+        if chg_staining:
+            return Compose([
+                Resize((crop_size, crop_size)), 
+                StainingShiftTransform(path_staining, dist_staining), 
+                transforms.ToTensor(),
+                transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
+            ])
+        else:
+            return Compose([
+                Resize((crop_size, crop_size)),  
+                transforms.ToTensor(),
+                transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
+            ])
+
 
     if isinstance(get_splits_eval, list):
         assert len(get_splits_eval) > 0
@@ -563,7 +683,7 @@ def get_data_loader(data_roots,
             split: WSOLImageLabelDataset(
                     data_root=data_roots[split],
                     metadata_root=join(metadata_root, split),
-                    transform=get_eval_tranforms(),
+                    transform=get_eval_tranforms(chg_staining, path_staining, dist_staining if split == constants.TESTSET else False),
                     proxy=False,
                     resize_size=resize_size,
                     crop_size=crop_size,
@@ -607,7 +727,7 @@ def get_data_loader(data_roots,
         ]),
         constants.PXVALIDSET: get_eval_tranforms(),
         constants.CLVALIDSET: get_eval_tranforms(),
-        constants.TESTSET: get_eval_tranforms()
+        constants.TESTSET: get_eval_tranforms(chg_staining, path_staining, dist_staining)
     }
 
     if per_split_sfuda_select_ids_pl is None:

@@ -400,7 +400,7 @@ class PixelWise(_BasicPooler):
 
     def freeze_cl_hypothesis(self):
         # SFUDA: freeze the last linear weights + bias of the classifier
-        self.freeze_part(self.conv)  
+        self.freeze_part(self.conv4)  
         
     def freeze_classifier(self):
         if self.multiple_layer:

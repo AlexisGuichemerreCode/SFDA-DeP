@@ -1,10 +1,10 @@
-DLLL 2025-02-12 15:00:55.024803 0:00:00.161674 
-============================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: ENERGYCAM 	 ENCODER: RESNET50 	
-============================================================================================
+DLLL 2025-03-21 14:52:48.061587 0:00:00.131873 
+===========================================================================================
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
+===========================================================================================
 
-DLLL 2025-02-12 15:00:55.969248 0:00:01.106119 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23518277
-DLLL 2025-02-12 15:00:55.969461 0:00:01.106332 Arch: STDClassifier
+DLLL 2025-03-21 14:52:48.906874 0:00:00.977160 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
+DLLL 2025-03-21 14:52:48.907056 0:00:00.977342 Arch: STDClassifier
 task: STD_CL
 encoder_name: resnet50
 encoder_weights: imagenet
@@ -23,7 +23,7 @@ aux_params:
 	gated: False
 	prm_ks: 3
 	prm_st: 1
-	pixel_wise_classification: True
+	pixel_wise_classification: False
 	batch_norm: False
 	multiple_layer: False
 	one_layer: False
@@ -34,15 +34,14 @@ freeze_cl: False
 im_rec: False
 img_range: tanh 
 
-DLLL 2025-02-12 15:00:55.973510 0:00:01.110381 u-resnet50. Task: STD_CL. 
+DLLL 2025-03-21 14:52:48.911152 0:00:00.981438 u-resnet50. Task: STD_CL. 
  NBR-PARAMS: 
 	Encoder [resnet50]: 23508032. 
 	Classification head [WGAP]: 6147. 
-	Pixel Wise Classification head [PixelWise]: 4098. 
-	Total: 23518277. 
+	Total: 23514179. 
 
-DLLL 2025-02-12 15:00:56.120495 0:00:01.257366 
+DLLL 2025-03-21 14:52:49.023184 0:00:01.093470 
 ========================================================================================================================
- MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/MODEL_MIDL_2025/SOURCE/GLAS/BLOC/ID_SOURCE_5_GLAS_ENERGYCAM_LAYERCAM_NONEG_LOW_RES_150-TSK_STD_CL-DS_GLAS-FOLD_0-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_ENERGYCAM-SPOOLING_WGAP-ARCH_STDCLASSIFIER-ECD_RESNET50/GLAS-0-RESNET50-ENERGYCAM-WGAP-CP_BEST_LOCALIZATION
+ MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/MODEL_MIDL_2025/SOURCE/GLAS/BLOC/ID_SOURCE_8_CL_GLAS_LAYERCAM_250-TSK_STD_CL-DS_GLAS-FOLD_0-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_LAYERCAM-SPOOLING_WGAP-ARCH_STDCLASSIFIER-ECD_RESNET50/GLAS-0-RESNET50-LAYERCAM-WGAP-CP_BEST_LOCALIZATION
 ========================================================================================================================
 

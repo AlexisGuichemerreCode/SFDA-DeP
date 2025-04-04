@@ -40,7 +40,9 @@ from dlib.losses import sf_uda_sdda
 
 import dlib.dllogger as DLLogger
 from dlib.utils.shared import fmsg
+#from dlib.visiontransformer.vit_models import ViT_Classifer, ViT_Localizer
 
+#from dlib.visiontransformer.vit_models import ViT_Classifer, ViT_Localizer
 
 __all__ = [
     'get_loss',
@@ -368,7 +370,7 @@ def get_loss_target(args):
     multi_label_flag = args.multi_label_flag
     assert not multi_label_flag
 
-    if args.task == constants.STD_CL:
+    if args.task == constants.STD_CL or args.task == constants.NEGEV:
         if args.ce_pseudo_lb:
 
             if args.method == constants.METHOD_SPG:
@@ -554,16 +556,23 @@ def get_loss_target(args):
             )
             cdd_loss.set_it(num_layers=args.cdd_pseudo_lb_num_layers, kernel_num=args.cdd_pseudo_lb_kernel_num,
                             kernel_mul=args.cdd_pseudo_lb_kernel_mul, num_classes=args.num_classes, lambda_=args.cdd_lambda)
-            
             masterloss.add(cdd_loss)
+
+        if args.nll:
+            nll_loss = losses.UdaNLL(cuda_id=args.c_cudaid,
+                support_background=support_background,
+                multi_label_flag=multi_label_flag,
+            )
+
+            nll_loss.set_it(nll_lambda=args.nll_lambda, mu=args.source_gmm_param['mu'], var=args.source_gmm_param['var'], pi=args.source_gmm_param['pi'])
+            masterloss.add(nll_loss)
             
             
                 
 
 
-    elif args.task == constants.NEGEV:
-        raise NotImplementedError  # todo
-
+    #elif args.task == constants.NEGEV:
+        #raise NotImplementedError  # todo
     else:
         raise NotImplementedError
 
@@ -575,7 +584,119 @@ def get_loss_target(args):
     return masterloss
 
 
+def get_loss_tcam(args):
+    masterloss = losses.MasterLoss(cuda_id=args.c_cudaid)
+    support_background = args.model['support_background']
+    multi_label_flag = args.multi_label_flag
+    assert not multi_label_flag
+
+    assert args.task == constants.TCAM
+
+    if not args.model['freeze_cl']:
+        masterloss.add(losses.ClLoss(
+            cuda_id=args.c_cudaid,
+            support_background=support_background,
+            multi_label_flag=multi_label_flag))
+
+    elb = ELB(init_t=args.elb_init_t, max_t=args.elb_max_t,
+              mulcoef=args.elb_mulcoef).cuda(args.c_cudaid)
+
+    if args.crf_tc:
+        masterloss.add(losses.ConRanFieldTcams(
+            cuda_id=args.c_cudaid,
+            lambda_=args.crf_tc_lambda,
+            sigma_rgb=args.crf_tc_sigma_rgb,
+            sigma_xy=args.crf_tc_sigma_xy,
+            scale_factor=args.crf_tc_scale,
+            support_background=support_background,
+            multi_label_flag=multi_label_flag,
+            start_epoch=args.crf_tc_start_ep,
+            end_epoch=args.crf_tc_end_ep,
+        ))
+
+    if args.rgb_jcrf_tc:
+        masterloss.add(losses.RgbJointConRanFieldTcams(
+            cuda_id=args.c_cudaid,
+            lambda_=args.rgb_jcrf_tc_lambda,
+            sigma_rgb=args.rgb_jcrf_tc_sigma_rgb,
+            scale_factor=args.rgb_jcrf_tc_scale,
+            support_background=support_background,
+            multi_label_flag=multi_label_flag,
+            start_epoch=args.rgb_jcrf_tc_start_ep,
+            end_epoch=args.rgb_jcrf_tc_end_ep,
+        ))
+
+    if args.max_sizepos_tc:
+        masterloss.add(losses.MaxSizePositiveTcams(
+            cuda_id=args.c_cudaid,
+            lambda_=args.max_sizepos_tc_lambda,
+            elb=deepcopy(elb),
+            support_background=support_background,
+            multi_label_flag=multi_label_flag,
+            start_epoch=args.max_sizepos_tc_start_ep,
+            end_epoch=args.max_sizepos_tc_end_ep
+        ))
+
+
+    if args.sizefg_tmp_tc:
+        _loss_fg_sz = losses.FgSizeTcams(
+            cuda_id=args.c_cudaid,
+            lambda_=args.sizefg_tmp_tc_lambda,
+            elb=deepcopy(elb),
+            support_background=support_background,
+            multi_label_flag=multi_label_flag,
+            start_epoch=args.sizefg_tmp_tc_start_ep,
+            end_epoch=args.sizefg_tmp_tc_end_ep
+        )
+        _loss_fg_sz.set_eps(eps=args.sizefg_tmp_tc_eps)
+        masterloss.add(_loss_fg_sz)
+
+
+    if args.size_bg_g_fg_tc:
+        masterloss.add(losses.BgSizeGreatSizeFgTcams(
+            cuda_id=args.c_cudaid,
+            lambda_=args.size_bg_g_fg_tc_lambda,
+            elb=deepcopy(elb),
+            support_background=support_background,
+            multi_label_flag=multi_label_flag,
+            start_epoch=args.size_bg_g_fg_tc_start_ep,
+            end_epoch=args.size_bg_g_fg_tc_end_ep
+        ))
+
+    if args.empty_out_bb_tc:
+        masterloss.add(losses.EmptyOutsideBboxTcams(
+            cuda_id=args.c_cudaid,
+            lambda_=args.empty_out_bb_tc_lambda,
+            elb=deepcopy(elb),
+            support_background=support_background,
+            multi_label_flag=multi_label_flag,
+            start_epoch=args.empty_out_bb_tc_start_ep,
+            end_epoch=args.empty_out_bb_tc_end_ep
+        ))
+
+    if args.sl_tc:
+        sl_tcam = losses.SelfLearningTcams(
+            cuda_id=args.c_cudaid,
+            lambda_=args.sl_tc_lambda,
+            support_background=support_background,
+            multi_label_flag=multi_label_flag,
+            start_epoch=args.sl_tc_start_ep,
+            end_epoch=args.sl_tc_end_ep,
+            seg_ignore_idx=args.seg_ignore_idx
+        )
+
+        masterloss.add(sl_tcam)
+
+    assert len(masterloss.n_holder) > 1
+
+    return masterloss
+
+
 def get_loss_source(args):
+
+    if args.task == constants.TCAM:
+        masterloss = get_loss_tcam(args)
+        return masterloss
 
     assert not args.sf_uda
 
@@ -963,6 +1084,14 @@ def get_pretrainde_classifier(args):
     warnings.warn(msg)
     DLLogger.log(msg)
 
+    if args.task == constants.TCAM:
+        assert pretrained_ch_pt is not None
+        if args.model['arch'] == constants.VIT_LOCALIZER:
+            assert pretrained_ch_pt == constants.BEST_CL
+        else:
+            assert pretrained_ch_pt == constants.BEST_LOC
+            assert pretrained_ch_pt == args.tcam_pretrained_seeder_ch_pt
+
     if args.task == constants.NEGEV:
         cl_cp = args.negev_ptretrained_cl_cp
         std_cl_args = deepcopy(args)
@@ -1003,6 +1132,47 @@ def get_pretrainde_classifier(args):
     return model
 
 
+def load_dino_pretrained_weights(model, pretrained_weights, checkpoint_key, model_name, patch_size):
+    if os.path.isfile(pretrained_weights):
+        state_dict = torch.load(pretrained_weights, map_location="cpu")
+        if checkpoint_key is not None and checkpoint_key in state_dict:
+            print(f"Take key {checkpoint_key} in provided checkpoint dict")
+            state_dict = state_dict[checkpoint_key]
+        # remove `module.` prefix
+        state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        # remove `backbone.` prefix induced by multicrop wrapper
+        state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
+        msg = model.load_state_dict(state_dict, strict=False)
+        print('Pretrained weights found at {} and loaded with msg: {}'.format(pretrained_weights, msg))
+    else:
+        print("Please use the `--pretrained_weights` argument to indicate the path of the checkpoint to evaluate.")
+        url = None
+        if model_name == "vit_small" and patch_size == 16:
+            url = "dino_deitsmall16_pretrain/dino_deitsmall16_pretrain.pth"
+        elif model_name == "vit_small" and patch_size == 8:
+            url = "dino_deitsmall8_pretrain/dino_deitsmall8_pretrain.pth"
+        elif model_name == "vit_base" and patch_size == 16:
+            url = "dino_vitbase16_pretrain/dino_vitbase16_pretrain.pth"
+        elif model_name == "vit_base" and patch_size == 8:
+            url = "dino_vitbase8_pretrain/dino_vitbase8_pretrain.pth"
+        elif model_name == "xcit_small_12_p16":
+            url = "dino_xcit_small_12_p16_pretrain/dino_xcit_small_12_p16_pretrain.pth"
+        elif model_name == "xcit_small_12_p8":
+            url = "dino_xcit_small_12_p8_pretrain/dino_xcit_small_12_p8_pretrain.pth"
+        elif model_name == "xcit_medium_24_p16":
+            url = "dino_xcit_medium_24_p16_pretrain/dino_xcit_medium_24_p16_pretrain.pth"
+        elif model_name == "xcit_medium_24_p8":
+            url = "dino_xcit_medium_24_p8_pretrain/dino_xcit_medium_24_p8_pretrain.pth"
+        elif model_name == "resnet50":
+            url = "dino_resnet50_pretrain/dino_resnet50_pretrain.pth"
+        if url is not None:
+            print("Since no pretrained weights have been provided, we load the default pretrained DINO/SSL weights.")
+            state_dict = torch.hub.load_state_dict_from_url(url="https://dl.fbaipublicfiles.com/dino/" + url)
+            model.load_state_dict(state_dict, strict=True)
+        else:
+            print("There is no reference weights available for this model => We use random weights.")
+            raise FileNotFoundError
+
 def get_model(args, eval=False, eval_path_weights=''):
     """
     Returns the model to be trained.
@@ -1017,6 +1187,11 @@ def get_model(args, eval=False, eval_path_weights=''):
 
     classes = args.num_classes
     encoder_depth, decoder_channels = get_encoder_d_c(p.encoder_name)
+
+    if args.task == constants.TCAM and args.model['arch'] == constants.VIT_LOCALIZER:
+        model =  ViT_Localizer(args, num_labels=classes)
+        load_dino_pretrained_weights(model.encoder, '', 'teacher', p.encoder_name, p.ssl_patch_size)
+        return model, model
 
     spec_mth = [constants.METHOD_SPG, constants.METHOD_ACOL,
                 constants.METHOD_ADL, constants.METHOD_TSCAM,
@@ -1262,7 +1437,7 @@ def get_model(args, eval=False, eval_path_weights=''):
 
             header_w = torch.load(join(path_cl, 'classification_head.pt'),
                                   map_location=get_cpu_device())
-            model.classification_head.load_state_dict(header_w, strict=True)
+            model.classification_head.load_state_dict(header_w, strict=False)
 
     path_file = args.model['path_pre_trained']
     if path_file not in [None, 'None']:
@@ -1334,7 +1509,7 @@ def get_model(args, eval=False, eval_path_weights=''):
         model_src.eval()
         freeze_all_params(model_src)
 
-        if args.shot or args.faust or args.sfde or args.cdcl or args.esfda:  # shot/faust/sfde/cdcl methods
+        if args.shot or args.faust or args.sfde or args.cdcl or args.esfda or args.pxsfde:  # shot/faust/sfde/cdcl methods
             model.train()
             model.freeze_cl_hypothesis()  # last linear weights + bias of
             # classifier. some wsol methods do not have a last linear
@@ -1547,7 +1722,7 @@ def sfuda_get_domain_discriminator_sdda_model(args,
 
 def sf_uda_load_set_source_weights(model, args: object):
     assert args.sf_uda
-    assert args.task == constants.STD_CL, args.task  # todo: others.
+    assert args.task == constants.STD_CL or args.task == constants.NEGEV, args.task  # todo: others.
 
     fd = args.sf_uda_source_folder
     assert os.path.isdir(fd), fd
@@ -1556,6 +1731,9 @@ def sf_uda_load_set_source_weights(model, args: object):
     with open(join(fd, 'config_model.yaml'), 'r') as fx:
         args_src = yaml.load(fx, Loader=yaml.Loader)  # safe_load fails.
         args_src = Dict2Obj(args_src)
+
+        if args.sf_uda == True and _args_trg.sf_uda_source_wsol_method == constants.NEGEV:
+            args_src.method = _args_trg.sf_uda_source_wsol_method
 
     # sanity check
 
@@ -1582,10 +1760,12 @@ def sf_uda_load_set_source_weights(model, args: object):
     assert _args_trg.task == args_src.task, f"{_args_trg.task} | " \
                                             f"{args_src.task}"
 
-    if args.task == constants.NEGEV:
-        raise NotImplementedError  # todo
-    else:
-        tag = get_tag(args_src, checkpoint_type=checkpoint_type)
+    # if args.task == constants.NEGEV:
+    #     raise NotImplementedError  # todo
+    # else:
+    #     tag = get_tag(args_src, checkpoint_type=checkpoint_type)
+
+    tag = get_tag(args_src, checkpoint_type=checkpoint_type)
 
     path = fd
     cpu_device = get_cpu_device()
@@ -1705,7 +1885,7 @@ def _get_model_params_for_opt(args, model):
     hparams = standardize_optimizers_hparams(hparams, 'opt')
     hparams = Dict2Obj(hparams)
 
-    if args.task in [constants.F_CL, constants.SEG]:
+    if args.task in [constants.F_CL, constants.SEG, constants.TCAM]:
         return [
             {'params': model.parameters(), 'lr': hparams.lr}
         ]

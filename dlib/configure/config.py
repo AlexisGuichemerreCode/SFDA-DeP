@@ -250,7 +250,126 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
             # we set it automatically when parsing the parameters.
             "spatial_dropout": 0.0,  # perform 2d dropout at the last feature
             # layer of the classifier encoder. Allows MC dropout.
-        },
+
+            "ssl_patch_size": None, #Patch size for DINO/SSL VIT
+            "ssl_cl_n_last_blocks": None, #ssl classifier hp: Concatenate [CLS] tokens for the `n` last blocks. We use `n=4` when evaluating ViT-Small and `n=1` with ViT-Base.
+            "ssl_cl_avgpool_patchtokens": None, #ssl classifier hp: Whether ot not to concatenate the global average pooled features to the [CLS] token. We typically set this to False for ViT-Small and to True with ViT-Base.
+        },    
+            # ======================================================================
+        #                               TCAM
+        # ======================================================================
+        "tcam_pretrained_cl_ch_pt": constants.BEST_CL,  # check point for
+        # classifier weights. these weights will be loaded as encoder weights
+        # of unet. this allows the best classification accuracy.
+        "tcam_pretrained_seeder_ch_pt": constants.BEST_LOC,  # check point for
+        # model [classifier] used to sample seeds. this model will be used to
+        # generate localization seeds.
+        # -----------------------  TCAM
+        "knn_tc": 0,  # int, number of adjacent frames. left: knn. right: knn.
+        # total: knn * 2 + 1 for each frame. e.g. knn_tc=1 means we tke one
+        # frame before and one frame after the current frame. knn_tc=0 means
+        # learning from single frames. knn_tc > 0, meaning we learn from a
+        # set of frames at once. this applies only for trainset. evaluation
+        # is done using single frame.
+        "sl_tc": False,  # use self-learning over tcams.
+        "sl_tc_knn": 0,  # temporal cams. how many cams to consider to
+        # estimate the cam to sample from. 0: means look only to the current
+        # cam.
+        "sl_tc_knn_mode": constants.TIME_INSTANT,  # time dependency for
+        # sl_tc_knn. if 'instant', 'sl_tc_knn' must be 0.
+        "sl_tc_knn_t": 0.0,  # heating factor. used to overheat cams when
+        # using temporal information. val >= 0. if 0, it is not used.
+        "sl_tc_knn_epoch_switch_uniform": -1,  # epoch when to to switch
+        # sampling to uniform. if -1, it is not considered. if it is
+        # different from -1, the value sl_tc_knn_t will be decreased to
+        # sl_tc_min_t.
+        # linearly; reaching  sl_tc_min_t at epoch
+        # sl_tc_knn_epoch_switch_uniform.
+        # todo: change to always.
+        "sl_tc_min_t": 0.0,  # when decaying t, this is minval.
+        "sl_tc_epoch_switch_to_sl": -1,  # epoch when we switch getting seeds
+        # from cams of pretrained classifier to the cams of decoder. -1:
+        # never do it. when we switch, 'sl_tc_knn' will be instant only.
+        "sl_tc_roi_method": constants.ROI_ALL,  # how to get roi from cams.
+        # all: take all rois. high density: take only high density.
+        "sl_tc_roi_min_size": 5/100.,  # minimal area for roi to be
+        # considered. (% in [0, 1])
+        "sl_tc_lambda": 1.,  # lambda for self-learning over tcams
+        "sl_tc_start_ep": 0,  # epoch when to start sl loss.
+        "sl_tc_end_ep": -1,  # epoch when to stop using sl loss. -1: never stop.
+        "sl_tc_min": 10,  # int. number of pixels to be used as
+        # background (after sorting all pixels).
+        "sl_tc_max": 10,  # number of pixels to be used as foreground (after
+        # sorting all pixels).
+        "sl_tc_block": 1,  # size of the block. instead of selecting from pixel,
+        # we allow initial selection from grid created from blocks of size
+        # sl_blockxsl_block. them, for each selected block, we select a random
+        # pixel. this helps selecting from fare ways regions. if you don't want
+        # to use blocks, set this to 1 where the selection is done directly over
+        # pixels without passing through blocks.
+        "sl_tc_ksz": 1,  # int, kernel size for dilation around the pixel.
+        # must be
+        # odd number.
+        'sl_tc_min_p': .2,  # percentage of pixels to be used for background
+        # sampling. percentage from entire image size.
+        'sl_tc_max_p': .2,  # percentage of pixels to be considered for
+        # foreground sampling. percentage from entire image size. ROI is
+        # determined via thresholding if roi is used.
+        'sl_tc_use_roi': False,  # if true, binary roi are estimated. then fg
+        # pixels are sampled only from them, guided by cam activations.
+        'sl_tc_seed_tech': constants.SEED_UNIFORM,  # how to sample fg.
+        # Uniformly or using Bernoulli. for bg: uniform.
+        'sl_tc_fg_erode_k': 11,  # int. size of erosion kernel to clean
+        # foreground.
+        'sl_tc_fg_erode_iter': 0,  # int. number of erosions for foreground.
+        # ----------------------- TCAM
+        "crf_tc": False,  # use or not crf over tcams.  (penalty)
+        "crf_tc_lambda": 2.e-9,  # crf lambda
+        "crf_tc_sigma_rgb": 15.,
+        "crf_tc_sigma_xy": 100.,
+        "crf_tc_scale": 1.,  # scale factor for input, segm.
+        "crf_tc_start_ep": 0,  # epoch when to start crf loss.
+        "crf_tc_end_ep": -1,  # epoch when to stop using crf loss. -1: never
+        # stop.
+        "rgb_jcrf_tc": False,  # use or not joint crf over cams over
+        # multiple images. apply only color penalty.
+        "rgb_jcrf_tc_lambda": 2.e-9,  # crf lambda
+        "rgb_jcrf_tc_sigma_rgb": 15.,
+        "rgb_jcrf_tc_scale": 1.,  # scale factor for input, segm.
+        "rgb_jcrf_tc_start_ep": 0,  # epoch when to start crf loss.
+        "rgb_jcrf_tc_end_ep": -1,  # epoch when to stop using crf loss.
+        # -1: never stop.
+        # ---------- TCAM: max size fg and bg.
+        "max_sizepos_tc": False,  # use absolute size (unsupervised) over all
+        # fcams. (elb)
+        "max_sizepos_tc_lambda": 1.,
+        "max_sizepos_tc_start_ep": 0,  # epoch when to start maxsz loss.
+        "max_sizepos_tc_end_ep": -1,  # epoch when to stop using mxsz loss. -1:
+        # never stop.
+        "size_bg_g_fg_tc": False,  # size: bg > fg. tcams (elb)
+        "size_bg_g_fg_tc_lambda": 1.,  # lambda
+        "size_bg_g_fg_tc_start_ep": 0,  # epoch when to start loss.
+        "size_bg_g_fg_tc_end_ep": -1,  # epoch when to stop loss. -1:
+        # never stop.
+        "empty_out_bb_tc": False,  # empty area outside bbox. tcams (elb)
+        "empty_out_bb_tc_lambda": 1.,  # lambda
+        "empty_out_bb_tc_start_ep": 0,  # epoch when to start loss.
+        "empty_out_bb_tc_end_ep": -1,  # epoch when to stop loss. -1:
+        # never stop.
+        "sizefg_tmp_tc": False,  # estimate size of object using neighbors
+        # frames. tcam, elb.
+        "sizefg_tmp_tc_knn": 0,  # temporal cams. how many cams to consider to
+        # estimate the fg size. 0: means look only to the current
+        # cam.
+        "sizefg_tmp_tc_knn_mode": constants.TIME_INSTANT,  # time dependency for
+        # sizefg_tmp_tc_knn. if 'instant', 'sizefg_tmp_tc_knn' must be 0.
+        "sizefg_tmp_tc_eps": 0.001,  # epsilon. small size perturbation to
+        # compute bounds.
+        "sizefg_tmp_tc_lambda": 1.,
+        "sizefg_tmp_tc_start_ep": 0,  # epoch when to start loss.
+        "sizefg_tmp_tc_end_ep": -1,  # epoch when to stop using loss. -1:
+        # never stop.
+        # todo: temporal.
         # ======================================================================
         #                    CLASSIFICATION SPATIAL POOLING
         # ======================================================================
@@ -386,6 +505,9 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         "detach_pixel_classifier": False,
         "low_res": False,
         "path_cam": None,  # path_cam for CAM for Energy Model
+        "chg_staining": None,  # chg_stainings for stainings
+        "path_staining": None,  # path_stainings for stainings
+        "dist_staining": 0,  # dist_stainings to select 
         "neg_samples_partial": False,  # use or not negative samples partial pixel-wise. allowed only
         "sl_pc_seeder": constants.SEED_PROB,  # type of seeder.
         "sl_pc_equalize": False,  # use or not equalize the number of positive and negative samples.
@@ -672,13 +794,28 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # https://arxiv.org/abs/2002.08546.
         'sfde': False,  # SFDE method. ON/OFF.
         'sfde_threshold': 1.0, # lambda of this term. >= 0.
-        #                       DISTRIBUTION ESTIMATION
+         # ======================================================================
+        #                     END - DISTRIBUTION ESTIMATION
+        # ======================================================================
+
+        #                      ENERGY Pixel Source-Free DISTRIBUTION ESTIMATION
         # ======================================================================
         # ESFDA: "Energy Source-Free Domain Adaptation",
         'esfda': False,  # ESFDE method. ON/OFF.
         # ======================================================================
+        #                     END - ENERGY DISTRIBUTION ESTIMATION
+        # ======================================================================
+
+
+        #                       PIXEL ADAPTATION DISTRIBUTION ESTIMATION
+        # ======================================================================
+        # PXSFDE: "PixelCAM Adaptation for Source-Free Domain Adaptaiton via DE"
+        'pxsfde': False, # SFDE method. ON/OFF.
+        'gmm_source_model': None,
+        # ======================================================================
         #                     END - DISTRIBUTION ESTIMATION
         # ======================================================================
+
         # SFUDA losses
         # 1- CE over image global pseudo-labels.
         # WARNING: THE TRAINING OF SOME WSOL METHODS USING CE VIA IMAGE CLASS
@@ -828,6 +965,15 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'cdcl_pseudo_lb': False,  # on/off.
         'cdcl_tau': 0.05,  # lambda of this term. >= 0.
         'cdcl_lambda': 0.01,  # lambda of this term. >= 0.
+
+        'gmm_source_model_name': None,
+        'nll': False, # on/off.
+        'nll_lambda': 1.0, # lambda of this term. >= 0.
+
+        'seed_map_method': None,  # 'if none seed map will be same as method (e.g. CAM, LayerCAM)'
+                                # 'Otherwsie you can use ClipSegCAM for seed'
+
+        
     }
 
     pre = constants.FORMAT_DEBUG.split('_')[0]

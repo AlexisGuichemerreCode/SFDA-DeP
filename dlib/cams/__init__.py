@@ -38,12 +38,26 @@ from dlib.cams.builtincam import MaxMinCam
 from dlib.cams.builtincam import SegmentationCam
 from dlib.cams.builtincam import PixelCAM
 
+from dlib.cams.builtincam import BuiltinCam
+from dlib.cams.builtincam import SegmentationCam
+
+from dlib.cams.decay_temp import DecayTemp
+#from dlib.visiontransformer.vit_models import ViT_Get_Attn
+# from dlib.clip.clip import Get_CLIP_ATTN
+#from dlib.clip.clip_for_inference_and_analysis_dips import Get_CLIP_ATTN
+#from dlib.process.instantiators import load_dino_pretrained_weights
+
 
 from dlib.configure import constants
 
 
 def build_fcam_extractor(model, args):
     assert args.task == constants.F_CL
+    model.eval()
+    return SegmentationCam(model=model)
+
+def build_tcam_extractor(model, args):
+    assert args.task == constants.TCAM
     model.eval()
     return SegmentationCam(model=model)
 

@@ -32,9 +32,12 @@ def main():
 
     inter_classifier = None
     if args.task in [constants.F_CL, constants.NEGEV]:
-        inter_classifier = get_pretrainde_classifier(args)
-        inter_classifier.cuda(args.c_cudaid)
-
+        if args.sf_uda == False:
+            inter_classifier = get_pretrainde_classifier(args)
+            inter_classifier.cuda(args.c_cudaid)
+        else:
+            inter_classifier = model
+            
     if args.sf_uda and args.sdda:
         main_trainer = TrainerSdda
 

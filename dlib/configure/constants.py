@@ -8,6 +8,9 @@ SEG = "SEGMENTATION"  # standard supervised segmentation. outputs:
 
 TASKS = [STD_CL, F_CL, SEG, NEGEV]
 
+TCAM = 'TrCAM'  # transformer CAM for wsol for videos.
+VIT_LOCALIZER = 'vit_localizer'
+
 # meta-task
 CLASSIFICATION = 'classification'
 SEGMENTATION = 'segmentation'
@@ -24,7 +27,7 @@ DEEPMIL = 'DeepMil'
 PRM = 'PRM'
 
 SPATIAL_POOLINGS = [WILDCATHEAD, GAP, WGAP, MAXPOOL, LSEPOOL, NONEPOOL,
-                    DEEPMIL, PRM]
+                    DEEPMIL, PRM, TCAM]
 
 # methods
 METHOD_WILDCAT = 'WILDCAT'  # pooling: WILDCATHEAD
@@ -240,10 +243,19 @@ DEEPLABV3 = "DeepLabV3"
 DEEPLABV3PLUS = "DeepLabV3Plus"
 PAN = "PAN"
 
+VIT = 'vit'
+VIT_SMALL = 'vit_small'
+VIT_BASE = 'vit_base'
+
+VIT_BACKBONES = [VIT_SMALL, VIT_BASE]
+# VIT_MODELS = VIT_BACKBONES + [VITS_WITH_LOC_HEAD]
+
 ARCHS = [STDCLASSIFIER, MaxMinClassifier, TSCAMCLASSIFIER,
          SATCLASSIFIER,
          ACOLARCH, ADLARCH, SPGARCH,
-         UNETFCAM, UNETNEGEV, UNET, ENEGERYCAMCLASSIFIER]
+         UNETFCAM, UNETNEGEV, UNET, ENEGERYCAMCLASSIFIER,
+         VIT_LOCALIZER
+         ]
 
 # std cld method to arch.
 STD_CL_METHOD_2_ARCH = {
@@ -306,8 +318,8 @@ BACKBONES = [RESNET50,
              DEIT_SAT_SMALL_P16_224,
              DEIT_SAT_BASE_P16_224,
              DEIT_SAT_TINY_P16_224,
-             #RESNET50_ENERGY
-             ]
+             #RESNET50_ENERGY,
+             ] + VIT_BACKBONES
 
 TSCAM_BACKBONES = [DEIT_TSCAM_SMALL_P16_224,
                    DEIT_TSCAM_BASE_P16_224,
@@ -573,3 +585,22 @@ MYSTEP = 'mystep'
 MYCOSINE = 'mycosine'
 MULTISTEP = 'multistep'
 LR_SCHEDULERS = [STEP, COSINE, MYSTEP, MYCOSINE, MULTISTEP]
+
+
+
+TIME_BEFORE = 'before'
+TIME_AFTER = 'after'
+TIME_BEFORE_AFTER = 'before-after'
+TIME_INSTANT = 'instant'
+TIME_DEPENDENCY = [TIME_BEFORE, TIME_AFTER, TIME_BEFORE_AFTER, TIME_INSTANT]
+
+ROI_ALL = 'roi_all'
+ROI_H_DENSITY = 'roi_high_density'
+ROI_LARGEST = 'largest'
+
+ROI_SELECT = [ROI_ALL, ROI_H_DENSITY, ROI_LARGEST]
+
+# seeding distribution:
+SEED_UNIFORM = 'seed_uniform'
+SEED_WEIGHTED = 'seed_weighted'
+SEED_TECHS = [SEED_UNIFORM, SEED_WEIGHTED]

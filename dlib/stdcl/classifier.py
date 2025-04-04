@@ -117,6 +117,8 @@ class STDClassifier(STDClModel):
     def freeze_cl_hypothesis(self):
         # SFUDA: freeze the last linear weights + bias of the classifier
         self.classification_head.freeze_cl_hypothesis()
+        if self.pixel_wise_classification:
+            self.pixel_wise_classification_head.freeze_cl_hypothesis()
 
     def freeze_all_params(self):
 

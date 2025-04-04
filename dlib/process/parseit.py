@@ -490,7 +490,12 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--sat_area_th', type=float, default=None,
                         help='SAT. area threshold..')
 
-    #Energy CAM
+    parser.add_argument('--chg_staining', type=str2bool, default=None)
+    parser.add_argument('--path_staining', type=str, default=None)
+    parser.add_argument('--dist_staining', type=float, default=None)
+
+
+    #PixelCAM
     parser.add_argument('--pixel_wise_classification', type=str2bool, default=None,
                         help='parameter to control the creation of the second head for localization for Energy Model')
     
@@ -598,6 +603,12 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--cdcl_threshold', type=float, default=None,
                         help='Pourcentage of sample to keep for the method for each class.')
 
+    # 6- Pixel SFDA
+    parser.add_argument('--pxsfde', type=str2bool, default=None,
+                        help='USE/NOT PXSFDE method for SFUDA.')
+    parser.add_argument('--gmm_source_model', type=str2bool, default=None,
+                        help='Use gmm source model to perform the alignment in the pixel feature space between source and target.')
+    
     # 6- EnergySFDA
     parser.add_argument('--esfda', type=str2bool, default=None,
                         help='USE/NOT ESFDA method for SFUDA.')
@@ -850,6 +861,169 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--cdcl_lambda', type=float, default=None,
                         help='Parameter lambda for contrastive loss.')
     
+
+    parser.add_argument('--gmm_source_model_name', type=str, default=None,
+                        help='define the name of the gmm source model to obtain the parameters.')
+    
+    parser.add_argument('--nll', type=str2bool, default=None,
+                        help='log likelihood over all pixels.')
+    
+    parser.add_argument('--nll_lambda', type=float, default=None,
+                        help='Parameter lambda for nll loss.')
+
+    parser.add_argument('--seed_map_method', type=str, default=None,
+                        help='if none seed map will be same as method (e.g. CAM, LayerCAM)'
+                        'Otherwsie you can use ClipCAM for seed')
+
+    # ======================================================================
+    #                         DINO Paramters
+    # ======================================================================
+    parser.add_argument('--ssl_patch_size', default=16, type=int, help="""Patch size for Vits.
+        Size in pixels of input square patches - default 16 (for 16x16 patches). 
+        Using smaller values leads to better performance but requires more memory. 
+        Applies only for ViTs (vit_small and vit_base).""")
+    parser.add_argument('--ssl_cl_n_last_blocks', default=4, type=int, help="""Concatenate [CLS] tokens
+        for the `n` last blocks. We use `n=4` when evaluating ViT-Small and `n=1` with ViT-Base.""")
+    parser.add_argument('--ssl_cl_avgpool_patchtokens', default=False, type=str2bool,
+        help="""Whether ot not to concatenate the global average pooled features to the [CLS] token.
+        We typically set this to False for ViT-Small and to True with ViT-Base.""")
+
+    parser.add_argument("--knn_tc", type=int, default=None,
+                        help=" TCAM: knn.")
+    parser.add_argument('--tcam_pretrained_cl_ch_pt', type=str, default=None,
+                        help='tcam. pretrained model checkpoint type for '
+                             'classifier.')
+
+    parser.add_argument("--crf_tc", type=str2bool, default=None,
+                        help="CRF over tcam flag.")
+    parser.add_argument("--crf_tc_lambda", type=float, default=None,
+                        help="Lambda for crf flag / tcam.")
+    parser.add_argument("--crf_tc_sigma_rgb", type=float, default=None,
+                        help="sigma rgb of crf flag / tcam.")
+    parser.add_argument("--crf_tc_sigma_xy", type=float, default=None,
+                        help="sigma xy for crf flag / tcam.")
+    parser.add_argument("--crf_tc_scale", type=float, default=None,
+                        help="scale factor for crf flag / tcam.")
+    parser.add_argument("--crf_tc_start_ep", type=int, default=None,
+                        help="epoch start crf loss / tcam.")
+    parser.add_argument("--crf_tc_end_ep", type=int, default=None,
+                        help="epoch end crf loss. use -1 for end training / "
+                             "tcam.")
+
+    parser.add_argument("--rgb_jcrf_tc", type=str2bool, default=None,
+                        help="RGB temporal CRF over tcam flag.")
+    parser.add_argument("--rgb_jcrf_tc_lambda", type=float, default=None,
+                        help="Lambda for RGB temporal  crf flag / tcam.")
+    parser.add_argument("--rgb_jcrf_tc_sigma_rgb", type=float, default=None,
+                        help="sigma rgb of RGB temporal crf flag / tcam.")
+    parser.add_argument("--rgb_jcrf_tc_scale", type=float, default=None,
+                        help="scale factor for RGB temporal  crf flag / tcam.")
+    parser.add_argument("--rgb_jcrf_tc_start_ep", type=int, default=None,
+                        help="epoch start RGB temporal  crf loss / tcam.")
+    parser.add_argument("--rgb_jcrf_tc_end_ep", type=int, default=None,
+                        help="epoch end RGB temporal  crf loss. use -1 for "
+                             "end training / tcam.")
+
+    parser.add_argument("--max_sizepos_tc", type=str2bool, default=None,
+                        help="Max size pos fcams flag / tcam.")
+    parser.add_argument("--max_sizepos_tc_lambda", type=float, default=None,
+                        help="lambda for max size low pos fcams flag/tcam.")
+    parser.add_argument("--max_sizepos_tc_start_ep", type=int, default=None,
+                        help="epoch start maxsz loss/tcam.")
+    parser.add_argument("--max_sizepos_tc_end_ep", type=int, default=None,
+                        help="epoch end maxsz. -1 for end training/tcam.")
+
+    parser.add_argument("--empty_out_bb_tc", type=str2bool, default=None,
+                        help="empty outside bbox: flag / tcam.")
+    parser.add_argument("--empty_out_bb_tc_lambda", type=float, default=None,
+                        help="lambda for empty outisde bbox flag/tcam.")
+    parser.add_argument("--empty_out_bb_tc_start_ep", type=int, default=None,
+                        help="epoch start empty outside bbox loss/tcam.")
+    parser.add_argument("--empty_out_bb_tc_end_ep", type=int, default=None,
+                        help="epoch end empty outside bbox. -1 for end "
+                             "training/tcam.")
+
+    parser.add_argument("--sizefg_tmp_tc", type=str2bool, default=None,
+                        help="fg size fcams flag / tcam.")
+    parser.add_argument("--sizefg_tmp_tc_lambda", type=float, default=None,
+                        help="lambda for fg size fcams flag/tcam.")
+    parser.add_argument("--sizefg_tmp_tc_start_ep", type=int, default=None,
+                        help="epoch start fg size loss/tcam.")
+    parser.add_argument("--sizefg_tmp_tc_end_ep", type=int, default=None,
+                        help="epoch end fg size. -1 for end training/tcam.")
+    parser.add_argument("--sizefg_tmp_tc_knn", type=int, default=None,
+                        help="fg size over tcam: nbr-frames.")
+    parser.add_argument("--sizefg_tmp_tc_knn_mode", type=str, default=None,
+                        help="fg size over tcam: time dependency.")
+    parser.add_argument("--sizefg_tmp_tc_eps", type=float, default=None,
+                        help="fg size over tcam: epsilon.")
+
+
+    parser.add_argument("--size_bg_g_fg_tc", type=str2bool, default=None,
+                        help="Size: bg > fg. fcams flag / tcam.")
+    parser.add_argument("--size_bg_g_fg_tc_lambda", type=float, default=None,
+                        help="Size: bg > fg. lambda. fcams flag/tcam.")
+    parser.add_argument("--size_bg_g_fg_tc_start_ep", type=int, default=None,
+                        help="Size: bg > fg. start epoch. loss/tcam.")
+    parser.add_argument("--size_bg_g_fg_tc_end_ep", type=int, default=None,
+                        help="Size: bg > fg. end epoch. training/tcam.")
+
+    parser.add_argument("--sl_tc", type=str2bool, default=None,
+                        help="Self-learning over tcam.")
+    parser.add_argument("--sl_tc_knn", type=int, default=None,
+                        help="Self-learning over tcam: nbr-frames.")
+    parser.add_argument("--sl_tc_knn_t", type=float, default=None,
+                        help="Self-learning over tcam: heat temperature.")
+    parser.add_argument("--sl_tc_knn_epoch_switch_uniform", type=int,
+                        default=None,
+                        help="Self-learning over tcam: when to switch to "
+                             "uniform sampling.")
+    parser.add_argument("--sl_tc_min_t", type=float,
+                        default=None,
+                        help="Self-learning over tcam: min t when decaying.")
+    parser.add_argument("--sl_tc_knn_mode", type=str, default=None,
+                        help="Self-learning over tcam: time dependency.")
+    parser.add_argument("--sl_tc_use_roi", type=str2bool, default=None,
+                        help="Self-learning over tcam: use roi or not for "
+                             "sampling FG.")
+    parser.add_argument("--sl_tc_epoch_switch_to_sl", type=int, default=None,
+                        help="Self-learning. Epoch in which we switch to "
+                             "gathering seeds from cams of decoder instead of "
+                             "pretrained classifier tcam.")
+    parser.add_argument("--sl_tc_lambda", type=float, default=None,
+                        help="Lambda for self-learning tcam.")
+    parser.add_argument("--sl_tc_roi_method", type=str, default=None,
+                        help="ROI selection method for self-learning tcam.")
+    parser.add_argument("--sl_tc_roi_min_size", type=float, default=None,
+                        help="Min Size for ROI to be considered for "
+                             "self-learning tcam.")
+    parser.add_argument("--sl_tc_start_ep", type=int, default=None,
+                        help="Start epoch for self-learning tcam.")
+    parser.add_argument("--sl_tc_end_ep", type=int, default=None,
+                        help="End epoch for self-learning tcam.")
+    parser.add_argument("--sl_tc_min", type=int, default=None,
+                        help="MIN for self-learning tcam.")
+    parser.add_argument("--sl_tc_max", type=int, default=None,
+                        help="MAX for self-learning tcams.")
+    parser.add_argument("--sl_tc_ksz", type=int, default=None,
+                        help="Kernel size for dilation for self-learning "
+                             "tcam.")
+    parser.add_argument("--sl_tc_min_p", type=float, default=None,
+                        help="Percentage of pixels to be considered "
+                             "background to sample from/tcam.")
+    parser.add_argument("--sl_tc_max_p", type=float, default=None,
+                        help="Percentage of pixels to be considered "
+                             "foreground to sample from/tcam.")
+    parser.add_argument("--sl_tc_fg_erode_k", type=int, default=None,
+                        help="Kernel size of erosion for foreground/tcam.")
+    parser.add_argument("--sl_tc_fg_erode_iter", type=int, default=None,
+                        help="Number of time to perform erosion over "
+                             "foreground/tcam.")
+    parser.add_argument("--sl_tc_block", type=int, default=None,
+                        help="Size of the blocks for self-learning tcam.")
+    parser.add_argument("--sl_tc_seed_tech", type=str, default=None,
+                        help="how to sample: uniform/Bernoulli. self-l tcam.")
+    # TCAM: end
     
     input_parser = parser.parse_args()
 
@@ -966,10 +1140,18 @@ def get_args(args: dict, eval: bool = False):
         args['multi_iou_eval'] = False
 
 
+
+
+    if args['method'] == constants.METHOD_PIXELCAM:
+        assert args['pixel_wise_classification'] == True
+
+
+
     if args['model']['path_pre_trained_model_cl'] is not None:
         tag = args['model']['path_pre_trained_model_cl']
         args['model']['folder_pre_trained_cl'] = join(
             root_dir, 'pretrained', tag)
+
 
     if args['model']['freeze_cl']:
         if args['task'] == constants.NEGEV:
@@ -988,7 +1170,8 @@ def get_args(args: dict, eval: bool = False):
             root_dir, 'pretrained', tag)
 
         zz = args['model']['folder_pre_trained_cl']
-        assert os.path.isdir(args['model']['folder_pre_trained_cl']), zz
+        if args['task'] != constants.TCAM:
+            assert os.path.isdir(args['model']['folder_pre_trained_cl']), zz
 
     if args['sf_uda'] and (args['sf_uda_source_folder'] == ''):
         tmp_config = copy.deepcopy(args)
@@ -1026,9 +1209,9 @@ def get_args(args: dict, eval: bool = False):
         args['sf_uda_source_folder'] = path_fd
 
 
-    elif args['sf_uda'] and (args['sf_uda_source_folder'] != ''):
-        assert os.path.isdir(args['sf_uda_source_folder']), args[
-            'sf_uda_source_folder']
+    #elif args['sf_uda'] and (args['sf_uda_source_folder'] != ''):
+        #assert os.path.isdir(args['sf_uda_source_folder']), args[
+            #'sf_uda_source_folder']
 
     if args['task'] in [constants.STD_CL] and args['path_cam'] is not None:
         for split in constants.SPLITS:
@@ -1132,6 +1315,23 @@ def get_args(args: dict, eval: bool = False):
                 if cndx:
                     args['std_cams_folder'][split] = path_cams
 
+
+    if args['gmm_source_model'] is not None:
+        assert args['gmm_source_model_name'] is not None
+        gmm_filename = args['gmm_source_model_name']
+        if not gmm_filename.endswith(".pt"):
+            gmm_filename += ".pt"
+
+        path_cams = join(root_dir, 'gmm_model', args['sf_uda_source_ds'], 'source', gmm_filename)
+        assert os.path.exists(path_cams)
+        gmm_params = torch.load(path_cams, map_location='cpu')
+        assert all(k in gmm_params for k in ['mu', 'var', 'pi'])
+        args['source_gmm_param'] = {
+        'mu': gmm_params['mu'],
+        'var': gmm_params['var'],
+        'pi': gmm_params['pi']
+    }
+        
     # cuda   ------------------------------------------------------------------
     ngpus_per_node = torch.cuda.device_count()
     torch.cuda.set_device(0)
@@ -1156,7 +1356,7 @@ def get_args(args: dict, eval: bool = False):
     if args.sf_uda:
         assert args.task in [constants.STD_CL, constants.NEGEV], args.task
 
-        l_sf_uda_techs = [args.shot, args.faust, args.adadsa, args.sdda, args.nrc, args.sfde, args.cdcl, args.esfda]
+        l_sf_uda_techs = [args.shot, args.faust, args.adadsa, args.sdda, args.nrc, args.sfde, args.cdcl, args.esfda, args.pxsfde]
 
         assert any(l_sf_uda_techs)
         assert sum(l_sf_uda_techs) == 1, 'Only one SFUDA must be active.'
@@ -1210,6 +1410,9 @@ def get_args(args: dict, eval: bool = False):
         elif args.sfde:
             pass
 
+        elif args.pxsfde:
+            assert args.nll
+
         elif args.esfda:
             pass
 
@@ -1242,7 +1445,7 @@ def get_args(args: dict, eval: bool = False):
     if args.task == constants.SEG:
         assert args.dataset in [constants.GLAS, constants.CAMELYON512]
 
-    if args.method != constants.METHOD_PIXELCAM:
+    if args.method != constants.METHOD_PIXELCAM and args.method != constants.NEGEV:
         assert args.spatial_pooling == constants.METHOD_2_POOLINGHEAD[args.method]
 
     assert args.model['encoder_name'] in constants.BACKBONES
@@ -1287,7 +1490,7 @@ def get_args(args: dict, eval: bool = False):
         assert args.eval_checkpoint_type == constants.BEST_LOC
 
     if args.task == constants.NEGEV:
-        assert any(used_constraints_negev)
+        #assert any(used_constraints_negev)
         assert args.model['arch'] == constants.UNETNEGEV
 
         assert args.eval_checkpoint_type == constants.BEST_LOC

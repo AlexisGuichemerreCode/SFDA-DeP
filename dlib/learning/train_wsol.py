@@ -36,6 +36,8 @@ from dlib.utils.shared import fmsg
 from dlib.utils.tools import get_cpu_device
 from dlib.utils.tools import get_tag
 
+from dlib.cams.tcam_seeding import TCAMSeeder
+
 from dlib.cams import selflearning
 from dlib.learning.inference_wsol import CAMComputer
 from dlib.cams import build_std_cam_extractor
@@ -189,6 +191,10 @@ class Trainer(Basic):
         mask_root = args.mask_root if self.load_tr_masks else ''
         self.mask_root = args.mask_root
 
+        self.chg_staining = args.chg_staining
+        self.path_staining = args.path_staining
+        self.dist_staining = args.dist_staining
+
         self.loaders = get_data_loader(
             data_roots=self.args.data_paths,
             metadata_root=self.args.metadata_root,
@@ -203,7 +209,10 @@ class Trainer(Basic):
             num_val_sample_per_class=self.args.num_val_sample_per_class,
             std_cams_folder=self.args.std_cams_folder,
             sfuda_faust=self.args.faust,
-            sfuda_n_rnd_views=self._get_faust_n_views()
+            sfuda_n_rnd_views=self._get_faust_n_views(),
+            chg_staining = self.chg_staining,
+            path_staining = self.path_staining,
+            dist_staining = self.dist_staining
         )
 
         if self.args.target_domain_ds_to_compute_stats != None or self.args.ds_to_compute_acc_trainset_source_target != None:
@@ -288,6 +297,9 @@ class Trainer(Basic):
         if args.task in [constants.F_CL, constants.NEGEV] or args.pixel_wise_classification:
             self.sl_mask_builder = self._get_sl(args)
 
+        if args.task == constants.TCAM:
+            self.sl_mask_builder: TCAMSeeder = self._get_sl(args)
+
         self.epoch = 0
         self.counter = 0
         self.seed = int(args.MYSEED)
@@ -302,10 +314,20 @@ class Trainer(Basic):
 
         self.classifier = classifier
         self.std_cam_extractor = None
-        if args.task in [constants.F_CL, constants.NEGEV]:
+        self.tcam_extractor = None
+
+
+        if args.task in [constants.F_CL, constants.NEGEV, constants.TCAM]:
             assert classifier is not None
-            self.std_cam_extractor = self._build_std_cam_extractor(
+            if args.sf_uda == False:
+                self.std_cam_extractor = self._build_std_cam_extractor(
                 classifier=classifier, args=args)
+
+        self.tcam_extractor = None
+        if args.task == constants.TCAM:
+            self.tcam_extractor = self._build_tcam_extractor(
+                classifier=classifier, args=self.args)
+
 
         self.fcam_argmax = False
         self.fcam_argmax_previous = False
@@ -458,6 +480,34 @@ class Trainer(Basic):
                         threshold= self.args.cdcl_threshold
                         )
         
+        elif args.pxsfde:
+            mask_root = args.mask_root if self.load_tr_masks else ''
+            loaders = get_data_loader(
+                data_roots=self.args.data_paths,
+                metadata_root=self.args.metadata_root,
+                batch_size=self.args.batch_size,
+                eval_batch_size=self.args.eval_batch_size,
+                workers=self.args.num_workers,
+                resize_size=self.args.resize_size,
+                crop_size=self.args.crop_size,
+                load_tr_masks=self.load_tr_masks,
+                mask_root=mask_root,
+                proxy_training_set=self.args.proxy_training_set,
+                num_val_sample_per_class=self.args.num_val_sample_per_class,
+                std_cams_folder=None,
+                get_splits_eval=[constants.TRAINSET],
+                sfuda_faust=False,
+                sfuda_n_rnd_views=0
+            )
+            train_eval_loader = loaders[constants.TRAINSET]
+            return Shot(model_trg=self.model,
+                        train_loader_trg=train_eval_loader,
+                        task=self.args.task,
+                        n_cls=self.args.num_classes,
+                        shot_freq_epoch=self.args.shot_freq_epoch,
+                        shot_dist=self.args.shot_dist_type
+                        )
+        
         elif args.esfda:
             mask_root = args.mask_root if self.load_tr_masks else ''
             loaders = get_data_loader(
@@ -478,9 +528,15 @@ class Trainer(Basic):
                 sfuda_n_rnd_views=0
             )
             train_eval_loader = loaders[constants.TRAINSET]
+
+        
         
         else:
             raise NotImplementedError('SFUDA: unspecified method.')
+
+    @staticmethod
+    def _build_tcam_extractor(model, args):
+        return build_tcam_extractor(model=model, args=args)
 
     @staticmethod
     def _build_std_cam_extractor(classifier, args):
@@ -499,6 +555,26 @@ class Trainer(Basic):
                     support_background=args.model['support_background'],
                     multi_label_flag=args.multi_label_flag,
                     seg_ignore_idx=args.seg_ignore_idx)
+
+        elif args.task == constants.TCAM:
+            return TCAMSeeder(
+                seed_tech=args.sl_tc_seed_tech,
+                min_=args.sl_tc_min,
+                max_=args.sl_tc_max,
+                ksz=args.sl_tc_ksz,
+                max_p=args.sl_tc_max_p,
+                min_p=args.sl_tc_min_p,
+                fg_erode_k=args.sl_tc_fg_erode_k,
+                fg_erode_iter=args.sl_tc_fg_erode_iter,
+                support_background=args.model['support_background'],
+                multi_label_flag=args.multi_label_flag,
+                seg_ignore_idx=args.seg_ignore_idx,
+                cuda_id=args.c_cudaid,
+                roi_method=args.sl_tc_roi_method,
+                p_min_area_roi=args.sl_tc_roi_min_size,
+                use_roi=args.sl_tc_use_roi
+            )
+            
         
         elif self.args.pixel_wise_classification:
 
@@ -729,6 +805,17 @@ class Trainer(Basic):
                     
                     sfde_out = self.sfuda_master.forward_data(features, self.normal_sampler)
                     loss = self.loss(epoch=self.epoch,model=self.model,cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global,key_arg=sfde_out)
+                    logits = cl_logits
+
+                elif self.args.pxsfde:
+                    out = self.model(images)
+                    features = self.model.lin_ft
+                    
+                    with torch.no_grad():
+                            output = self.model(images)
+                            cl_logits = output
+                    
+                    loss = self.loss(epoch=self.epoch,model=self.model,cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global)
                     logits = cl_logits
 
                 else:
@@ -1008,7 +1095,7 @@ class Trainer(Basic):
         self.model.train()
 
         if self.args.sf_uda:
-            if self.args.shot or self.args.faust or self.args.sfde or self.args.cdcl:  # shot/faust/sfde/cdcl method
+            if self.args.shot or self.args.faust or self.args.sfde or self.args.cdcl or self.args.pxsfde:  # shot/faust/sfde/cdcl method
                 self.model.freeze_cl_hypothesis()  # last linear weights +
                 # bias of classifier. some wsol methods do not have a last
                 # linear classifier: either simple fully conv layers, attention,

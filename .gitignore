@@ -9,6 +9,6 @@ LOG.txt
 exp_final/*
 pretrained/*
 data_cams/*
+data_staining/*
 visualization/*
 tmp_outd/*
-scripts/

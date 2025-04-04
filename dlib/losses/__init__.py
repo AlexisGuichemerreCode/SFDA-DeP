@@ -68,4 +68,16 @@ from dlib.losses.sf_uda_sdda import MaxMinUdaSddaTrgModelCeFakeImage
 from dlib.losses.sf_uda import UdaCdd
 from dlib.losses.sf_uda import UdaCdcl
 
+from dlib.losses.sf_uda import UdaNLL
+
 from dlib.losses.core import SatLoss
+
+
+from dlib.losses.tcam import SelfLearningTcams
+from dlib.losses.tcam import ConRanFieldTcams
+from dlib.losses.tcam import RgbJointConRanFieldTcams
+from dlib.losses.tcam import EntropyTcams
+from dlib.losses.tcam import MaxSizePositiveTcams
+from dlib.losses.tcam import BgSizeGreatSizeFgTcams
+from dlib.losses.tcam import FgSizeTcams
+from dlib.losses.tcam import EmptyOutsideBboxTcams
