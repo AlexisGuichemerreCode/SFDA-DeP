@@ -29,6 +29,9 @@ from skimage.transform import resize
 from sklearn.manifold import TSNE
 #from sklearn.mixture import GaussianMixture
 from dlib.gmm.gmm import GaussianMixture
+import seaborn as sns
+
+from mpl_toolkits.mplot3d import Axes3D
 
 #import cuml
 #print("cuML version:", cuml.__version__)
@@ -565,6 +568,20 @@ def show_cam_on_image(img: np.ndarray,
 def compute_energy(logits):
     return -torch.logsumexp(logits, dim=1)
 
+def energy_fn(logits):
+    """
+    Compute the energy map for the given features using the model.
+
+    Args:
+        feat (torch.Tensor): Input features (e.g., pixel features).
+        model (torch.nn.Module): The model containing the pixel-wise classification head.
+
+    Returns:
+        torch.Tensor: Energy map (H, W).
+    """
+    energy_map = -torch.logsumexp(logits, dim=0)  # logsumexp over classes
+    return energy_map  # (H, W)
+
 class IgnoreKeyLoader(yaml.SafeLoader):
     def ignore_keys(self, node):
         ignore_key = 'best_valid_tau_cl'
@@ -584,7 +601,7 @@ IgnoreKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, 
 IgnoreKeyLoader.add_constructor('tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar', IgnoreKeyLoader.ignore_numpy_scalars)
 
 
-def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_draw_target, checkpoint_type, dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None, target_method=None, n_components=2):
+def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_draw_target, checkpoint_type, source_dataset, target_dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None, target_method=None, n_components=2):
 
 
     with open(join(exp_path, 'config_obj_final.yaml'), 'r') as fy:
@@ -610,7 +627,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                                 args.method, args.model['encoder_name'])
     encoder_name = args.model['encoder_name']
     method_name = args.method
-    source_dataset = dataset
+    source_dataset = source_dataset
     
     # DLLogger.log(fmsg("Start time: {}".format(t0)))
     DLLogger.log(fmsg(msg))
@@ -654,26 +671,11 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     model = get_model(args)[0]
 
     print(f'Loading model for {method_name}-{encoder_name} from {path_cl}')
+    if "tscam" in encoder_name:
+        model_tscam = torch.load(join(path_cl, 'model.pt'),map_location=get_cpu_device())
 
-    if 'PixelCAM' in target_method:
-        if "deit" in encoder_name:
-            model_sat = torch.load(join(path_cl, 'model.pt'),map_location=get_cpu_device())
-
-            model.load_state_dict(model_sat, strict=True)
-        else:
-            encoder_w = torch.load(join(path_cl, 'encoder.pt'),
-                                map_location=get_cpu_device())
-            model.encoder.super_load_state_dict(encoder_w, strict=True)
-
-            header_w = torch.load(join(path_cl, 'classification_head.pt'),
-                                map_location=get_cpu_device())
-            model.classification_head.load_state_dict(header_w, strict=True)
-
-            header_p = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
-                                map_location=get_cpu_device())
-            model.pixel_wise_classification_head.load_state_dict(header_p, strict=True)
-
-    elif target_method == 'NEGEV':
+        model.load_state_dict(model_tscam, strict=True)
+    else:
         encoder_w = torch.load(join(path_cl, 'encoder.pt'),
                             map_location=get_cpu_device())
         model.encoder.super_load_state_dict(encoder_w, strict=True)
@@ -682,27 +684,28 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                             map_location=get_cpu_device())
         model.classification_head.load_state_dict(header_w, strict=True)
 
-        decoder_w = torch.load(join(path_cl, 'decoder.pt'),
+        if method_name == constants.METHOD_PIXELCAM:    #'EnergyCAM': constants.METHOD_ENERGY:
+            header_p = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
                             map_location=get_cpu_device())
-        model.decoder.super_load_state_dict(decoder_w, strict=True)
+            model.pixel_wise_classification_head.load_state_dict(header_p, strict=True)
 
-        seg_head_w = torch.load(join(path_cl, 'segmentation_head.pt'),
-                            map_location=get_cpu_device())
-        model.segmentation_head.load_state_dict(seg_head_w, strict=True)
+    # elif target_method == 'NEGEV':
+    #     encoder_w = torch.load(join(path_cl, 'encoder.pt'),
+    #                         map_location=get_cpu_device())
+    #     model.encoder.super_load_state_dict(encoder_w, strict=True)
 
-    else:
-        if "deit" in encoder_name:
-            model_sat = torch.load(join(path_cl, 'model.pt'),map_location=get_cpu_device())
+    #     header_w = torch.load(join(path_cl, 'classification_head.pt'),
+    #                         map_location=get_cpu_device())
+    #     model.classification_head.load_state_dict(header_w, strict=True)
 
-            model.load_state_dict(model_sat, strict=False)
-        else:
-            encoder_w = torch.load(join(path_cl, 'encoder.pt'),
-                                map_location=get_cpu_device())
-            model.encoder.super_load_state_dict(encoder_w, strict=True)
+    #     decoder_w = torch.load(join(path_cl, 'decoder.pt'),
+    #                         map_location=get_cpu_device())
+    #     model.decoder.super_load_state_dict(decoder_w, strict=True)
 
-            header_w = torch.load(join(path_cl, 'classification_head.pt'),
-                                map_location=get_cpu_device())
-            model.classification_head.load_state_dict(header_w, strict=True)
+    #     seg_head_w = torch.load(join(path_cl, 'segmentation_head.pt'),
+    #                         map_location=get_cpu_device())
+    #     model.segmentation_head.load_state_dict(seg_head_w, strict=True)
+
 
 
 
@@ -741,18 +744,18 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     ####################################################################################
     DLLogger.flush()
     
-    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{args.fold}")
+    source_metadata_root = join(constants.RELATIVE_META_ROOT, source_dataset, f"fold-{args.fold}" )
     #read sys var DATASETSH
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
-    target_domain_data_paths = config.configure_data_paths(args_dict, dataset)
+    source_domain_data_paths = config.configure_data_paths(args_dict, source_dataset)
 
-    metadata_root_CAME = join('./folds/wsol-done-right-splits', 'CAMELYON512', f"fold-{args.fold}")
-    args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
-    target_domain_data_paths_CAME = config.configure_data_paths(args_dict, 'CAMELYON512')
-    
-    loaders = get_data_loader(
-            data_roots=target_domain_data_paths,
-            metadata_root=metadata_root,
+    #target_metadata_root = join('./folds/wsol-done-right-splits', target_dataset, "fold-6")
+    # args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
+    #target_domain_data_paths = config.configure_data_paths(args_dict, target_dataset)
+
+    source_loaders = get_data_loader(
+            data_roots=source_domain_data_paths,
+            metadata_root=source_metadata_root,
             batch_size=32,#args.batch_size,
             workers=args.num_workers,
             resize_size=args.resize_size,
@@ -761,111 +764,197 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             num_val_sample_per_class=args.num_val_sample_per_class,
             std_cams_folder=args.std_cams_folder,
             # distributed_eval=False,
-            get_splits_eval=['train'],
+            get_splits_eval=[split],
             #constants.TRAINSET
             eval_batch_size = 32#args.eval_batch_size,
         )
+    
     
 
     overlay_images = {}
     input_images = {}
     gt_masks = {}
-    all_pixel_features = []
+    #all_pixel_features = []
+    source_img_features = []
+    target_img_features = []
+
+    y_source = []
+    y_target = []
+
+    model.eval()
+
+    with torch.no_grad():
+         anchors = model.pixel_wise_classification_head.conv4.weight
+
+    init_anchors = anchors.clone()
+    #new_anchors = new_anchors.view(new_anchors.shape[0], -1)
+    #new_anchors = new_anchors.T
+    #new_anchors = new_anchors.detach().cpu().numpy()
+
+    energy_score = []
+    liste = list(range(20))
+    source_img_features = []
 
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
-        enumerate(loaders[split]), ncols=constants.NCOLS,
-        total=len(loaders[split])):
+        enumerate(source_loaders[split]), ncols=constants.NCOLS,
+        total=len(source_loaders[split])):
         image_size = images.shape[2:]
         images = images.to(device)
         targets = targets.to(device)
 
-        GroundTruth = []
         for image, target, image_id in zip(images, targets, index):
-            if target.item() == 1:
-                classe = 'cancer'
+            if image_id not in image_ids_to_draw:
+                 continue
             else:
-                classe = 'normal'
+                out = model(image.cuda().unsqueeze(0))
+                lin_ft = model.lin_ft.detach().cpu()
 
-            if classe == 'normal' or classe == 'cancer': 
-                cam_computer = CAMComputer(
-                        args=deepcopy(args),
-                        model=model,
-                        loader=loaders['train'],
-                        metadata_root=os.path.join(metadata_root, 'train'),
-                        mask_root=args.mask_root,
-                        iou_threshold_list=args.iou_threshold_list,
-                        dataset_name=args.dataset,
-                        split= 'train',
-                        cam_curve_interval=args.cam_curve_interval,
-                        multi_contour_eval=args.multi_contour_eval,
-                        out_folder=args.outd,
-                    )  
-                with torch.set_grad_enabled(cam_computer.req_grad):
-                    cam, cl_logits = cam_computer.get_cam_one_sample(
-                        image=image.unsqueeze(0), target=target.item())
-                    
-                with torch.no_grad():
-                    out = model(image.cuda().unsqueeze(0))
-                    pixel_features = model.encoder_last_features
-
-                    #pixel_features = model.loc_last_features
-                gt_mask = get_mask(f'/export/gauss/vision/Aguichemerre/datasets/{dataset}',
-                            cam_computer.evaluator.mask_paths[image_id],
-                            cam_computer.evaluator.ignore_paths[image_id])
-                
-                gt_mask_tensor = torch.tensor(gt_mask, dtype=torch.float32)
-
-
-                h,l,m,n = pixel_features.shape
-                gt_resize=F.interpolate(gt_mask_tensor.unsqueeze(0).unsqueeze(0),
-                                    (m,n),
-                                    mode='bilinear',
-                                    align_corners=False).squeeze(0).squeeze(0)
-                
-                resized_mask_array = (gt_resize.detach().cpu().numpy() *255).astype('uint8')
+                source_img_features.append(lin_ft)
 
 
 
+    for i in range(0,20):
+        #new_anchors = new_anchors + i * new_anchors
+        new_ft =  i * lin_ft + 1
+        logits = model.classification_head(new_ft.unsqueeze(-1).unsqueeze(-1).to(device))[0]
+        energy_new_ft = energy_fn(logits).squeeze(-1).squeeze(-1).detach().cpu().numpy()
+        energy_score.append(energy_new_ft)
 
-                parts = image_id.split('/')
-                clean_image_id = parts[-1].replace('.bmp', '').replace('.png', '')
-
-                pixel_features = pixel_features.permute(0, 2, 3, 1).reshape(-1, 2048)
-                all_pixel_features.append(pixel_features.cpu())
-
-
-    all_pixel_features = torch.cat(all_pixel_features, dim=0)
-    h,w = all_pixel_features.shape 
-    gmm = GaussianMixture(n_components, w)
-    gmm.fit(all_pixel_features)            
-                
-    output_dir = os.path.join('gmm_model', dataset, 'source', f"n_components_{n_components}")
-    file_path = os.path.join(output_dir, f"gmm_params_{dataset}_{n_components}.pt")
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    torch.save({'mu': gmm.mu.detach().cpu(), 'var': gmm.var.detach().cpu(), 'pi': gmm.pi.detach().cpu()}, file_path)
-
-    indices = torch.randint(0, 50000, (100,))
-
-    selected_features = all_pixel_features[indices]
-    log_likelihood = gmm.score_samples(selected_features)
-    proba = gmm.predict_proba(selected_features)
-
-    density = torch.exp(log_likelihood)
-
-    # Plot des résultats
-    log_likelihood_np = log_likelihood.cpu().numpy()
-
-    plt.figure(figsize=(8, 4))
-    plt.hist(log_likelihood_np, bins=30, color='blue', alpha=0.6)
-    plt.xlabel("Log-Likelihood")
-    plt.ylabel("Nombre de features")
-    plt.title("Distribution des log-likelihoods du GMM")
-    plt.axvline(log_likelihood_np.mean(), color='red', linestyle='dashed', linewidth=2, label="Moyenne")
+    energy_score = np.array(energy_score)
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(liste, energy_score, label='Energy')
+    plt.xlabel("i")
+    plt.ylabel("Energy")
+    plt.title("Energy vs i")
     plt.legend()
-    plt.savefig("density_gmm_2D.png", dpi=300, bbox_inches="tight")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig("energy_vs_i_single.png", dpi=300)
     plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
+    #     enumerate(source_loaders[split]), ncols=constants.NCOLS,
+    #     total=len(source_loaders[split])):
+    #     image_size = images.shape[2:]
+    #     images = images.to(device)
+    #     targets = targets.to(device)
+        
+    #     with torch.no_grad():
+    #         out = model(images)
+    #         lin_ft = model.lin_ft.detach().cpu()
+    #         source_img_features.append(lin_ft)
+    #         y_source.append(targets.cpu().numpy())
+
+    # source_img_features = torch.cat(source_img_features, dim=0)
+    # y_source = np.concatenate(y_source, axis=0)
+    
+
+    # # Visualisation
+    # plt.figure(figsize=(8, 6))
+    # plt.scatter(
+    #     source_tsne[np.array(y_source) == 0, 0],
+    #     source_tsne[np.array(y_source) == 0, 1],
+    #     label='Source - Normal',
+    #     alpha=1.0,
+    #     s=10,
+    #     c='cornflowerblue',
+    #     marker='o'
+    # )
+
+    # plt.scatter(
+    #     source_tsne[np.array(y_source) == 1, 0],
+    #     source_tsne[np.array(y_source) == 1, 1],
+    #     label='Source - Cancer',
+    #     alpha=1.0,
+    #     s=10,
+    #     c='seagreen',
+    #     marker='o'
+    # )
+
+    # # 5. Plot par classe sur le domaine target
+    # plt.scatter(
+    #     target_tsne[np.array(y_target) == 0, 0],
+    #     target_tsne[np.array(y_target) == 0, 1],
+    #     label='Target - Normal',
+    #     alpha=1.0,
+    #     s=10,
+    #     c='lightsalmon',
+    #     marker='x'
+    # )
+
+    # plt.scatter(
+    #     target_tsne[np.array(y_target) == 1, 0],
+    #     target_tsne[np.array(y_target) == 1, 1],
+    #     label='Target - Cancer',
+    #     alpha=1.0,
+    #     s=10,
+    #     c='firebrick',
+    #     marker='x'
+    # )
+
+    # # Ancres
+    # plt.scatter(features_tsne[labels == 2, 0], features_tsne[labels == 2, 1], 
+    #             label='Anchor - Class 0', c='black', s=100, marker='P')
+    # plt.scatter(features_tsne[labels == 3, 0], features_tsne[labels == 3, 1], 
+    #             label='Anchor - Class 1', c='red', s=100, marker='P')
+
+    # # Affichage
+    # plt.legend()
+    # plt.title("t-SNE des features source et target par classe")
+    # plt.xlabel("TSNE-1")
+    # plt.ylabel("TSNE-2")
+    # plt.grid(True)
+    # plt.tight_layout()
+    # plt.savefig("tsne_features_colored_by_class_2.png", dpi=300, bbox_inches="tight")
+    # plt.show()
+                
+    # output_dir = os.path.join('gmm_model', dataset, 'source', f"n_components_{n_components}")
+    # file_path = os.path.join(output_dir, f"gmm_params_{dataset}_{n_components}.pt")
+
+    # os.makedirs(output_dir, exist_ok=True)
+
+    # torch.save({'mu': gmm.mu.detach().cpu(), 'var': gmm.var.detach().cpu(), 'pi': gmm.pi.detach().cpu()}, file_path)
+
+    # indices = torch.randint(0, 50000, (100,))
+
+    # selected_features = all_pixel_features[indices]
+    # log_likelihood = gmm.score_samples(selected_features)
+    # proba = gmm.predict_proba(selected_features)
+
+    # density = torch.exp(log_likelihood)
+
+    # # Plot des résultats
+    # log_likelihood_np = log_likelihood.cpu().numpy()
+
+    # plt.figure(figsize=(8, 4))
+    # plt.hist(log_likelihood_np, bins=30, color='blue', alpha=0.6)
+    # plt.xlabel("Log-Likelihood")
+    # plt.ylabel("Nombre de features")
+    # plt.title("Distribution des log-likelihoods du GMM")
+    # plt.axvline(log_likelihood_np.mean(), color='red', linestyle='dashed', linewidth=2, label="Moyenne")
+    # plt.legend()
+    # plt.savefig("density_gmm_2D.png", dpi=300, bbox_inches="tight")
+    # plt.show()
 
 
 
@@ -884,12 +973,12 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     # #            c='red', marker='x', s=200, label="Centres GMM")
     # plt.title("Clustering GMM avec Réduction t-SNE")
     # plt.legend()
-
+ 
     # # Sauvegarde de l'image
     # plt.savefig("clustering_gmm_tsne.png", dpi=300)
 
 
-    return overlay_images, input_images, method_name, gt_masks
+    return 0
     
 def fast_eval():
     t0 = dt.datetime.now()
@@ -906,12 +995,14 @@ def fast_eval():
                         type=int, default=[5, 10, 15, 20, 25, 30, 35 ,40, 45, 50])
     #parser.add_argument("--target_dataset", type=str, default=None,
     #                    help="Name of the dataset.", required=True, choices=[constants.CAMELYON512, constants.GLAS])
+    parser.add_argument("--target_dataset", type=str, default=None, help="Source dataset")
     parser.add_argument('--image_ids_to_draw', nargs='+', type=str, default=None)
     parser.add_argument('--image_ids_to_draw_target', nargs='+', type=str, default=None)
     parser.add_argument("--n_components", type=int, default=None)
+    parser.add_argument("--method", type=str, default=None)
     parser.add_argument("--source_dataset", type=str, default=None, help="Source dataset")
-    #parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
-    parser.add_argument("--path_pre_trained_source", type=json.loads, default={})
+    parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
+    #parser.add_argument("--path_pre_trained_source", type=json.loads, default={})
     
 
     parsedargs = parser.parse_args()
@@ -933,7 +1024,7 @@ def fast_eval():
     DLLogger.init_arb(backends=log_backends, master_pid=os.getpid())
     ##########
 
-    base_checkpoint_types = [constants.BEST_LOC]
+    base_checkpoint_types = [parsedargs.checkpoint_type]
         
     for checkpoint_type_extended in base_checkpoint_types:
         checkpoint_type = checkpoint_type_extended
@@ -956,7 +1047,7 @@ def fast_eval():
         #target_methods = ['DeepMIL','GradCAMpp','LayerCAM','SAT']
         #target_methods = ['GradCAMpp']
 
-        target_methods = ['PixelCAM LC']
+        target_methods = ['SOURCE']
 
         method_name_lst = []
         for ind_method, target_method in enumerate(target_methods):
@@ -971,7 +1062,7 @@ def fast_eval():
 
 
             #Get features at the pixel level
-            overlay_images, input_images, method_name, gt_masks = get_features(exp_path=exp_path, sf_uda_source_folder=parsedargs.path_pre_trained_source,image_ids_to_draw=parsedargs.image_ids_to_draw,image_ids_to_draw_target=parsedargs.image_ids_to_draw_target, checkpoint_type=checkpoint_type, dataset=parsedargs.source_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs, target_method=target_method, n_components = parsedargs.n_components)
+            get_features(exp_path=exp_path, sf_uda_source_folder=parsedargs.path_pre_trained_source,image_ids_to_draw=parsedargs.image_ids_to_draw,image_ids_to_draw_target=parsedargs.image_ids_to_draw_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs, target_method=target_method, n_components = parsedargs.n_components)
 
 if __name__ == '__main__':
     fast_eval()

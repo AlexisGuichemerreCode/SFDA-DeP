@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import torch.nn.functional as F
 
 from math import pi
 from scipy.special import logsumexp
@@ -198,8 +199,10 @@ class GaussianMixture(torch.nn.Module):
         weighted_log_prob = self._estimate_log_prob(x) + torch.log(self.pi)
 
         if probs:
-            p_k = torch.exp(weighted_log_prob)
-            return torch.squeeze(p_k / (p_k.sum(1, keepdim=True)))
+            p_k = F.softmax(weighted_log_prob, dim=1)
+            return p_k.squeeze()
+            #p_k = torch.exp(weighted_log_prob)
+            #return torch.squeeze(p_k / (p_k.sum(1, keepdim=True)))
         else:
             return torch.squeeze(torch.max(weighted_log_prob, 1)[1].type(torch.LongTensor))
 
