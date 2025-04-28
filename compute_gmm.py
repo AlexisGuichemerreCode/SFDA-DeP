@@ -27,9 +27,13 @@ from torch.cuda.amp import autocast
 import matplotlib.pyplot as plt
 from skimage.transform import resize
 from sklearn.manifold import TSNE
-#from sklearn.mixture import GaussianMixture
-from dlib.gmm.gmm import GaussianMixture
+from sklearn.mixture import GaussianMixture
+#from dlib.gmm.gmm import GaussianMixture
 import seaborn as sns
+from scipy.stats import zscore
+
+
+from dlib.metrics import da_metrics
 
 #import cuml
 #print("cuML version:", cuml.__version__)
@@ -728,7 +732,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     ####################################################################################
     DLLogger.flush()
     
-    source_metadata_root = join(constants.RELATIVE_META_ROOT, source_dataset, f"fold-{args.fold}")
+    source_metadata_root = join(constants.RELATIVE_META_ROOT, source_dataset, f"fold-6")
     #read sys var DATASETSH
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     source_domain_data_paths = config.configure_data_paths(args_dict, source_dataset)
@@ -775,8 +779,12 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     gt_masks = {}
     #all_pixel_features = []
     source_img_features = []
+    source_pixel_features = []
+
     target_img_features = []
+    target_pixel_features = []
     
+    domain_shift_measure = da_metrics.FeatureShiftCalculator()
 
     model.eval()
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
@@ -789,14 +797,29 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         with torch.no_grad():
             out = model(images)
             lin_ft = model.lin_ft.detach().cpu()
-            source_img_features.append(lin_ft)
+            px_feat = model.encoder_last_features.detach().cpu()
+            b, c, h, w = px_feat.shape
+            px_feat_flat = px_feat.permute(0, 2, 3, 1).reshape(-1, c)
 
-    source_img_features = torch.cat(source_img_features, dim=0)
+            source_pixel_features.append(px_feat_flat)
+            #source_img_features.append(lin_ft)
+            #gap_features = lin_ft
+            #domain_shift_measure.accumulate(gap_features, domain='source')
+        
+
+    source_pixel_features = torch.cat(source_pixel_features, dim=0)
+    #source_img_features = torch.cat(source_img_features, dim=0)
     
+    # gmm = GaussianMixture(
+    #         n_components=n_components,
+    #         max_iter=1000,
+    #         n_init=1,
+    #         covariance_type='diag',
+    #         verbose=0
+    #     )
+    # gmm.fit(source_pixel_features)
     
-    h,w = source_img_features.shape 
-    gmm = GaussianMixture(n_components, w)
-    gmm.fit(source_img_features,delta=1e-8, n_iter=500)      
+        
 
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
     enumerate(target_loaders[split]), ncols=constants.NCOLS,
@@ -808,10 +831,104 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         with torch.no_grad():
             out = model(images)
             lin_ft = model.lin_ft.detach().cpu()
-            target_img_features.append(lin_ft)
+            #target_img_features.append(lin_ft)
+            px_feat = model.encoder_last_features.detach().cpu()
+            b, c, h, w = px_feat.shape
+            px_feat_flat = px_feat.permute(0, 2, 3, 1).reshape(-1, c)
 
-    target_img_features = torch.cat(target_img_features, dim=0)
+            target_pixel_features.append(px_feat_flat)
+            #gap_features = lin_ft
+            #domain_shift_measure.accumulate(gap_features, domain='target')
 
+    target_pixel_features = torch.cat(target_pixel_features, dim=0)
+
+    #target_img_features = torch.cat(target_img_features, dim=0)
+    
+
+    #shift_score=domain_shift_measure.domain_shift()
+
+    h, w = target_pixel_features.shape
+
+    for n_components in range(5, 6):  # 2 to 5 inclusive
+        print(f"Training GMM with {n_components} components...")
+
+        gmm = GaussianMixture(
+            n_components=n_components,
+            max_iter=1000,
+            n_init=1,
+            covariance_type='diag',
+            verbose=0
+        )
+        gmm.fit(source_pixel_features)
+
+        # Score samples (log-likelihood)
+        source_log_likelihood = gmm.score_samples(source_pixel_features)
+        target_log_likelihood = gmm.score_samples(target_pixel_features)
+
+        # Plot
+        s_ll = np.clip(source_log_likelihood, 
+                np.percentile(source_log_likelihood, 1),
+                np.percentile(source_log_likelihood, 99))
+        t_ll = np.clip(target_log_likelihood, 
+                    np.percentile(target_log_likelihood, 1),
+                    np.percentile(target_log_likelihood, 99))
+
+        plt.figure(figsize=(8, 5))
+        plt.hist(s_ll, bins=100, alpha=0.8, label='Source', density=True)
+        plt.hist(t_ll, bins=100, alpha=0.8, label='Target', density=True)
+        plt.xlabel('Standardized log-likelihood')
+        plt.ylabel('Density')
+        plt.title(f'Log-likelihoods (GMM {n_components} comp.)')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(f"vizu_gmm_{n_components}_components_on_pixels_on_{source_dataset}_vs_{target_dataset}.png", dpi=300)
+        plt.close()
+
+    h, w = source_img_features.shape
+
+    for n_components in range(2, 6):  # 2 to 5 inclusive
+        print(f"Training GMM with {n_components} components...")
+
+        gmm = GaussianMixture(
+            n_components=n_components,
+            max_iter=1000,
+            n_init=1,
+            covariance_type='diag',
+            verbose=0
+        )
+        gmm.fit(source_img_features)
+
+        # Score samples (log-likelihood)
+        source_log_likelihood = gmm.score_samples(source_img_features)
+        target_log_likelihood = gmm.score_samples(target_img_features)
+
+        # Plot
+        s_ll = np.clip(source_log_likelihood, 
+                np.percentile(source_log_likelihood, 1),
+                np.percentile(source_log_likelihood, 99))
+        t_ll = np.clip(target_log_likelihood, 
+                    np.percentile(target_log_likelihood, 1),
+                    np.percentile(target_log_likelihood, 99))
+
+        plt.figure(figsize=(8, 5))
+        plt.hist(s_ll, bins=100, alpha=0.8, label='Source', density=True)
+        plt.hist(t_ll, bins=100, alpha=0.8, label='Target', density=True)
+        plt.xlabel('Standardized log-likelihood')
+        plt.ylabel('Density')
+        plt.title(f'Log-likelihoods (GMM {n_components} comp.)')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(f"vizu_gmm_{n_components}_components_on_{source_dataset}_vs_{target_dataset}.png", dpi=300)
+        plt.close()
+
+
+    h,w = source_img_features.shape 
+    #gmm = GaussianMixture(n_components, w)
+    gmm = GaussianMixture(n_components, max_iter=1000, n_init=1, covariance_type='diag', verbose=0, verbose_interval=10)
+    gmm.fit(source_img_features)
+    #gmm.fit(source_img_features,delta=1e-8, n_iter=500)  
     
     source_log_likelihood = gmm.score_samples(source_img_features)
     target_log_likelihood = gmm.score_samples(target_img_features)

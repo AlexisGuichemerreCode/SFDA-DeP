@@ -197,12 +197,23 @@ class GaussianMixture(torch.nn.Module):
         x = self.check_size(x)
 
         weighted_log_prob = self._estimate_log_prob(x) + torch.log(self.pi)
+        #max_log_prob, _ = torch.max(weighted_log_prob, dim=1, keepdim=True)
+        #stabilized_log_prob = weighted_log_prob - max_log_prob
 
         if probs:
-            p_k = F.softmax(weighted_log_prob, dim=1)
-            return p_k.squeeze()
-            #p_k = torch.exp(weighted_log_prob)
-            #return torch.squeeze(p_k / (p_k.sum(1, keepdim=True)))
+            #p_k = F.softmax(weighted_log_prob, dim=1)
+            #return p_k.squeeze()
+            log_prob_norm = torch.logsumexp(weighted_log_prob, dim=1, keepdim=True)
+            log_resp = weighted_log_prob - log_prob_norm
+
+            resp = torch.exp(log_resp)  # shape: [n, k]
+            return resp
+            #p_k = torch.exp(stabilized_log_prob)
+            #normalized_p_k = p_k / (p_k.sum(1, keepdim=True))
+
+            #return torch.squeeze(normalized_p_k)
+            # p_k = torch.exp(weighted_log_prob)
+            # return torch.squeeze(p_k / (p_k.sum(1, keepdim=True)))
         else:
             return torch.squeeze(torch.max(weighted_log_prob, 1)[1].type(torch.LongTensor))
 

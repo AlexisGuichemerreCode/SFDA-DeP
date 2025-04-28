@@ -313,6 +313,41 @@ class CAMComputer(object):
 
                 self.evaluator.accumulate(
                     cam, image_id, target.item(), _preds_ordered)
+                
+    def minibatch_one_img_accum(self, image, target, image_id, image_size, eval_entropy = False) -> None:
+
+        with torch.set_grad_enabled(self.req_grad):
+            cam, cl_logits = self.get_cam_one_sample(
+                image=image.unsqueeze(0), target=target.item())
+
+        with torch.no_grad():
+            cam = F.interpolate(cam.unsqueeze(0).unsqueeze(0),
+                                image_size,
+                                mode='bilinear',
+                                align_corners=False).squeeze(0).squeeze(0)
+            cam = cam.detach()
+
+            if eval_entropy:
+                gt_mask = get_mask(self.evaluator.mask_root,
+                                        self.evaluator.mask_paths[image_id],
+                                        self.evaluator.ignore_paths[image_id])
+                loc_pred = self.model.cam
+            
+            # todo:
+            # cam = torch.clamp(cam, min=0.0, max=1.)
+
+            # cam: (h, w)
+            cam = t2n(cam)
+            _preds_ordered = None
+            if cl_logits is not None:
+                assert cl_logits.ndim == 2
+                _, preds_ordered = torch.sort(
+                    input=cl_logits.cpu().squeeze(0), descending=True,
+                    stable=True)
+                _preds_ordered = preds_ordered.numpy()
+
+            self.evaluator.accumulate(
+                cam, image_id, target.item(), _preds_ordered)
 
     def normalizecam(self, cam):
         if self.args.task == constants.STD_CL:
@@ -363,16 +398,16 @@ class CAMComputer(object):
 
         return self.evaluator.compute()
     
-    def compute_and_evaluate_cams_one_image(self, images, targets, image_ids, image_size):
+    def compute_and_evaluate_cams_one_image(self, image, target, image_id, image_size):
         print("Computing and evaluating cams.")
         self.fix_random()
 
-        images = images.cuda()
+        images = image.cuda()
 
 
-        self.minibatch_accum(images=images,
-                                targets=targets,
-                                image_ids=image_ids,
+        self.minibatch_one_img_accum(image=image,
+                                target=target,
+                                image_id=image_id,
                                 image_size=image_size
                                 )
 

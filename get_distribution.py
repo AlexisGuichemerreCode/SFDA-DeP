@@ -54,6 +54,8 @@ from dlib.cams import build_std_cam_extractor
 from dlib.utils.reproducibility import set_seed
 from dlib.process.instantiators import get_model, get_pretrainde_classifier
 
+from dlib.datasets.wsol_loader_natural import get_data_loader_natural
+
 from dlib.datasets.wsol_loader import get_data_loader
 from dlib.datasets.wsol_loader import configure_metadata
 from dlib.datasets.wsol_loader import get_class_labels
@@ -114,7 +116,7 @@ def energy_fn(logits):
 
 
 
-def extract_features_source_target(mask_source, feature_source, label_source, cam_source, image_id_source,mask_target, feature_target, label_target, cam_target, image_id_target, anchors):
+def extract_features_source_target(mask_source, feature_source, label_source, cam_source, image_id_source,mask_target, feature_target, label_target, cam_target, image_id_target, anchors, i):
     cancer_features = np.empty((0, 2048))
     non_cancer_features = np.empty((0, 2048))
     background_features = np.empty((0, 2048))
@@ -138,24 +140,33 @@ def extract_features_source_target(mask_source, feature_source, label_source, ca
     features2_target= zero_feature_target.detach().cpu().numpy().T
 
     anchors_resize = anchors.squeeze().detach().cpu().numpy()
-    all_features = np.concatenate([features1_source, features2_source, features1_target, features2_target])
+    #all_features = np.concatenate([features1_source, features2_source, features1_target, features2_target])
+    all_features = np.concatenate([features1_source, features2_source, features1_target, features2_target, anchors_resize])
     #all_features = np.concatenate([features1_source, features2_source])
     tsne = TSNE(n_components=2)
     embedded_features = tsne.fit_transform(all_features)
 
 
-    embedded_features1_source = embedded_features[:features1_source.shape[0]]
-    embedded_features2_source = embedded_features[features1_source.shape[0]:features1_source.shape[0]+features2_source.shape[0]]
-    embedded_features1_target = embedded_features[features1_source.shape[0]+features2_source.shape[0]:features1_source.shape[0]+features2_source.shape[0]+features1_target.shape[0]]
-    embedded_features2_target = embedded_features[features1_source.shape[0]+features2_source.shape[0]+features1_target.shape[0]:]
+    # embedded_features1_source = embedded_features[:features1_source.shape[0]]
+    # embedded_features2_source = embedded_features[features1_source.shape[0]:features1_source.shape[0]+features2_source.shape[0]]
+    # embedded_features1_target = embedded_features[features1_source.shape[0]+features2_source.shape[0]:features1_source.shape[0]+features2_source.shape[0]+features1_target.shape[0]]
+    # embedded_features2_target = embedded_features[features1_source.shape[0]+features2_source.shape[0]+features1_target.shape[0]:]
 
+    n1, n2, n3, n4 = features1_source.shape[0], features2_source.shape[0], features1_target.shape[0], features2_target.shape[0]
+    embedded_features1_source = embedded_features[:n1]
+    embedded_features2_source = embedded_features[n1:n1+n2]
+    embedded_features1_target = embedded_features[n1+n2:n1+n2+n3]
+    embedded_features2_target = embedded_features[n1+n2+n3:n1+n2+n3+n4]
+    embedded_anchors = embedded_features[n1+n2+n3+n4:]
 
     plt.scatter(embedded_features1_source[:, 0], embedded_features1_source[:, 1], color='blue', label='Foreground GLAS source')
     plt.scatter(embedded_features2_source[:, 0], embedded_features2_source[:, 1], color='red', label='Background GLAS source')
     plt.scatter(embedded_features1_target[:, 0], embedded_features1_target[:, 1], color='black', label='Foreground CAMELYON target')
     plt.scatter(embedded_features2_target[:, 0], embedded_features2_target[:, 1], color='orange', label='Background CAMELYON target')
 
-  
+    plt.scatter(embedded_anchors[0, 0], embedded_anchors[0, 1], marker='X', s=120, color='pink', label='Background Anchor')
+    plt.scatter(embedded_anchors[1, 0], embedded_anchors[1, 1], marker='P', s=120, color='yellow', label='Foreground Anchor')
+
     plt.legend()
     if label_source == 1:
         classe = 'cancer'
@@ -165,9 +176,9 @@ def extract_features_source_target(mask_source, feature_source, label_source, ca
 
     parts = image_id_source.split('/')
     clean_image_id = parts[1].replace('.bmp', '')
-    plt.title(f"T-SNE visualization between source and target features \n from GLAS to CAMELYON at the pixel level \n for a {classe} image ", fontsize=10)
+    plt.title(f"T-SNE visualization between source and target features \n from CAMELYON to GLAS at the pixel level \n for a {classe} image {str(i)}", fontsize=10)
     # Sauvegarder l'image
-    plt.savefig('tsne_plot_shift_glas_to_cam_cancer_test.png')
+    plt.savefig(f'tsne_plot_shift_cam_to_glas_cancer_test_{str(i)}.png')
     plt.close()
     return cancer_features, non_cancer_features, background_features
 
@@ -327,6 +338,102 @@ IgnoreKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, 
 IgnoreKeyLoader.add_constructor('tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar', IgnoreKeyLoader.ignore_numpy_scalars)
 
 
+def load_model(exp_path,dataset,checkpoint_type, cudaid, tmp_outd='tmp_outd', parsedargs=None):
+    with open(join(exp_path, 'config_obj_final.yaml'), 'r') as fy:
+        args_dict = yaml.load(fy, Loader=IgnoreKeyLoader)
+        # args_dict = yaml.safe_load(fy)
+        args_dict['model']['freeze_encoder'] = False
+        args_dict['model']['folder_pre_trained_cl'] = None
+        args = Dict2Obj(args_dict)
+        args.outd = tmp_outd
+        args.distributed = False
+        args.eval_checkpoint_type = checkpoint_type
+
+    os.makedirs(args.outd, exist_ok=True)
+
+    _DEFAULT_SEED = args.MYSEED
+    os.environ['MYSEED'] = str(args.MYSEED)
+
+    tag = get_tag(args, checkpoint_type=checkpoint_type)
+
+    msg = 'Task: {} \t box_v2_metric: {} \t' \
+        'Dataset: {} \t Method: {} \t ' \
+        'Encoder: {} \t'.format(args.task, args.box_v2_metric, args.dataset,
+                                args.method, args.model['encoder_name'])
+    encoder_name = args.model['encoder_name']
+    method_name = args.method
+    source_dataset = dataset
+    
+    # DLLogger.log(fmsg("Start time: {}".format(t0)))
+    DLLogger.log(fmsg(msg))
+
+    set_seed(seed=_DEFAULT_SEED, verbose=False)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+
+    device = torch.device('cuda:{}'.format(cudaid))
+
+    tag = get_tag(args, checkpoint_type=checkpoint_type)
+    path_cl = join(exp_path, tag)
+    with open(join(path_cl, 'config_model.yaml'), 'r') as fy:
+        args_dict = yaml.load(fy, Loader=IgnoreKeyLoader)
+        # args_dict = yaml.safe_load(fy)
+        # args_dict['model']['freeze_encoder'] = False
+        args_dict['pixel_wise_classification'] = args_dict.get('pixel_wise_classification', False)
+        args_dict['model']['folder_pre_trained_cl'] = None
+        args_dict['multiple_layer_pixel_classifier'] = False
+        args_dict['anchors_ortogonal'] = False
+        args_dict['detach_pixel_classifier'] = False
+        args_dict['batch_norm_pixel_classifier'] = False
+        args_dict['one_layer_pixel_classifier'] = False
+        args = Dict2Obj(args_dict)
+        args.outd = tmp_outd
+        args.distributed = False
+        args.eval_checkpoint_type = checkpoint_type
+
+    args.sf_uda = False
+
+    model = get_model(args)[0]
+
+    print(f'Loading model for {method_name}-{encoder_name} from {path_cl}')
+    if parsedargs.external_model == None:
+        if "tscam" in encoder_name:
+            model_tscam = torch.load(join(path_cl, 'model.pt'),map_location=get_cpu_device())
+
+            model.load_state_dict(model_tscam, strict=True)
+        else:
+            encoder_w = torch.load(join(path_cl, 'encoder.pt'),
+                                map_location=get_cpu_device())
+            model.encoder.super_load_state_dict(encoder_w, strict=True)
+
+            header_w = torch.load(join(path_cl, 'classification_head.pt'),
+                                map_location=get_cpu_device())
+            model.classification_head.load_state_dict(header_w, strict=True)
+
+            if method_name == constants.METHOD_PIXELCAM:    #'EnergyCAM': constants.METHOD_ENERGY:
+                header_p = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
+                                map_location=get_cpu_device())
+                model.pixel_wise_classification_head.load_state_dict(header_p, strict=True)
+    else:
+        path_eternal_cl = parsedargs.external_model
+        encoder_w = torch.load(join(path_eternal_cl, 'encoder.pt'),
+                                map_location=get_cpu_device())
+        model.encoder.super_load_state_dict(encoder_w, strict=True)
+
+        header_w = torch.load(join(path_eternal_cl, 'classification_head.pt'),
+                            map_location=get_cpu_device())
+        model.classification_head.load_state_dict(header_w, strict=True)
+
+
+
+        if method_name == constants.METHOD_PIXELCAM:    #'EnergyCAM': constants.METHOD_ENERGY:
+            header_p = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
+                            map_location=get_cpu_device())
+            model.pixel_wise_classification_head.load_state_dict(header_p, strict=True)
+
+    return model
+
+
 def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_draw_target, checkpoint_type, dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None):
 
 
@@ -458,9 +565,13 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     target_domain_data_paths = config.configure_data_paths(args_dict, dataset)
 
-    metadata_root_CAME = join('./folds/wsol-done-right-splits', 'CAMELYON512', f"fold-{args.fold}")
+    # metadata_root_CAME = join('./folds/wsol-done-right-splits', 'CAMELYON512', f"fold-{args.fold}")
+    # args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
+    # target_domain_data_paths_CAME = config.configure_data_paths(args_dict, 'CAMELYON512')
+
+    metadata_root_CAME = join('./folds/wsol-done-right-splits', 'GLAS', f"fold-{args.fold}")
     args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
-    target_domain_data_paths_CAME = config.configure_data_paths(args_dict, 'CAMELYON512')
+    target_domain_data_paths_CAME = config.configure_data_paths(args_dict, 'GLAS')
 
     loaders = get_data_loader(
             data_roots=target_domain_data_paths,
@@ -479,19 +590,37 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         )
 
     loaders_came = get_data_loader(
-                data_roots=target_domain_data_paths_CAME,
-                metadata_root=metadata_root_CAME,
-                batch_size=32,#args.batch_size,
-                workers=args.num_workers,
-                resize_size=args.resize_size,
-                crop_size=args.crop_size,
-                proxy_training_set=args.proxy_training_set,
-                num_val_sample_per_class=args.num_val_sample_per_class,
-                std_cams_folder=args.std_cams_folder,
-                # distributed_eval=False,
-                get_splits_eval=['valpx'],
-                eval_batch_size = 32#args.eval_batch_size,
-            )     
+            data_roots=target_domain_data_paths,
+            metadata_root=metadata_root,
+            batch_size=32,#args.batch_size,
+            workers=args.num_workers,
+            resize_size=args.resize_size,
+            crop_size=args.crop_size,
+            proxy_training_set=args.proxy_training_set,
+            num_val_sample_per_class=args.num_val_sample_per_class,
+            std_cams_folder=args.std_cams_folder,
+            # distributed_eval=False,
+            get_splits_eval=['train'],
+            #constants.TRAINSET
+            eval_batch_size = 32#args.eval_batch_size,
+        )
+    
+    target_model = load_model(target_domain_data_paths, 'GLAS', checkpoint_type, cudaid, tmp_outd=tmp_outd, parsedargs=parsedargs)
+
+    # loaders_came = get_data_loader(
+    #             data_roots=target_domain_data_paths_CAME,
+    #             metadata_root=metadata_root_CAME,
+    #             batch_size=32,#args.batch_size,
+    #             workers=args.num_workers,
+    #             resize_size=args.resize_size,
+    #             crop_size=args.crop_size,
+    #             proxy_training_set=args.proxy_training_set,
+    #             num_val_sample_per_class=args.num_val_sample_per_class,
+    #             std_cams_folder=args.std_cams_folder,
+    #             # distributed_eval=False,
+    #             get_splits_eval=['valpx'],
+    #             eval_batch_size = 32#args.eval_batch_size,
+    #         )     
     
     cam_computer = CAMComputer(
             args=deepcopy(args),
@@ -506,25 +635,78 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             multi_contour_eval=args.multi_contour_eval,
             out_folder=args.outd,
         )
+    
     cam_computer_came = CAMComputer(
             args=deepcopy(args),
-            model=model,
-            loader=loaders_came['valpx'],
-            metadata_root=os.path.join(metadata_root_CAME, 'valpx'),
+            model=target_model,
+            loader=loaders['train'],
+            metadata_root=os.path.join(metadata_root, 'train'),
             mask_root=args.mask_root,
             iou_threshold_list=args.iou_threshold_list,
-            dataset_name='CAMELYON512',
-            split='valpx',
+            dataset_name=args.dataset,
+            split= 'train',
             cam_curve_interval=args.cam_curve_interval,
             multi_contour_eval=args.multi_contour_eval,
             out_folder=args.outd,
-        )        
+        )
+    
+    # cam_computer_came = CAMComputer(
+    #         args=deepcopy(args),
+    #         model=model,
+    #         loader=loaders_came['valpx'],
+    #         metadata_root=os.path.join(metadata_root_CAME, 'valpx'),
+    #         mask_root=args.mask_root,
+    #         iou_threshold_list=args.iou_threshold_list,
+    #         dataset_name='CAMELYON512',
+    #         split='valpx',
+    #         cam_curve_interval=args.cam_curve_interval,
+    #         multi_contour_eval=args.multi_contour_eval,
+    #         out_folder=args.outd,
+    #     )        
     overlay_images = {}
     input_images = {}
     gt_masks = {}
 
     with torch.no_grad():
          anchors = model.pixel_wise_classification_head.conv4.weight
+
+    i = 0
+
+    # metadata_root = join(constants.RELATIVE_META_ROOT, 'CUB')
+    # target_domain_data_paths = config.configure_data_paths(args_dict, 'CUB')
+
+    # loaders = get_data_loader_natural(
+    #         data_roots=target_domain_data_paths,
+    #         metadata_root=metadata_root,
+    #         batch_size=32,#args.batch_size,
+    #         workers=args.num_workers,
+    #         resize_size=args.resize_size,
+    #         crop_size=args.crop_size,
+    #         proxy_training_set=args.proxy_training_set,
+    #         num_val_sample_per_class=args.num_val_sample_per_class,
+    #         std_cams_folder=args.std_cams_folder,
+    #         # distributed_eval=False,
+    #         get_splits_eval=['train'],
+    #         #constants.TRAINSET
+    #     )
+    
+    # for batch_idx, (images, targets, index, _, _) in tqdm(
+    #     enumerate(loaders[split]), ncols=constants.NCOLS,
+    #     total=len(loaders[split])):
+
+    #     image_size = images.shape[2:]
+    #     images = images.to(device)
+    #     targets = targets.to(device)
+
+    #     for image, target, image_id in zip(images, targets, index):
+    #         with torch.set_grad_enabled(cam_computer.req_grad):
+    #             cam, cl_logits = cam_computer.get_cam_one_sample(
+    #                 image=image.unsqueeze(0), target=target.item())
+                
+    #             with torch.no_grad():
+    #                 out = model(image.cuda().unsqueeze(0))
+    #                 pixel_features = model.encoder_last_features
+                
 
 
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
@@ -541,6 +723,8 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         for image, target, image_id in zip(images, targets, index):
             if image_id not in image_ids_to_draw:
                 continue
+            # if target not in [1]:
+            #     continue
             with torch.set_grad_enabled(cam_computer.req_grad):
                 cam, cl_logits = cam_computer.get_cam_one_sample(
                     image=image.unsqueeze(0), target=target.item())
@@ -557,20 +741,23 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                                         mode='bilinear', align_corners=False).squeeze(0).squeeze(0).cpu().numpy()
             gt_resize = (gt_resize * 255).astype('uint8')
             #GroundTruth.append(gt_mask)
+            i += 1
             for batch_idx, (images_came, targets_came, p_glabel_came, index_came, raw_imgs_came, std_cams_came, _, views_came) in tqdm(
-                enumerate(loaders_came['valpx']), ncols=constants.NCOLS, total=len(loaders_came['valpx'])):
+                enumerate(loaders_came['train']), ncols=constants.NCOLS, total=len(loaders_came['train'])):
                 images_came = images_came.to(device)
                 targets_came = targets_came.to(device)
                 for image_came, target_came, image_id_came in zip(images_came, targets_came, index_came):
                     if image_id_came not in image_ids_to_draw_target:
                         continue
+                    # if target_came not in [1]:
+                    #     continue
                     with torch.set_grad_enabled(cam_computer_came.req_grad):
                         cam_came, cl_logits_came = cam_computer_came.get_cam_one_sample(
                         image=image_came.unsqueeze(0), target=target_came.item())    
                     with torch.no_grad():
-                        out = model(image_came.cuda().unsqueeze(0))
-                        pixel_features_target = model.encoder_last_features
-                    gt_mask = get_mask(f'/export/gauss/vision/Aguichemerre/datasets/CAMELYON512',
+                        out = target_model(image_came.cuda().unsqueeze(0))
+                        pixel_features_target = target_model.encoder_last_features
+                    gt_mask = get_mask(f'/export/gauss/vision/Aguichemerre/datasets/GLAS',
                                 cam_computer_came.evaluator.mask_paths[image_id_came],
                                 cam_computer_came.evaluator.ignore_paths[image_id_came])
                     
@@ -580,7 +767,8 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
                     gt_resize_came = (gt_resize_came * 255).astype('uint8')
 
-                    cancer_features, non_cancer_features, background_features = extract_features_source_target(gt_resize, pixel_features, target, cam, image_id, gt_resize_came, pixel_features_target, target_came, cam_came, image_id_came, anchors)
+                    
+                    cancer_features, non_cancer_features, background_features = extract_features_source_target(gt_resize, pixel_features, target, cam, image_id, gt_resize_came, pixel_features_target, target_came, cam_came, image_id_came, anchors, i)
                     #cancer_features, non_cancer_features, background_features = extract_features(gt_resize, pixel_features, target, cam, image_id)
         print("pass")
 
@@ -605,6 +793,9 @@ def fast_eval():
     parser.add_argument('--image_ids_to_draw_target', nargs='+', type=str, default=None)
     parser.add_argument("--source_dataset", type=str, default=None, help="Source dataset")
     parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
+    parser.add_argument("--external_model", type=str, default=None, help="Path to the external bb+cl.")
+    parser.add_argument("--source_model_name", type=str, default=None, help="Name of source model.")
+    parser.add_argument("--target_model_name", type=str, default=None, help="Name of target model.")
 
     parsedargs = parser.parse_args()
     

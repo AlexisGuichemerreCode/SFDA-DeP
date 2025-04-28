@@ -61,6 +61,8 @@ from dlib.cams import build_std_cam_extractor
 from dlib.utils.reproducibility import set_seed
 from dlib.process.instantiators import get_model, get_pretrainde_classifier
 
+from dlib.datasets.wsol_loader_natural import get_data_loader_natural
+
 from dlib.datasets.wsol_loader import get_data_loader
 from dlib.datasets.wsol_loader import configure_metadata
 from dlib.datasets.wsol_loader import get_class_labels
@@ -771,6 +773,23 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         eval_batch_size = 32#args.eval_batch_size,
     )
     
+    metadata_root = join(constants.RELATIVE_META_ROOT, 'CUB')
+    target_domain_data_paths = config.configure_data_paths(args_dict, 'CUB')
+
+    target_loaders = get_data_loader_natural(
+        data_roots=target_domain_data_paths,
+        metadata_root=metadata_root,
+        batch_size=32,#args.batch_size,
+        workers=args.num_workers,
+        resize_size=args.resize_size,
+        crop_size=args.crop_size,
+        proxy_training_set=args.proxy_training_set,
+        num_val_sample_per_class=args.num_val_sample_per_class,
+        std_cams_folder=args.std_cams_folder,
+        # distributed_eval=False,
+        get_splits_eval=['train'],
+        #constants.TRAINSET
+    )
 
     overlay_images = {}
     input_images = {}
@@ -778,6 +797,9 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     #all_pixel_features = []
     source_img_features = []
     target_img_features = []
+
+    source_px_features = []
+    target_px_features = []
 
     y_source = []
     y_target = []
@@ -796,22 +818,42 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             source_img_features.append(lin_ft)
             y_source.append(targets.cpu().numpy())
 
+            px_lin_ft = model.encoder_last_features
+
     source_img_features = torch.cat(source_img_features, dim=0)
     y_source = np.concatenate(y_source, axis=0)
     
-
-    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
-    enumerate(target_loaders[split]), ncols=constants.NCOLS,
-    total=len(target_loaders[split])):
+    i = 0
+    for batch_idx, (images, targets, index, _, _) in tqdm(
+        enumerate(target_loaders[split]), ncols=constants.NCOLS,
+        total=len(target_loaders[split])):
         image_size = images.shape[2:]
         images = images.to(device)
         targets = targets.to(device)
         
-        with torch.no_grad():
-            out = model(images)
-            lin_ft = model.lin_ft.detach().cpu()
-            target_img_features.append(lin_ft)
-            y_target.append(targets.cpu().numpy())
+        if i < 3:
+            with torch.no_grad():
+                out = model(images)
+                lin_ft = model.lin_ft.detach().cpu()
+                target_img_features.append(lin_ft)
+                y_target.append(targets.cpu().numpy())
+                i += 1
+        else:
+            continue
+
+
+    # for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
+    # enumerate(target_loaders[split]), ncols=constants.NCOLS,
+    # total=len(target_loaders[split])):
+    #     image_size = images.shape[2:]
+    #     images = images.to(device)
+    #     targets = targets.to(device)
+        
+    #     with torch.no_grad():
+    #         out = model(images)
+    #         lin_ft = model.lin_ft.detach().cpu()
+    #         target_img_features.append(lin_ft)
+    #         y_target.append(targets.cpu().numpy())
 
     target_img_features = torch.cat(target_img_features, dim=0)
     y_target = np.concatenate(y_target, axis=0)
@@ -825,21 +867,37 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             #anchors = model.classification_head.fc.weight
             anchors = anchors.squeeze(-1).squeeze(-1).cpu().numpy()
 
-    features_all = np.concatenate([source_array, target_array, anchors], axis=0)
+    features_all = np.concatenate([source_array, target_array], axis=0)
 
     labels = (
     [0] * len(source_array) + 
-    [1] * len(target_array) + 
-    [2, 3]  # class anchor 0 (background), class anchor 1 (foreground)
+    [1] * len(target_array) # class anchor 0 (background), class anchor 1 (foreground)
 )
     
-    features_all = np.concatenate([source_array, anchors], axis=0)
-    features_tsne_source = TSNE(n_components=2, perplexity=5, random_state=42, min_grad_norm=1e-08, max_iter=2000).fit_transform(features_all)
-    features_tsne_source = np.array(features_tsne_source)
+    #features_all = np.concatenate([source_array, anchors], axis=0)
+    features_tsne_source = TSNE(n_components=2, perplexity=5, random_state=42, min_grad_norm=1e-06, max_iter=500).fit_transform(features_all)
+    features_tsne = np.array(features_tsne_source)
     labels = (
     [0] * len(source_array) + 
     [1, 2]  # class anchor 0 (background), class anchor 1 (foreground)
 )
+
+
+    plt.scatter(features_tsne[:len(source_array), 0], features_tsne[:len(source_array), 1],
+                label='Source', alpha=1.0, s=10, c='cornflowerblue', marker='o')
+
+    plt.scatter(features_tsne[len(source_array):, 0], features_tsne[len(source_array):, 1],
+                label='Target', alpha=1.0, s=10, c='firebrick', marker='x')
+
+    # Légendes et titres
+    plt.legend()
+    plt.title("t-SNE des features source vs target (sans classe)")
+    plt.xlabel("TSNE-1")
+    plt.ylabel("TSNE-2")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig("tsne_features_source_vs_target.png", dpi=300, bbox_inches="tight")
+    plt.show()
 
 
     plt.figure(figsize=(10, 8))

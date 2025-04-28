@@ -53,13 +53,13 @@ class FeatureShiftCalculator:
             
     def domain_shift(self):
         """
-        Calcule trois métriques de shift :
-        - Distance de Wasserstein (Earth Mover’s Distance)
-        - Divergence KL
-        - Statistique de Kolmogorov-Smirnov (KS)
+        Compute shift metrics :
+        - Wasserstein Distance
+        - KL Divergence 
+        - Kolmogorov-Smirnov (KS) statistic
         
         Returns:
-            dict: Dictionnaire contenant les valeurs moyennes de chaque métrique.
+            dict: Average values for each metric.
         """
         wasserstein_distances = []
         kl_div_per_filter = []
@@ -72,15 +72,15 @@ class FeatureShiftCalculator:
             if len(source_vals) == 0 or len(target_vals) == 0:
                 continue 
 
-            # Distance de Wasserstein (EMD)
+            # Wasserstein Distance
             wasserstein_distances.append(wasserstein_distance(source_vals.numpy(), target_vals.numpy()))
 
-            # Statistique de Kolmogorov-Smirnov (KS)
+            # Kolmogorov-Smirnov (KS) statistic
             ks_stat, _ = ks_2samp(source_vals.numpy(), target_vals.numpy())
             ks_statistics.append(ks_stat)
 
 
-        # Retourner les moyennes des distances sur tous les filtres
+        # Return average distance
         return {
             "wasserstein": sum(wasserstein_distances) / len(wasserstein_distances) if wasserstein_distances else 0.0,
             "ks": sum(ks_statistics) / len(ks_statistics) if ks_statistics else 0.0

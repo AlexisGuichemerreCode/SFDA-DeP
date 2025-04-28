@@ -62,6 +62,9 @@ from dlib.cams import build_std_cam_extractor
 from dlib.utils.reproducibility import set_seed
 from dlib.process.instantiators import get_model, get_pretrainde_classifier
 
+
+from dlib.datasets.wsol_loader_natural import get_data_loader_natural
+
 from dlib.datasets.wsol_loader import get_data_loader
 from dlib.datasets.wsol_loader import configure_metadata
 from dlib.datasets.wsol_loader import get_class_labels
@@ -88,8 +91,223 @@ def get_resized_gt_mask(mask_path, ignore_path, dataset, label, size, device):
         
     return torch.zeros(size, dtype=torch.bool, device=device)
 
+def generate_pixel_features(model, loader, dataset_name, cam_computer, split, device):
+    """
+    Generate pixel features from the model for a given dataset and split.
+    Args:
+        model (torch.nn.Module): The model to use for feature extraction.
+        loader (DataLoader): DataLoader for the dataset.
+        dataset_name (str): Name of the dataset.
+        split (str): Split of the dataset (e.g., 'train', 'val').
+        device (torch.device): Device to run the model on.
+    Returns:
+        tuple: Foreground and background features.
+    """
+    fg_features = []
+    bg_features = []
 
-def compute_energy_distributions(model, loader, cam_computer, dataset_name, energy_fn, split, device):
+    for batch_idx, (images, targets, _, index, _, _, _, _) in tqdm(
+            enumerate(loader[split]), ncols=constants.NCOLS,
+            total=len(loader[split])):
+
+        images = images.to(device)
+        targets = targets.to(device)
+        
+        for image, target, image_id in zip(images, targets, index):
+
+            gt_mask = get_mask(f'/export/livia/home/vision/Aguichemerre/datasets/{dataset_name}',
+                           cam_computer.evaluator.mask_paths[image_id],
+                           cam_computer.evaluator.ignore_paths[image_id])
+            
+            gt_mask_tensor = torch.tensor(gt_mask, dtype=torch.float32).to(device)
+            gt_resize = F.interpolate(gt_mask_tensor.unsqueeze(0).unsqueeze(0), size=(28, 28),
+                                        mode='bilinear', align_corners=False).squeeze(0).squeeze(0).cpu().numpy()
+
+            with torch.set_grad_enabled(cam_computer.req_grad):
+                cam, cl_logits = cam_computer.get_cam_one_sample(
+                    image=image.unsqueeze(0), target=target.item())
+                
+            gt_resize = gt_resize > 0.5
+            cam = cam > 0.5
+
+            same_mask = gt_resize == cam
+
+            gt_resize_int = gt_resize.to(torch.int)
+            result = torch.where(same_mask, gt_resize_int, torch.full_like(gt_resize_int, -255))
+
+            print("a")
+
+
+    return fg_features, bg_features
+
+def generate_synthetic_features(gt_bin_batch, pixel_anchor_weights, noise_std=0.05):
+    """
+    Generate synthetic features based on the ground truth binary mask and pixel anchor weights.
+    Args:
+        gt_bin_batch (torch.Tensor): Ground truth binary mask of shape (B, 1, H, W).
+        pixel_anchor_weights (torch.Tensor): Pixel anchor weights of shape (C, 1, 1).
+        noise_std (float): Standard deviation of the noise to be added.
+    Returns:
+        torch.Tensor: Generated features of shape (B, C, H, W).
+    """
+
+    B, _, H, W = gt_bin_batch.shape
+    C = pixel_anchor_weights.shape[1]  # C = 2048
+    device = gt_bin_batch.device
+
+   
+    fg_weight = pixel_anchor_weights[1].view(1, C, 1, 1)
+    bg_weight = pixel_anchor_weights[0].view(1, C, 1, 1)
+
+    # Expand the weights to match the batch size and spatial dimensions
+    fg_feature = fg_weight.expand(B, C, H, W)
+    bg_feature = bg_weight.expand(B, C, H, W)
+
+    # Add noise to the features
+    fg_noise = torch.randn_like(fg_feature) * noise_std
+    bg_noise = torch.randn_like(bg_feature) * noise_std
+
+    features = torch.where(gt_bin_batch == 1, fg_feature + fg_noise, bg_feature + bg_noise)
+    return features 
+
+
+def evaluate_noise_impact(model, features, gt_bin_batch, pixel_classifier, targets, steps=100):
+ 
+    B, C, H, W = features.shape
+    device = features.device
+    results = []
+
+
+    gt_bin_flat = gt_bin_batch.view(B, -1)
+
+    for error_rate in range(1, steps + 1):
+ 
+        corrupted_mask = gt_bin_flat.clone()
+
+        for b in range(B):
+            n_pixels = H * W
+            n_errors = int(n_pixels * (error_rate / 100))
+            perm = torch.randperm(n_pixels, device=device)[:n_errors]
+            corrupted_mask[b, perm] = ~corrupted_mask[b, perm]  
+
+        corrupted_mask = corrupted_mask.view(B, 1, H, W)
+
+
+        fg_weight = pixel_classifier[1].view(1, C, 1, 1)
+        bg_weight = pixel_classifier[0].view(1, C, 1, 1)
+        fg_noise = torch.randn_like(features) * 0.05
+        bg_noise = torch.randn_like(features) * 0.05
+        modified_features = torch.where(corrupted_mask == 1, fg_weight + fg_noise, bg_weight + bg_noise)
+
+
+        with torch.no_grad():
+            logits = model.classification_head(modified_features)  # [B, 2, H, W]
+            probs = F.softmax(logits, dim=1)
+            preds = probs.argmax(dim=1) 
+
+        
+        acc = (preds == targets).float().mean().item()
+        results.append((error_rate, acc))
+
+    return results
+
+
+
+def pixel_feature_errors(model,loader,cam_computer, dataset_name, split, device):
+
+    fg_features, bg_features = generate_pixel_features(model=model, loader=loader, dataset_name=dataset_name, cam_computer=cam_computer, split=split, device=device)
+
+
+    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
+        enumerate(loader[split]), ncols=constants.NCOLS,
+        total=len(loader[split])):
+
+        with torch.no_grad():
+            pixel_anchor_weights = model.pixel_wise_classification_head.conv4.weight
+
+        images = images.to(device)
+        targets = targets.to(device)
+
+        h, w = 28, 28
+        gt_bin_list = []
+        all_results = []
+
+        # Per-image
+        for i, (label, image_id) in enumerate(zip(targets, index)):
+            gt_bin = get_resized_gt_mask(
+                cam_computer.evaluator.mask_paths[image_id],
+                cam_computer.evaluator.ignore_paths[image_id],
+                dataset_name,
+                label.item(),
+                size=(h, w),
+                device=device
+            )  # [H, W] ou [1, H, W]
+
+            if gt_bin.dim() == 2:
+                gt_bin = gt_bin.unsqueeze(0)  # [1, H, W]
+
+            gt_bin_list.append(gt_bin)
+
+        gt_bin_batch = torch.stack(gt_bin_list, dim=0)
+        features = generate_synthetic_features(gt_bin_batch, pixel_anchor_weights)
+        results = evaluate_noise_impact(model, features, gt_bin_batch, pixel_anchor_weights, targets)
+
+        all_results.append(results)
+
+    error_rates, accuracies = zip(*results)
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(error_rates, accuracies, marker='o')
+    plt.xlabel('Pourcentage of errors')
+    plt.ylabel('Accuracy of image classifier')
+    plt.title('Impact of errors on classification')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig("error_vs_accuracy.png", dpi=300)
+    plt.show()
+
+    return 0
+
+
+def plot_weights_model(model, support_background, out_dir, title_prefix=""):
+    with torch.no_grad():
+        pixel_anchor_weights = model.pixel_wise_classification_head.conv4.weight
+
+    if support_background:
+        image_anchor_weights = model.classification_head.fc.weight[1:] 
+    else:   
+        image_anchor_weights = model.classification_head.fc.weight
+
+    pixel_anchor_weights = pixel_anchor_weights.view(pixel_anchor_weights.size(0), -1)
+    image_anchor_weights = image_anchor_weights.view(image_anchor_weights.size(0), -1)
+
+    pixel_anchor_weights = pixel_anchor_weights.detach().cpu().numpy()
+    image_anchor_weights = image_anchor_weights.detach().cpu().numpy()
+
+    all_weights = np.concatenate([image_anchor_weights,pixel_anchor_weights])
+    tsne = TSNE(n_components=2, perplexity=2.0)
+
+    embedded_weights = tsne.fit_transform(all_weights)
+
+    embedded_img_weights = embedded_weights[:image_anchor_weights.shape[0]]
+    embedded_pxl_weights = embedded_weights[image_anchor_weights.shape[0]:image_anchor_weights.shape[0]+pixel_anchor_weights.shape[0]]
+
+    plt.scatter(embedded_img_weights[:, 0], embedded_img_weights[:, 1], color='blue', label='Img weights')
+    plt.scatter(embedded_pxl_weights[:, 0], embedded_pxl_weights[:, 1], color='red', label='Pxl weights')
+
+    plt.title(f"test ", fontsize=10)
+    plt.legend(loc="upper right")
+    plt.grid(True)
+    plt.tight_layout()
+    # Sauvegarder l'image
+    plt.savefig('test_weights_tsne.png')
+    plt.close()
+
+    return 0
+
+
+
+def compute_energy_distributions_cub(model, loader, dataset_name, energy_fn, split, device):
 
     energy_data = {
     'images': [],
@@ -98,7 +316,7 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     'foreground': [],
     'background': []}
 
-    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
+    for batch_idx, (images, targets, index, _, _) in tqdm(
         enumerate(loader[split]), ncols=constants.NCOLS,
         total=len(loader[split])):
 
@@ -116,6 +334,74 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
 
             energy_data['images'].append(energy_images.cpu())
             energy_data['pixels'].append(energy_pixels.flatten(start_dim=1).cpu())
+
+
+    # Concatenation
+    energy_data['images'] = torch.cat(energy_data['images']).numpy()
+    energy_data['pixels'] = torch.cat(energy_data['pixels']).view(-1).numpy()
+
+    return energy_data
+
+
+
+def compute_energy_distributions(model, loader, cam_computer, dataset_name, energy_fn, split, device,args=None, metadata_root=None, cam_performance = False):
+
+    energy_data = {
+    'images': [],
+    'pixels': [],
+    'per_class': defaultdict(list),
+    'foreground': [],
+    'background': [],
+    'probs_images': [],
+    'pred_images': [],
+    'label_images': [],
+    'cam_performance': [],
+    'min_logits_img': [],
+    'max_logits_img': [],
+    'min_logits_pxs': [],
+    'max_logits_pxs': []
+    }
+
+    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
+        enumerate(loader[split]), ncols=constants.NCOLS,
+        total=len(loader[split])):
+
+        images = images.to(device)
+        targets = targets.to(device)
+        image_size = images.shape[2:]
+
+        # Per-image
+        with torch.no_grad():
+            lgt_imgs = model(images)
+            px_lin_ft = model.encoder_last_features
+            lgt_pxs = model.pixel_wise_classification_head(px_lin_ft)[0]
+
+            probs_img = F.softmax(lgt_imgs, dim=1)
+            preds = probs_img.argmax(dim=1) 
+
+            energy_data['probs_images'].append(probs_img.max(dim=1).values.detach().cpu())
+            energy_data['label_images'].append(targets.detach().cpu())
+            energy_data['pred_images'].append(preds.detach().cpu())
+
+            energy_images = energy_fn(lgt_imgs)
+            energy_pixels = energy_fn(lgt_pxs)
+
+            max_vals_img, _ = lgt_imgs.max(dim=1) 
+            min_vals_img, _ = lgt_imgs.min(dim=1)
+
+            max_vals_pxs, _ = lgt_pxs.max(dim=1) 
+            min_vals_pxs, _ = lgt_pxs.min(dim=1)
+
+            energy_data['images'].append(energy_images.cpu())
+            energy_data['pixels'].append(energy_pixels.flatten(start_dim=1).cpu())
+            
+            energy_data['max_logits_img'].append(max_vals_img.cpu())
+            energy_data['min_logits_img'].append(min_vals_img.cpu())
+
+            energy_data['max_logits_pxs'].append(max_vals_pxs.flatten(start_dim=1).cpu())
+            energy_data['min_logits_pxs'].append(min_vals_pxs.flatten(start_dim=1).cpu())
+
+
 
             for energy, label in zip(energy_images.cpu(), targets.cpu()):
                 energy_data['per_class'][int(label)].append(energy.item())
@@ -136,14 +422,205 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
             energy_map = energy_pixels[i]  # (H, W)
             energy_data['foreground'].append(energy_map[gt_bin].detach().cpu())
             energy_data['background'].append(energy_map[~gt_bin].detach().cpu())
+        
+
+        if cam_performance :
+        #Compute PXAP per image
+            for image, target, image_id in zip(images, targets, index):
+                
+                dataset_source = os.path.basename(args.mask_root)
+
+                if dataset_source == dataset_name:
+                    mask_root_data = args.mask_root
+                else:
+                    mask_root_data = os.path.join(os.path.dirname(args.mask_root), dataset_name)
+
+                new_mask_root = os.path.join(os.path.dirname(args.mask_root), dataset_name)
+                cam_computer = CAMComputer(
+                            args=deepcopy(args),
+                            model=model,
+                            loader=loader[split],
+                            metadata_root=os.path.join(metadata_root, split),
+                            mask_root=mask_root_data,
+                            iou_threshold_list=args.iou_threshold_list,
+                            dataset_name=dataset_name,
+                            split= split,
+                            cam_curve_interval=args.cam_curve_interval,
+                            multi_contour_eval=args.multi_contour_eval,
+                            out_folder=args.outd,
+                        )
+                
+                if dataset_name == constants.CAMELYON512:
+                    if target == 1:
+                        #image_id_formatted = [image_id]
+                        cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image=image, target=target, image_id=image_id, image_size=image_size)
+                        energy_data['cam_performance'].append(cam_performance)
+                    else:
+                        energy_data['cam_performance'].append(0)
+                else:
+                    cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image=image, target=target, image_id=image_id, image_size=image_size)
+                    energy_data['cam_performance'].append(cam_performance)
+
+        energy_data['cam_performance'] = np.array(energy_data['cam_performance'])
+
+                #energy_data['cam_performance'].append(cam_performance)
+                #print("cam_performance", cam_performance)
 
     # Concatenation
     energy_data['images'] = torch.cat(energy_data['images']).numpy()
     energy_data['pixels'] = torch.cat(energy_data['pixels']).view(-1).numpy()
     energy_data['foreground'] = torch.cat(energy_data['foreground']).numpy()
     energy_data['background'] = torch.cat(energy_data['background']).numpy()
+    energy_data['probs_images'] = torch.cat(energy_data['probs_images']).numpy()
+    energy_data['label_images'] = torch.cat(energy_data['label_images']).numpy()
+    energy_data['pred_images'] = torch.cat(energy_data['pred_images']).numpy()
+    energy_data['max_logits_img'] = torch.cat(energy_data['max_logits_img']).numpy()
+    energy_data['min_logits_img'] = torch.cat(energy_data['min_logits_img']).numpy()
+    energy_data['max_logits_pxs'] = torch.cat(energy_data['max_logits_pxs']).numpy()
+    energy_data['min_logits_pxs'] = torch.cat(energy_data['min_logits_pxs']).numpy()
 
     return energy_data
+
+
+def plot_energy_for_source_images(source_vals, out_dir, title, xlim=None, label_src="Source", label_tgt="Target", source_dataset=None, target_dataset = None, source_model_name = None, target_model_name = None, external_pixel_classifier=None):
+
+    output_dir = os.path.join('visualization', 'Energy_results', source_dataset)
+    os.makedirs(output_dir, exist_ok=True)
+
+
+
+    if external_pixel_classifier is None:
+        figure_name = f"hist_pixels_source_{source_dataset}_with_{source_model_name}_on_target_{target_dataset}_with_{target_model_name}.png"
+    else:
+        figure_name = f"hist_pixels_source_{source_dataset}_with_{source_model_name}_on_target_{target_dataset}_with_{target_model_name}_with_external_px_classifier.png"
+
+    
+    plt.figure(figsize=(8, 6))
+    plt.hist(source_vals, bins=100, alpha=0.5, density=True,
+             label=label_src, color='blue', edgecolor='black')
+    plt.title(title)
+    plt.xlabel("Energy")
+    plt.ylabel("Density")
+    plt.legend(loc="upper right", fontsize=12)
+
+    if xlim:
+        plt.xlim(*xlim)
+
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, figure_name), dpi=300)
+    plt.close()
+
+
+def plot_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, title_prefix=None,target_dataset=None):
+    os.makedirs(out_dir, exist_ok=True)
+
+    img_classes = target_dict['label_images']
+    img_predict = target_dict['pred_images']
+    img_confidence = target_dict['probs_images']
+    accuracy = (img_classes == img_predict)
+
+    img_energy_correct = target_dict['images'][accuracy == 1]
+    img_energy_incorrect = target_dict['images'][accuracy == 0]
+
+    img_confidence_correct = img_confidence[accuracy == 1]
+    img_confidence_incorrect = img_confidence[accuracy == 0]
+
+    # px_energy_correct = target_dict['pixels'][accuracy == 1]
+    # px_energy_incorrect = target_dict['pixels'][accuracy == 0]
+
+    mask_class_1 = (img_classes == 1)
+    mask_class_1_correct = mask_class_1 & (accuracy == 1)
+    mask_class_1_incorrect = mask_class_1 & (accuracy == 0)
+
+    img_energy_class1_correct = target_dict['images'][mask_class_1_correct]
+    img_energy_class1_incorrect = target_dict['images'][mask_class_1_incorrect]
+
+
+    img_energy = target_dict['images']
+    px_energy = target_dict['pixels']
+
+
+    if target_dataset == constants.CAMELYON512:
+        img_pxap_correct = target_dict['cam_performance'][mask_class_1_correct]
+        img_pxap_incorrect = target_dict['cam_performance'][mask_class_1_incorrect]
+    else:
+        img_pxap_correct = target_dict['cam_performance'][accuracy == 1]
+        img_pxap_incorrect = target_dict['cam_performance'][accuracy == 0]
+
+
+
+    plt.figure(figsize=(8, 6))
+    plt.subplot(1, 2, 1)
+    plt.hist(img_energy_correct, bins=40, alpha=0.4, label='Correct', color='tab:blue', density=False)
+    plt.hist(img_energy_incorrect, bins=40, alpha=0.4, label='Incorrect', color='tab:red', density=False)
+    plt.xlabel("Density")
+    plt.ylabel("Image Energy")
+    plt.title(f"{title_prefix}Image Energy vs Accuracy")
+    plt.legend()
+
+
+    if save_path:
+        plt.savefig("PXAP_vs_Energy.png", dpi=300)
+        print(f"Saved at {save_path}")
+        plt.close()
+    else:
+        plt.show()
+
+    plt.figure(figsize=(8, 6))
+
+    # Image-level
+    plt.subplot(1, 2, 1)
+    if target_dataset == constants.CAMELYON512:
+        plt.scatter(img_energy_class1_correct, img_pxap_correct, alpha=0.4, color='tab:blue', label='Correct')
+        plt.scatter(img_energy_class1_incorrect, img_pxap_incorrect, alpha=0.4, color='tab:red', label='Incorrect')
+    else:
+        plt.scatter(img_energy_correct, img_pxap_correct, alpha=0.4, color='tab:blue', label='Correct')
+        plt.scatter(img_energy_incorrect, img_pxap_incorrect, alpha=0.4, color='tab:red', label='Incorrect')
+    #plt.scatter(img_energy, img_confidence, alpha=0.5, color='tab:blue', label='Image Energy')
+    #plt.scatter(img_energy_correct, img_pxap_correct, alpha=0.4, color='tab:blue', label='Correct')
+    #plt.scatter(img_energy_incorrect, img_pxap_incorrect, alpha=0.4, color='tab:red', label='Incorrect')
+    plt.xlabel("Image Energy")
+    plt.ylabel("PXAP")
+    plt.title(f"{title_prefix}Image Energy vs PXAP")
+    plt.grid(True)
+
+    if save_path:
+        plt.savefig("PXAP_vs_Energy.png", dpi=300)
+        print(f"Saved at {save_path}")
+        plt.close()
+    else:
+        plt.show()
+
+    plt.figure(figsize=(8, 6))
+
+    # Image-level
+    plt.subplot(1, 2, 1)
+    #plt.scatter(img_energy, img_confidence, alpha=0.5, color='tab:blue', label='Image Energy')
+    plt.scatter(img_energy_correct, img_confidence_correct, alpha=0.4, color='tab:blue', label='Correct')
+    plt.scatter(img_energy_incorrect, img_confidence_incorrect, alpha=0.4, color='tab:red', label='Incorrect')
+    plt.xlabel("Image Energy")
+    plt.ylabel("Model Confidence (max prob)")
+    plt.title(f"{title_prefix}Image Energy vs Confidence")
+    plt.grid(True)
+
+    # # Pixel-level (mean)
+    # plt.subplot(1, 2, 2)
+    # plt.scatter(img_confidence, px_energy, alpha=0.5, color='tab:green', label='Pixel Energy')
+    # plt.xlabel("Model Confidence (max prob)")
+    # plt.ylabel("Mean Pixel Energy")
+    # plt.title(f"{title_prefix}Pixel Energy vs Confidence")
+    # plt.grid(True)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig("Confidence_vs_Energy.png", dpi=300)
+        print(f"Saved at {save_path}")
+        plt.close()
+    else:
+        plt.show()
+
 
 
 def plot_energy_histograms_by_class(
@@ -511,18 +988,35 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     model = get_model(args)[0]
 
     print(f'Loading model for {method_name}-{encoder_name} from {path_cl}')
-    if "tscam" in encoder_name:
-        model_tscam = torch.load(join(path_cl, 'model.pt'),map_location=get_cpu_device())
+    if parsedargs.external_model == None:
+        if "tscam" in encoder_name:
+            model_tscam = torch.load(join(path_cl, 'model.pt'),map_location=get_cpu_device())
 
-        model.load_state_dict(model_tscam, strict=True)
+            model.load_state_dict(model_tscam, strict=True)
+        else:
+            encoder_w = torch.load(join(path_cl, 'encoder.pt'),
+                                map_location=get_cpu_device())
+            model.encoder.super_load_state_dict(encoder_w, strict=True)
+
+            header_w = torch.load(join(path_cl, 'classification_head.pt'),
+                                map_location=get_cpu_device())
+            model.classification_head.load_state_dict(header_w, strict=True)
+
+            if method_name == constants.METHOD_PIXELCAM:    #'EnergyCAM': constants.METHOD_ENERGY:
+                header_p = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
+                                map_location=get_cpu_device())
+                model.pixel_wise_classification_head.load_state_dict(header_p, strict=True)
     else:
-        encoder_w = torch.load(join(path_cl, 'encoder.pt'),
-                            map_location=get_cpu_device())
+        path_eternal_cl = parsedargs.external_model
+        encoder_w = torch.load(join(path_eternal_cl, 'encoder.pt'),
+                                map_location=get_cpu_device())
         model.encoder.super_load_state_dict(encoder_w, strict=True)
 
-        header_w = torch.load(join(path_cl, 'classification_head.pt'),
+        header_w = torch.load(join(path_eternal_cl, 'classification_head.pt'),
                             map_location=get_cpu_device())
         model.classification_head.load_state_dict(header_w, strict=True)
+
+
 
         if method_name == constants.METHOD_PIXELCAM:    #'EnergyCAM': constants.METHOD_ENERGY:
             header_p = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
@@ -610,9 +1104,16 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             out_folder=args.outd,
         )
 
-    target_loaders = get_data_loader(
+
+
+
+    if target_dataset == constants.CUB:
+        metadata_root = join(constants.RELATIVE_META_ROOT, 'CUB')
+        target_domain_data_paths = config.configure_data_paths(args_dict, 'CUB')
+
+        target_loaders = get_data_loader_natural(
             data_roots=target_domain_data_paths,
-            metadata_root=target_metadata_root,
+            metadata_root=metadata_root,
             batch_size=32,#args.batch_size,
             workers=args.num_workers,
             resize_size=args.resize_size,
@@ -621,57 +1122,74 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             num_val_sample_per_class=args.num_val_sample_per_class,
             std_cams_folder=args.std_cams_folder,
             # distributed_eval=False,
-            get_splits_eval=[split],
+            get_splits_eval=['train'],
             #constants.TRAINSET
-            eval_batch_size = 32#args.eval_batch_size,
         )
+    else:
+        target_loaders = get_data_loader(
+        data_roots=target_domain_data_paths,
+        metadata_root=target_metadata_root,
+        batch_size=32,#args.batch_size,
+        workers=args.num_workers,
+        resize_size=args.resize_size,
+        crop_size=args.crop_size,
+        proxy_training_set=args.proxy_training_set,
+        num_val_sample_per_class=args.num_val_sample_per_class,
+        std_cams_folder=args.std_cams_folder,
+        # distributed_eval=False,
+        get_splits_eval=[split],
+        #constants.TRAINSET
+        eval_batch_size = 32#args.eval_batch_size,
+    )
     
-    target_cam_computer = CAMComputer(
-            args=deepcopy(args),
-            model=model,
-            loader=target_loaders['train'],
-            metadata_root=os.path.join(target_metadata_root, 'train'),
-            mask_root=args.mask_root,
-            iou_threshold_list=args.iou_threshold_list,
-            dataset_name=target_dataset,
-            split= 'train',
-            cam_curve_interval=args.cam_curve_interval,
-            multi_contour_eval=args.multi_contour_eval,
-            out_folder=args.outd,
-        )
-
-    #base_dir = os.path.join("visualization", "Energy_results", source_dataset, "SGLD_curves_per_pixel")
-    #os.makedirs(base_dir, exist_ok=True)
-
-    # all_energies_pixels_source = []
-    # all_energies_pixels_target = []
-
-    # all_energies_images_source = []
-    # all_energies_images_target = []
-
-    # energies_images_per_class_source = defaultdict(list)
-    # energies_images_per_class_target = defaultdict(list)
-
-    # energy_pixels_foreground_source = []
-    # energy_pixels_background_source = []
-
-    # energy_pixels_foreground_target = []
-    # energy_pixels_background_target = []
-
-    energy_data = {
-    'images': [],
-    'pixels': [],
-    'per_class': defaultdict(list),
-    'foreground': [],
-    'background': []}
+        target_cam_computer = CAMComputer(
+                args=deepcopy(args),
+                model=model,
+                loader=target_loaders['train'],
+                metadata_root=os.path.join(target_metadata_root, 'train'),
+                mask_root=args.mask_root,
+                iou_threshold_list=args.iou_threshold_list,
+                dataset_name=target_dataset,
+                split= 'train',
+                cam_curve_interval=args.cam_curve_interval,
+                multi_contour_eval=args.multi_contour_eval,
+                out_folder=args.outd,
+            )
 
 
-    source_energy = compute_energy_distributions(model, source_loaders, source_cam_computer, source_dataset, energy_fn, split, device)
-    target_energy = compute_energy_distributions(model, target_loaders, target_cam_computer, target_dataset, energy_fn, split, device)
+
+    
+    #pixel_feature_errors(model,source_loaders,source_cam_computer, source_dataset, split, device)
+
+
+    #plot_weights_model(model, support_background = args.model['support_background'], out_dir='plots_weights', title_prefix="")
+    #source_energy_external_px_classifier = 
+    source_energy = compute_energy_distributions(model, source_loaders, source_cam_computer, source_dataset, energy_fn, split, device, args=args, metadata_root=source_metadata_root, cam_performance = False)
+    
+    if parsedargs.external_model is not None:
+        external_pixel_classifier = True
+    else:
+        external_pixel_classifier = None
+
+
+    source_model_name = parsedargs.source_model_name
+    target_model_name = parsedargs.target_model_name
+
+    #plot_energy_for_source_images(source_energy['pixels'], out_dir='plots_energy', title="Energy Distribution", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
+
+
+    if target_dataset == constants.CUB:
+        target_energy = compute_energy_distributions_cub(model, target_loaders, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
+    else:
+        target_energy = compute_energy_distributions(model, target_loaders, target_cam_computer, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
 
     #plot_energy_histograms_by_class(source_energy, target_energy, out_dir, title_prefix="")
     out_dir = "plots_energy"
     os.makedirs(out_dir, exist_ok=True)
+
+    
+
+    #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
 
     plot_energy_histograms_by_class(source_energy['per_class'],target_energy['per_class'],out_dir=out_dir,title_prefix="Energy Distribution", source_dataset=source_dataset, target_dataset=target_dataset)
     
@@ -683,235 +1201,6 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
     # 4. All pixels
     plot_global_energy_histogram(source_energy['pixels'],target_energy['pixels'],out_dir,title="Pixel Energy Distribution (All)",xlim=(-5, 5), type = "global", source_dataset=source_dataset, target_dataset=target_dataset)
-    
-    
-    # for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
-    #     enumerate(source_loaders[split]), ncols=constants.NCOLS,
-    #     total=len(source_loaders[split])):
-
-    #     images = images.to(device)
-    #     targets = targets.to(device)
-        
-    #     with torch.no_grad():
-    #         lgt_imgs = model(images)
-    #         px_lin_ft = model.encoder_last_features
-    #         lgt_pxs = model.pixel_wise_classification_head(px_lin_ft)[0]
-
-    #         energy_images = energy_fn(lgt_imgs)
-    #         energy_pixels = energy_fn(lgt_pxs)
-
-    #         energy_data['images'].append(energy_images.cpu())
-    #         energy_data['pixels'].append(energy_pixels.flatten(start_dim=1).cpu())
-
-    #         for energy, label in zip(energy_images.cpu(), targets.cpu()):
-    #             energy_data['per_class'][int(label)].append(energy.item())
-
-    #         #all_energies_images_source.append(energy_images.flatten( ).cpu())
-    #         #all_energies_pixels_source.append(energy_pixels.flatten().cpu())
-
-    #         #for energy, label in zip(energy_images.cpu(), targets.cpu()):
-    #             #energies_images_per_class_source[int(label)].append(energy.item())
-
-
-    #     # Per-pixel foreground / background
-    #     for i, (label, image_id) in enumerate(zip(targets, index)):
-    #         _, _, h, w = pixel_features.shape
-    #         gt_bin = get_resized_gt_mask(
-    #             cam_computer.evaluator.mask_paths[image_id],
-    #             cam_computer.evaluator.ignore_paths[image_id],
-    #             dataset_name,
-    #             label.item(),
-    #             size=(h, w),
-    #             device=device
-    #         )
-
-    #         energy_map = energy_pixels[i]  # (H, W)
-    #         energy_data['foreground'].append(energy_map[gt_bin].detach().cpu())
-    #         energy_data['background'].append(energy_map[~gt_bin].detach().cpu())
-
-    #     # Concatenation
-    #     energy_data['images'] = torch.cat(energy_data['images']).numpy()
-    #     energy_data['pixels'] = torch.cat(energy_data['pixels']).numpy()
-    #     energy_data['foreground'] = torch.cat(energy_data['foreground']).numpy()
-    #     energy_data['background'] = torch.cat(energy_data['background']).numpy()
-
-    #     for i, (image, label, image_id) in enumerate(zip(images, targets, index)):
-    #         h, l, m, n = px_lin_ft.shape  # [B, C, H, W]
-    #         if source_dataset == constants.GLAS or (source_dataset == constants.CAMELYON512 and label ==1):
-    #             gt_mask = get_mask(f'/export/gauss/vision/Aguichemerre/datasets/{source_dataset}',
-    #                             source_cam_computer.evaluator.mask_paths[image_id],
-    #                             source_cam_computer.evaluator.ignore_paths[image_id])
-                
-    #             gt_mask_tensor = torch.tensor(gt_mask, dtype=torch.float32).to(device)
-
-    #             gt_resize = F.interpolate(gt_mask_tensor.unsqueeze(0).unsqueeze(0), size=(m, n),
-    #                                     mode='bilinear', align_corners=False).squeeze(0).squeeze(0)
-    #         else:
-    #             gt_resize = torch.zeros((m, n), dtype=torch.float32, device=device)
-
-
-    #         gt_bin = (gt_resize > 0.5).to(torch.bool)  # foreground: True
-
-
-    #         energy_map = energy_pixels[i]  # shape: [H, W]
-
-    #         # Split foreground / background
-    #         fg_energies = energy_map[gt_bin].detach().cpu()
-    #         bg_energies = energy_map[~gt_bin].detach().cpu()
-
-
-    #         energy_pixels_foreground_source.append(fg_energies)
-    #         energy_pixels_background_source.append(bg_energies)
-            
-    # all_energies_pixels_source = torch.cat(all_energies_pixels_source).numpy()
-    # all_energies_images_source = torch.cat(all_energies_images_source).numpy()
-
-    # energy_pixels_foreground_source = torch.cat(energy_pixels_foreground_source).numpy()
-    # energy_pixels_background_source = torch.cat(energy_pixels_background_source).numpy()
-
-    # for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
-    #     enumerate(target_loaders[split]), ncols=constants.NCOLS,
-    #     total=len(target_loaders[split])):
-    #     image_size = images.shape[2:]
-    #     images = images.to(device)
-    #     targets = targets.to(device)
-        
-    #     with torch.no_grad():
-    #         lgt_imgs = model(images)
-    #         px_lin_ft = model.encoder_last_features
-    #         lgt_pxs = model.pixel_wise_classification_head(px_lin_ft)[0]
-
-    #         energy_images = energy_fn(lgt_imgs)
-    #         energy_pixels = energy_fn(lgt_pxs)
-
-    #         all_energies_images_target.append(energy_images.flatten().cpu())
-    #         all_energies_pixels_target.append(energy_pixels.flatten().cpu())
-
-    #         for energy, label in zip(energy_images.cpu(), targets.cpu()):
-    #             energies_images_per_class_target[int(label)].append(energy.item())
-
-    #     for i, (image, label, image_id) in enumerate(zip(images, targets, index)):
-    #         h, l, m, n = px_lin_ft.shape  # [B, C, H, W]
-    #         if target_dataset == constants.GLAS or (target_dataset == constants.CAMELYON512 and label ==1):
-    #             gt_mask = get_mask(f'/export/gauss/vision/Aguichemerre/datasets/{target_dataset}',
-    #                             target_cam_computer.evaluator.mask_paths[image_id],
-    #                             target_cam_computer.evaluator.ignore_paths[image_id])
-                
-    #             gt_mask_tensor = torch.tensor(gt_mask, dtype=torch.float32).to(device)
-
-    #             gt_resize = F.interpolate(gt_mask_tensor.unsqueeze(0).unsqueeze(0), size=(m, n),
-    #                                     mode='bilinear', align_corners=False).squeeze(0).squeeze(0)
-    #         else:
-    #             gt_resize = torch.zeros((m, n), dtype=torch.float32, device=device)
-
-
-    #         gt_bin = (gt_resize > 0.5).to(torch.bool)  # foreground: True
-
-
-    #         energy_map = energy_pixels[i]  # shape: [H, W]
-
-    #         # Split foreground / background
-    #         fg_energies = energy_map[gt_bin].detach().cpu()
-    #         bg_energies = energy_map[~gt_bin].detach().cpu()
-
-
-    #         energy_pixels_foreground_target.append(fg_energies)
-    #         energy_pixels_background_target.append(bg_energies)
-            
-    # all_energies_pixels_target = torch.cat(all_energies_pixels_target).numpy()
-    # all_energies_images_target = torch.cat(all_energies_images_target).numpy()
-
-    # energy_pixels_foreground_target = torch.cat(energy_pixels_foreground_target).numpy()
-    # energy_pixels_background_target = torch.cat(energy_pixels_background_target).numpy()
-
-    # all_classes = sorted(set(energies_images_per_class_source.keys()) | set(energies_images_per_class_target.keys()))
-
-    # for cls in all_classes:
-    #     source_energies = energies_images_per_class_source.get(cls, [])
-    #     target_energies = energies_images_per_class_target.get(cls, [])
-
-    #     if not source_energies and not target_energies:
-    #         continue  
-
-    #     plt.figure(figsize=(8, 6))
-
-    #     if source_energies:
-    #         plt.hist(source_energies, bins=50, alpha=0.5, density=True,
-    #                 color='blue', edgecolor='black', label='Source')
-
-    #     if target_energies:
-    #         plt.hist(target_energies, bins=50, alpha=0.5, density=True,
-    #                 color='red', edgecolor='black', label='Target')
-
-    #     plt.title(f"Energy Distribution Class {cls}")
-    #     plt.xlabel("Energy")
-    #     plt.ylabel("Density")
-    #     plt.legend(loc="upper right")
-    #     plt.grid(True)
-    #     plt.tight_layout()
-    #     plt.savefig(f"histogram_energy_class_{cls}_source_vs_target.png", dpi=300)
-    #     plt.show()
-
-    # plt.figure(figsize=(8, 6))
-    # plt.hist(energy_pixels_foreground_source, bins=100, alpha=0.5, density=True,
-    #         label='Foreground (Source)', color='blue', edgecolor='black')
-    # plt.hist(energy_pixels_foreground_target, bins=100, alpha=0.5, density=True,
-    #         label='Foreground (Target)', color='red', edgecolor='black')
-    # plt.title("Pixel Energy Distribution (Foreground : Source vs Target)")
-    # plt.xlabel("Energy")
-    # plt.ylabel("Density")
-    # plt.legend()
-    # plt.grid(True)
-    # plt.tight_layout()
-    # plt.savefig("histogram_energy_pixel_fg_source_vs_fg_target.png", dpi=300)
-    # plt.show()
-
-    # plt.figure(figsize=(8, 6))
-    # plt.hist(energy_pixels_background_source, bins=100, alpha=0.5, density=True,
-    #         label='Background (Source)', color='blue', edgecolor='black')
-    # plt.hist(energy_pixels_background_target, bins=100, alpha=0.5, density=True,
-    #         label='Background (Target)', color='red', edgecolor='black')
-    # plt.title("Pixel Energy Distribution (Background : Source vs Target)")
-    # plt.xlabel("Energy")
-    # plt.ylabel("Density")
-    # plt.legend()
-    # plt.grid(True)
-    # plt.tight_layout()
-    # plt.savefig("histogram_energy_pixel_bg_source_vs_bg_target.png", dpi=300)
-    # plt.show()
-
- 
-
-    # plt.figure(figsize=(8, 6))
-    # plt.hist(all_energies_pixels_source, bins=100, density=True, alpha=0.5, label="Source", edgecolor='black', color='blue')
-    # plt.hist(all_energies_pixels_target, bins=100, density=True, alpha=0.5, label="Target", edgecolor='black', color='red')
-    # plt.title("Energy distribution")
-    # plt.xlabel("Energy")
-    # plt.ylabel("Density")
-    # plt.legend(loc="upper right", fontsize=12)
-
-    # plt.xlim(-5, 5)
-    # plt.grid(True)
-    # plt.tight_layout()
-    # plt.savefig("histogram_energy_pixels_target_glas.png", dpi=300)
-    # plt.show()
-
-
-    # # Affiche l'histogramme
-    # plt.figure(figsize=(8, 6))
-    # plt.hist(all_energies_images_source, bins=100, density=True, alpha=0.5, label="Source", edgecolor='black', color='blue')
-    # plt.hist(all_energies_images_target, bins=100, density=True, alpha=0.5, label="Target", edgecolor='black', color='red')
-    # plt.title("Energy distribution")
-    # plt.xlabel("Energy")
-    # plt.ylabel("Density")
-    # plt.legend(loc="upper right", fontsize=12)
-
-    # plt.xlim(-10, 10)
-    # plt.grid(True)
-    # plt.tight_layout()
-    # plt.savefig("histogram_energy_images_target_glas.png", dpi=300)
-    # plt.show()
-
     
     return 0
     
@@ -933,6 +1222,9 @@ def fast_eval():
     parser.add_argument("--method", type=str, default=None)
     parser.add_argument("--source_dataset", type=str, default=None, help="Source dataset")
     parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
+    parser.add_argument("--external_model", type=str, default=None, help="Path to the external bb+cl.")
+    parser.add_argument("--source_model_name", type=str, default=None, help="Name of source model.")
+    parser.add_argument("--target_model_name", type=str, default=None, help="Name of target model.")
 
     parsedargs = parser.parse_args()
     
