@@ -1,10 +1,10 @@
-DLLL 2025-04-28 18:36:16.536056 0:00:00.139627 
-===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
-===========================================================================================
+DLLL 2025-04-30 18:27:58.007190 0:00:00.283665 
+==================================================================================================
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: CAMELYON512 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
+==================================================================================================
 
-DLLL 2025-04-28 18:36:17.312543 0:00:00.916114 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23518277
-DLLL 2025-04-28 18:36:17.312715 0:00:00.916286 Arch: STDClassifier
+DLLL 2025-04-30 18:28:00.110085 0:00:02.386560 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23518277
+DLLL 2025-04-30 18:28:00.110274 0:00:02.386749 Arch: STDClassifier
 task: STD_CL
 encoder_name: resnet50
 encoder_weights: imagenet
@@ -34,15 +34,15 @@ freeze_cl: False
 im_rec: False
 img_range: tanh 
 
-DLLL 2025-04-28 18:36:17.317042 0:00:00.920613 u-resnet50. Task: STD_CL. 
+DLLL 2025-04-30 18:28:00.114263 0:00:02.390738 u-resnet50. Task: STD_CL. 
  NBR-PARAMS: 
 	Encoder [resnet50]: 23508032. 
 	Classification head [WGAP]: 6147. 
 	Pixel Wise Classification head [PixelWise]: 4098. 
 	Total: 23518277. 
 
-DLLL 2025-04-28 18:36:17.405019 0:00:01.008590 
+DLLL 2025-04-30 18:28:00.235388 0:00:02.511863 
 ========================================================================================================================
- MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/MODEL_MIDL_2025/SOURCE/GLAS/BLOC/ID_SOURCE_5_GLAS_ENERGYCAM_LAYERCAM_NONEG_LOW_RES_150-TSK_STD_CL-DS_GLAS-FOLD_0-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_ENERGYCAM-SPOOLING_WGAP-ARCH_STDCLASSIFIER-ECD_RESNET50/GLAS-0-RESNET50-PIXELCAM-WGAP-CP_BEST_LOCALIZATION
+ MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/MODEL_MIDL_2025/SOURCE/CAMELYON/BLOC/ID_SOURCE_0_CAMELYON512_ENERGYCAM_LAYERCAM_LOW_RES_2-TSK_STD_CL-DS_CAMELYON512-FOLD_0-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_ENERGYCAM-SPOOLING_WGAP-ARCH_STDCLASSIFIER-ECD_RESNET50/CAMELYON512-0-RESNET50-PIXELCAM-WGAP-CP_BEST_LOCALIZATION
 ========================================================================================================================
 

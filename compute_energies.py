@@ -394,7 +394,7 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
 
             energy_data['images'].append(energy_images.cpu())
             energy_data['pixels'].append(energy_pixels.flatten(start_dim=1).cpu())
-            
+
             energy_data['max_logits_img'].append(max_vals_img.cpu())
             energy_data['min_logits_img'].append(min_vals_img.cpu())
 
@@ -461,7 +461,7 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
                     cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image=image, target=target, image_id=image_id, image_size=image_size)
                     energy_data['cam_performance'].append(cam_performance)
 
-        energy_data['cam_performance'] = np.array(energy_data['cam_performance'])
+    energy_data['cam_performance'] = np.array(energy_data['cam_performance'])
 
                 #energy_data['cam_performance'].append(cam_performance)
                 #print("cam_performance", cam_performance)
@@ -474,10 +474,10 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     energy_data['probs_images'] = torch.cat(energy_data['probs_images']).numpy()
     energy_data['label_images'] = torch.cat(energy_data['label_images']).numpy()
     energy_data['pred_images'] = torch.cat(energy_data['pred_images']).numpy()
-    energy_data['max_logits_img'] = torch.cat(energy_data['max_logits_img']).numpy()
-    energy_data['min_logits_img'] = torch.cat(energy_data['min_logits_img']).numpy()
-    energy_data['max_logits_pxs'] = torch.cat(energy_data['max_logits_pxs']).numpy()
-    energy_data['min_logits_pxs'] = torch.cat(energy_data['min_logits_pxs']).numpy()
+    energy_data['max_logits_img'] = torch.cat(energy_data['max_logits_img']).view(-1).numpy()
+    energy_data['min_logits_img'] = torch.cat(energy_data['min_logits_img']).view(-1).numpy()
+    energy_data['max_logits_pxs'] = torch.cat(energy_data['max_logits_pxs']).view(-1).numpy()
+    energy_data['min_logits_pxs'] = torch.cat(energy_data['min_logits_pxs']).view(-1).numpy()
 
     return energy_data
 
@@ -512,6 +512,41 @@ def plot_energy_for_source_images(source_vals, out_dir, title, xlim=None, label_
     plt.close()
 
 
+def plot_logits(source_pxs_logits, target_pxs_logits, out_dir, title, type = None, xlim=None, label_src="Source", label_tgt="Target", source_dataset=None, target_dataset = None, source_model_name = None, target_model_name = None, external_pixel_classifier=None):
+
+    output_dir = os.path.join('visualization', 'Logits_results', source_dataset)
+    os.makedirs(output_dir, exist_ok=True)
+
+
+
+    if external_pixel_classifier is None:
+        figure_name = f"hist_{type}_logits_{source_dataset}_with_{source_model_name}_on_target_{target_dataset}_with_{target_model_name}.png"
+    else:
+        figure_name = f"hist_{type}_logits_source_{source_dataset}_with_{source_model_name}_on_target_{target_dataset}_with_{target_model_name}_with_external_px_classifier.png"
+
+    
+    plt.figure(figsize=(8, 6))
+    plt.hist(source_pxs_logits, bins=100, alpha=0.5, density=True,
+             label=label_src, color='blue', edgecolor='black')
+    
+    plt.hist(target_pxs_logits, bins=100, alpha=0.5, density=True,
+             label=label_src, color='red', edgecolor='black')
+    plt.title(title)
+    plt.xlabel("Logits")
+    plt.ylabel("Density")
+    plt.legend(loc="upper right", fontsize=12)
+
+    if xlim:
+        plt.xlim(*xlim)
+
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, figure_name), dpi=300)
+    plt.close()
+
+
+
+
 def plot_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, title_prefix=None,target_dataset=None):
     os.makedirs(out_dir, exist_ok=True)
 
@@ -526,15 +561,26 @@ def plot_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, 
     img_confidence_correct = img_confidence[accuracy == 1]
     img_confidence_incorrect = img_confidence[accuracy == 0]
 
-    # px_energy_correct = target_dict['pixels'][accuracy == 1]
-    # px_energy_incorrect = target_dict['pixels'][accuracy == 0]
+
 
     mask_class_1 = (img_classes == 1)
     mask_class_1_correct = mask_class_1 & (accuracy == 1)
     mask_class_1_incorrect = mask_class_1 & (accuracy == 0)
 
+    mask_class_0 = (img_classes == 0)
+    mask_class_0_correct = mask_class_0 & (accuracy == 1)
+    mask_class_0_incorrect = mask_class_0 & (accuracy == 0)
+
+
     img_energy_class1_correct = target_dict['images'][mask_class_1_correct]
     img_energy_class1_incorrect = target_dict['images'][mask_class_1_incorrect]
+    img_confidence_1_correct = img_confidence[mask_class_1_correct]
+    img_confidence_1_incorrect = img_confidence[mask_class_1_incorrect]
+
+    img_energy_class0_correct = target_dict['images'][mask_class_0_correct]
+    img_energy_class0_incorrect = target_dict['images'][mask_class_0_incorrect]
+    img_confidence_0_correct = img_confidence[mask_class_0_correct]
+    img_confidence_0_incorrect = img_confidence[mask_class_0_incorrect]
 
 
     img_energy = target_dict['images']
@@ -556,7 +602,7 @@ def plot_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, 
     plt.hist(img_energy_incorrect, bins=40, alpha=0.4, label='Incorrect', color='tab:red', density=False)
     plt.xlabel("Density")
     plt.ylabel("Image Energy")
-    plt.title(f"{title_prefix}Image Energy vs Accuracy")
+    plt.title("Image Energy vs Accuracy")
     plt.legend()
 
 
@@ -582,7 +628,7 @@ def plot_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, 
     #plt.scatter(img_energy_incorrect, img_pxap_incorrect, alpha=0.4, color='tab:red', label='Incorrect')
     plt.xlabel("Image Energy")
     plt.ylabel("PXAP")
-    plt.title(f"{title_prefix}Image Energy vs PXAP")
+    plt.title("Image Energy vs PXAP")
     plt.grid(True)
 
     if save_path:
@@ -601,16 +647,8 @@ def plot_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, 
     plt.scatter(img_energy_incorrect, img_confidence_incorrect, alpha=0.4, color='tab:red', label='Incorrect')
     plt.xlabel("Image Energy")
     plt.ylabel("Model Confidence (max prob)")
-    plt.title(f"{title_prefix}Image Energy vs Confidence")
+    plt.title("Image Energy vs Confidence")
     plt.grid(True)
-
-    # # Pixel-level (mean)
-    # plt.subplot(1, 2, 2)
-    # plt.scatter(img_confidence, px_energy, alpha=0.5, color='tab:green', label='Pixel Energy')
-    # plt.xlabel("Model Confidence (max prob)")
-    # plt.ylabel("Mean Pixel Energy")
-    # plt.title(f"{title_prefix}Pixel Energy vs Confidence")
-    # plt.grid(True)
 
     plt.tight_layout()
 
@@ -621,6 +659,47 @@ def plot_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, 
     else:
         plt.show()
 
+
+
+    plt.figure(figsize=(8, 6))
+    # Image-level
+    plt.subplot(1, 2, 1)
+    #plt.scatter(img_energy, img_confidence, alpha=0.5, color='tab:blue', label='Image Energy')
+    plt.scatter(img_energy_class0_correct, img_confidence_0_correct, alpha=0.4, color='tab:blue', label='Correct')
+    plt.scatter(img_energy_class0_incorrect, img_confidence_0_incorrect, alpha=0.4, color='tab:red', label='Incorrect')
+    plt.xlabel("Image Energy")
+    plt.ylabel("Model Confidence (max prob)")
+    plt.title("Image Energy vs Confidence")
+    plt.grid(True)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig("Confidence_vs_Energy_class_0.png", dpi=300)
+        print(f"Saved at {save_path}")
+        plt.close()
+    else:
+        plt.show()
+
+    plt.figure(figsize=(8, 6))
+    # Image-level
+    plt.subplot(1, 2, 1)
+    #plt.scatter(img_energy, img_confidence, alpha=0.5, color='tab:blue', label='Image Energy')
+    plt.scatter(img_energy_class1_correct, img_confidence_1_correct, alpha=0.4, color='tab:blue', label='Correct')
+    plt.scatter(img_energy_class1_incorrect, img_confidence_1_incorrect, alpha=0.4, color='tab:red', label='Incorrect')
+    plt.xlabel("Image Energy")
+    plt.ylabel("Model Confidence (max prob)")
+    plt.title("Image Energy vs Confidence")
+    plt.grid(True)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig("Confidence_vs_Energy_class_1.png", dpi=300)
+        print(f"Saved at {save_path}")
+        plt.close()
+    else:
+        plt.show()
 
 
 def plot_energy_histograms_by_class(
@@ -1181,13 +1260,21 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     if target_dataset == constants.CUB:
         target_energy = compute_energy_distributions_cub(model, target_loaders, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
     else:
-        target_energy = compute_energy_distributions(model, target_loaders, target_cam_computer, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
+        target_energy = compute_energy_distributions(model, target_loaders, target_cam_computer, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = True)
 
+    #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
     #plot_energy_histograms_by_class(source_energy, target_energy, out_dir, title_prefix="")
     out_dir = "plots_energy"
     os.makedirs(out_dir, exist_ok=True)
 
+    plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
+
+    plot_logits(source_energy['max_logits_img'], target_energy['max_logits_img'], out_dir, title="Logits Distribution for images", type = "images_max", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
+    plot_logits(source_energy['min_logits_img'], target_energy['min_logits_img'], out_dir, title="Logits Distribution for images", type = "images_min", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
     
+    plot_logits(source_energy['max_logits_pxs'], target_energy['max_logits_pxs'], out_dir, title="Logits Distribution for pixels", type = "pixels_max",xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
+    plot_logits(source_energy['min_logits_pxs'], target_energy['min_logits_pxs'], out_dir, title="Logits Distribution for pixels", type = "pixels_min",xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
+
 
     #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
 
