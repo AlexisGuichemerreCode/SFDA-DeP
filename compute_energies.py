@@ -11,6 +11,9 @@ import argparse
 from dlib.sf_uda import adadsa
 import torch.nn as nn
 
+from math import ceil
+from scipy.optimize import linear_sum_assignment
+
 import numpy as np
 import numpy
 from tqdm import tqdm
@@ -76,6 +79,183 @@ from dlib.utils.tools import t2n
 import cv2
 import json
 from glob import glob
+
+
+def to_cuda(x):
+    return x.cuda()
+
+def to_onehot(label, num_classes):
+    identity = to_cuda(torch.eye(num_classes))
+    onehot = torch.index_select(identity, 0, label)
+    return onehot
+
+
+class DIST(object):
+    def __init__(self, dist_type='cos'):
+        self.dist_type = dist_type
+
+    def get_dist(self, pointA, pointB, cross=False):
+        return getattr(self, self.dist_type)(
+            pointA, pointB, cross)
+
+    def cos(self, pointA, pointB, cross):
+        pointA = F.normalize(pointA, dim=1)
+        pointB = F.normalize(pointB, dim=1)
+        if not cross:
+            return 0.5 * (1.0 - torch.sum(pointA * pointB, dim=1))
+        else:
+            # NA = pointA.size(0)
+            # NB = pointB.size(0)
+            assert (pointA.size(1) == pointB.size(1))
+            return 0.5 * (1.0 - torch.matmul(pointA, pointB.transpose(0, 1)))
+        
+
+
+
+class Clustering(object):
+    def __init__(self, eps, feat_key, model_trg, max_len=1000, dist_type='cos'):
+        self.eps = eps
+        self.Dist = DIST(dist_type)
+        self.samples = {}
+        self.path2label = {}
+        self.center_change = None
+        self.stop = False
+        self.feat_key = feat_key
+        self.max_len = max_len
+        self.model = model_trg
+
+    def set_init_centers(self, init_centers):
+        self.centers = init_centers
+        self.init_centers = init_centers
+        self.num_classes = self.centers.size(0)
+
+    def clustering_stop(self, centers):
+        if centers is None:
+            self.stop = False
+        else:
+            dist = self.Dist.get_dist(centers, self.centers)
+            dist = torch.mean(dist, dim=0)
+            #print('dist %.4f' % dist.item())
+            self.stop = dist.item() < self.eps
+
+    def assign_labels(self, feats):
+        dists = self.Dist.get_dist(feats, self.centers, cross=True)
+        _, labels = torch.min(dists, dim=1)
+        return dists, labels
+    
+
+
+    def align_centers(self):
+        cost = self.Dist.get_dist(self.centers, self.init_centers, cross=True)
+        cost = cost.data.cpu().numpy()
+        _, col_ind = linear_sum_assignment(cost)
+        return col_ind
+
+    def collect_samples(self, net, loader):
+        data_feat, data_gt, data_paths, data_truth = [], [], [], []
+        #layer_to_extract_feat = 'classification_head.avgpool'
+        #self.feature_extractor = FeatureExtractor_for_source_code(model=net, layers=[layer_to_extract_feat])
+        for sample in iter(loader):
+            #data = sample['Img'].cuda()
+            data = sample[0].cuda()
+            data_truth += sample[1]
+            #data_paths += sample['Path']
+            data_paths += sample[3]
+            # if 'Label' in sample.keys():
+            #     data_gt += [to_cuda(sample['Label'])]
+
+            # output = net.forward(data)
+            # feature = output[self.feat_key].data
+            #feature = net.forward(data, get_feature=True)[-1].data
+            #feature = self.feature_extractor(data)[layer_to_extract_feat].squeeze(2).squeeze(2)
+            out = self.model(data)
+            feature = self.model.lin_ft
+            data_feat += [feature]
+
+        self.samples['data'] = data_paths
+        # self.samples['gt'] = torch.cat(data_gt, dim=0) \
+        #     if len(data_gt) > 0 else None
+        self.samples['gt'] = None
+        self.samples['feature'] = torch.cat(data_feat, dim=0)
+        self.samples['data_truth_label'] = torch.tensor([t.item() for t in data_truth])
+
+    def feature_clustering(self, net, loader):
+        centers = None
+        self.stop = False
+
+        self.collect_samples(net, loader)
+        feature = self.samples['feature']
+
+        refs = to_cuda(torch.LongTensor(range(self.num_classes)).unsqueeze(1))
+        num_samples = feature.size(0)
+        num_split = ceil(1.0 * num_samples / self.max_len)
+
+        while True:
+            self.clustering_stop(centers)
+            if centers is not None:
+                self.centers = centers
+            if self.stop:
+                break
+
+            centers = 0
+            count = 0
+
+            start = 0
+            for N in range(num_split):
+                cur_len = min(self.max_len, num_samples - start)
+                cur_feature = feature.narrow(0, start, cur_len)
+                dist2center, labels = self.assign_labels(cur_feature)
+                labels_onehot = to_onehot(labels, self.num_classes)
+                count += torch.sum(labels_onehot, dim=0)
+                labels = labels.unsqueeze(0)
+                mask = (labels == refs).unsqueeze(2).type(torch.cuda.FloatTensor)
+                reshaped_feature = cur_feature.unsqueeze(0)
+                # update centers
+                centers += torch.sum(reshaped_feature * mask, dim=1)
+                start += cur_len
+
+            mask = (count.unsqueeze(1) > 0).type(torch.cuda.FloatTensor)
+            centers = mask * centers + (1 - mask) * self.init_centers
+
+        dist2center, labels = [], []
+        start = 0
+        count = 0
+        for N in range(num_split):
+            cur_len = min(self.max_len, num_samples - start)
+            cur_feature = feature.narrow(0, start, cur_len)
+            cur_dist2center, cur_labels = self.assign_labels(cur_feature)
+
+            labels_onehot = to_onehot(cur_labels, self.num_classes)
+            count += torch.sum(labels_onehot, dim=0)
+
+            dist2center += [cur_dist2center]
+            labels += [cur_labels]
+            start += cur_len
+
+        self.samples['label'] = torch.cat(labels, dim=0)
+        self.samples['dist2center'] = torch.cat(dist2center, dim=0)
+
+        cluster2label = self.align_centers()
+        # reorder the centers
+        self.centers = self.centers[cluster2label, :]
+        # re-label the data according to the index
+        num_samples = len(self.samples['feature'])
+        for k in range(num_samples):
+            self.samples['label'][k] = cluster2label[self.samples['label'][k]].item()
+
+
+        acc = (self.samples['label'].detach().cpu() == self.samples['data_truth_label']).float().mean() * 100.
+        msg = f"SFDE - ACC pseudo-label image-class -- : {acc} %"
+        DLLogger.log(fmsg(msg))
+
+        self.center_change = torch.mean(self.Dist.get_dist(self.centers,self.init_centers))
+
+        for i in range(num_samples):
+            self.path2label[self.samples['data'][i]] = self.samples['label'][i].item()
+
+        del self.samples['feature']
+
+
 
 
 
@@ -359,7 +539,8 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     'min_logits_img': [],
     'max_logits_img': [],
     'min_logits_pxs': [],
-    'max_logits_pxs': []
+    'max_logits_pxs': [],
+    'lin_ft': [],
     }
 
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
@@ -378,6 +559,8 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
 
             probs_img = F.softmax(lgt_imgs, dim=1)
             preds = probs_img.argmax(dim=1) 
+
+            energy_data['lin_ft'].append(px_lin_ft.flatten(start_dim=1).detach().cpu())
 
             energy_data['probs_images'].append(probs_img.max(dim=1).values.detach().cpu())
             energy_data['label_images'].append(targets.detach().cpu())
@@ -478,6 +661,7 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     energy_data['min_logits_img'] = torch.cat(energy_data['min_logits_img']).view(-1).numpy()
     energy_data['max_logits_pxs'] = torch.cat(energy_data['max_logits_pxs']).view(-1).numpy()
     energy_data['min_logits_pxs'] = torch.cat(energy_data['min_logits_pxs']).view(-1).numpy()
+    energy_data['lin_ft'] = torch.cat(energy_data['lin_ft']).view(-1).numpy()
 
     return energy_data
 
@@ -545,6 +729,125 @@ def plot_logits(source_pxs_logits, target_pxs_logits, out_dir, title, type = Non
     plt.close()
 
 
+def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, title_prefix=None,target_dataset=None):
+    os.makedirs(out_dir, exist_ok=True)
+
+    img_classes = target_dict['label_images']
+    img_predict = target_dict['pred_images']
+    img_confidence = target_dict['probs_images']
+    accuracy = (img_classes == img_predict)
+
+    img_energy_correct = target_dict['images'][accuracy == 1]
+    img_energy_incorrect = target_dict['images'][accuracy == 0]
+
+    img_confidence_correct = img_confidence[accuracy == 1]
+    img_confidence_incorrect = img_confidence[accuracy == 0]
+
+
+
+    mask_class_1 = (img_classes == 1)
+    mask_class_1_correct = mask_class_1 & (accuracy == 1)
+    mask_class_1_incorrect = mask_class_1 & (accuracy == 0)
+
+    mask_class_0 = (img_classes == 0)
+    mask_class_0_correct = mask_class_0 & (accuracy == 1)
+    mask_class_0_incorrect = mask_class_0 & (accuracy == 0)
+
+
+    img_energy_class1_correct = target_dict['images'][mask_class_1_correct]
+    img_energy_class1_incorrect = target_dict['images'][mask_class_1_incorrect]
+    img_confidence_1_correct = img_confidence[mask_class_1_correct]
+    img_confidence_1_incorrect = img_confidence[mask_class_1_incorrect]
+
+    img_energy_class0_correct = target_dict['images'][mask_class_0_correct]
+    img_energy_class0_incorrect = target_dict['images'][mask_class_0_incorrect]
+    img_confidence_0_correct = img_confidence[mask_class_0_correct]
+    img_confidence_0_incorrect = img_confidence[mask_class_0_incorrect]
+
+    # Plot classe 1
+    plt.figure(figsize=(8, 4))
+    counts_correct, bins_correct, _  = plt.hist(img_confidence_1_correct, bins=30, alpha=0.7, color='blue', label='Class 1 - Correct')
+    counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_1_incorrect, bins=30, alpha=0.7, color='red', label='Class 1 - Incorrect')
+
+    for count, x in zip(counts_correct, bins_correct[:-1]):
+        if count > 0:
+            plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+        for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
+            if count > 0:
+                plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+    plt.xlabel("Confidence")
+    plt.ylabel("Count")
+    plt.title(f"{title_prefix or ''} Class 1 - Prediction Confidence")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, f"hist_class1_proba_{target_dataset}.png"), dpi=300)
+    plt.close()
+
+    # Plot classe 1
+    plt.figure(figsize=(8, 4))
+    counts_correct, bins_correct, _  = plt.hist(img_energy_class1_correct, bins=30, alpha=0.7, color='blue', label='Class 1 - Correct')
+    counts_incorrect, bins_incorrect, _ = plt.hist(img_energy_class1_incorrect, bins=30, alpha=0.7, color='red', label='Class 1 - Incorrect')
+    for count, x in zip(counts_correct, bins_correct[:-1]):
+        if count > 0:
+            plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+        for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
+            if count > 0:
+                plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+    plt.xlabel("Energy")
+    plt.ylabel("Count")
+    plt.title(f"{title_prefix or ''} Class 1 - Energy")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, f"hist_class1_energy_{target_dataset}.png"), dpi=300)
+    plt.close()
+
+    # Plot classe 0
+    plt.figure(figsize=(8, 4))
+    counts_correct, bins_correct, _  = plt.hist(img_confidence_0_correct, bins=30, alpha=0.7, color='blue', label='Class 0 - Correct')
+    counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_0_incorrect, bins=30, alpha=0.7, color='red', label='Class 0 - Incorrect')
+    for count, x in zip(counts_correct, bins_correct[:-1]):
+        if count > 0:
+            plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+        for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
+            if count > 0:
+                plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+    plt.xlabel("Confidence")
+    plt.ylabel("Count")
+    plt.title(f"{title_prefix or ''} Class 0 - Prediction Confidence")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, f"hist_class0_proba_{target_dataset}.png"), dpi=300)
+    plt.close()
+
+    # Plot classe 1
+    plt.figure(figsize=(8, 4))
+    counts_correct, bins_correct, _  = plt.hist(img_energy_class0_correct, bins=30, alpha=0.7, color='blue', label='Class 0 - Correct')
+    counts_incorrect, bins_incorrect, _ = plt.hist(img_energy_class0_incorrect, bins=30, alpha=0.7, color='red', label='Class 0 - Incorrect')
+    for count, x in zip(counts_correct, bins_correct[:-1]):
+        if count > 0:
+            plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+        for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
+            if count > 0:
+                plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+    plt.xlabel("Energy")
+    plt.ylabel("Count")
+    plt.title(f"{title_prefix or ''} Class 0 - Energy")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, f"hist_class0_energy_{target_dataset}.png"), dpi=300)
+    plt.close()
 
 
 def plot_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, title_prefix=None,target_dataset=None):
@@ -1260,14 +1563,18 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     if target_dataset == constants.CUB:
         target_energy = compute_energy_distributions_cub(model, target_loaders, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
     else:
-        target_energy = compute_energy_distributions(model, target_loaders, target_cam_computer, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = True)
+        target_energy = compute_energy_distributions(model, target_loaders, target_cam_computer, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
 
     #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
     #plot_energy_histograms_by_class(source_energy, target_energy, out_dir, title_prefix="")
     out_dir = "plots_energy"
     os.makedirs(out_dir, exist_ok=True)
 
-    plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
+    #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
+
+
+
+    plot_hist_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
 
     plot_logits(source_energy['max_logits_img'], target_energy['max_logits_img'], out_dir, title="Logits Distribution for images", type = "images_max", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
     plot_logits(source_energy['min_logits_img'], target_energy['min_logits_img'], out_dir, title="Logits Distribution for images", type = "images_min", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
@@ -1357,7 +1664,7 @@ def fast_eval():
 
 
             #Get features at the pixel level
-            overlay_images, input_images, method_name, gt_masks = get_features(exp_path=exp_path, sf_uda_source_folder=parsedargs.path_pre_trained_source,image_ids_to_draw=parsedargs.image_ids_to_draw,image_ids_to_draw_target=parsedargs.image_ids_to_draw_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)
+            get_features(exp_path=exp_path, sf_uda_source_folder=parsedargs.path_pre_trained_source,image_ids_to_draw=parsedargs.image_ids_to_draw,image_ids_to_draw_target=parsedargs.image_ids_to_draw_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)
 
 if __name__ == '__main__':
     fast_eval()

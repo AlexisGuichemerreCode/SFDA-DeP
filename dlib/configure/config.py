@@ -513,6 +513,12 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         "sl_pc_equalize": False,  # use or not equalize the number of positive and negative samples.
         "ece": False,  # use or not ECE.
         "ece_lambda": 1.,  # lambda for ECE.
+        
+        "cal": False,  # use or not CAL.
+        "cal_lambda": 1.,  # lambda for CAL.
+
+        "cal_px": False,  # use or not CAL PX.
+        "cal_px_lambda": 1.,  # lambda for CAL PX.
 
         "pxortho": False,  # use or not pxortho.
         "pxortho_lambda": 1.,  # lambda for pxortho.

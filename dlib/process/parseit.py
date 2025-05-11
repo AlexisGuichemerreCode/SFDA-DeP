@@ -520,6 +520,14 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--ece_lambda', type=float, default=None, 
                         help='ECE: lambda value for loss .')
     
+    parser.add_argument('--cal', type=str2bool, default=None)
+    parser.add_argument('--cal_lambda', type=float, default=None, 
+                        help='CAL: lambda value for loss .')
+    
+    parser.add_argument('--cal_px', type=str2bool, default=None)
+    parser.add_argument('--cal_px_lambda', type=float, default=None, 
+                        help='cal px: lambda value for loss .')
+    
     parser.add_argument('--pxortho', type=str2bool, default=None)
     parser.add_argument('--pxortho_lambda', type=float, default=None, 
                         help='pxortho_lambda: lambda value for loss .')

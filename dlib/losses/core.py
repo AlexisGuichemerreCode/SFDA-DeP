@@ -44,10 +44,112 @@ __all__ = [
     'MaxSizePositiveNegev',
     'NegativeSamplesNegev',
     'EnergyCEloss',
+    'CalLoss',
+    'CalPxLoss',
     'PxOrtognalityloss',
     'Energy_Marginal'
 ]
 
+
+class CalLoss(ElementaryLoss):
+    def __init__(self, **kwargs):
+        super(CalLoss, self).__init__(**kwargs)
+
+        self.cal_lambda: float = 0.0
+
+        self.already_set = False
+
+    def entropy_loss(self, logits):
+        probs = torch.softmax(logits, dim=1)
+        log_probs = torch.log_softmax(logits, dim=1)
+        entropy = -torch.sum(probs * log_probs, dim=1) 
+        return entropy.mean()
+
+    def set_it(self, cal_lambda: float):
+        assert isinstance(cal_lambda, float), type(cal_lambda)
+        assert 0 <= cal_lambda <= 1., cal_lambda
+
+        self.cal_lambda = cal_lambda
+
+        self.already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+        super(CalLoss, self).forward(epoch=epoch)
+
+        assert self.already_set
+
+        assert cl_logits is not None, "cl_logits must be provided for entropy loss"
+        loss = self.entropy_loss(cl_logits)
+
+        return -loss * self.cal_lambda
+
+
+class CalPxLoss(ElementaryLoss):
+    def __init__(self, **kwargs):
+        super(CalPxLoss, self).__init__(**kwargs)
+
+        self.cal_px_lambda: float = 0.0
+
+        self.already_set = False
+
+    def pixel_entropy_loss(self, fcams):
+        # fcams: (B, C, H, W)
+        probs = torch.softmax(fcams, dim=1)          
+        log_probs = torch.log_softmax(fcams, dim=1)
+
+        entropy_map = -torch.sum(probs * log_probs, dim=1)
+        return entropy_map.mean()
+
+    def set_it(self, cal_px_lambda: float):
+        assert isinstance(cal_px_lambda, float), type(cal_px_lambda)
+        assert 0 <= cal_px_lambda <= 1., cal_px_lambda
+
+        self.cal_px_lambda = cal_px_lambda
+
+        self.already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+        super(CalPxLoss, self).forward(epoch=epoch)
+
+        assert self.already_set
+
+        assert fcams is not None
+        loss = self.pixel_entropy_loss(fcams)
+
+        return -loss * self.cal_px_lambda
+ 
 
 class ClLoss(ElementaryLoss):
     def __init__(self, **kwargs):

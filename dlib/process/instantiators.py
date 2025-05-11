@@ -845,7 +845,23 @@ def get_loss_source(args):
     
     #Pixel classification
     if args.task == constants.STD_CL and args.pixel_wise_classification:
-        
+
+        if args.cal:
+            Cal_Loss = losses.CalLoss(
+                cuda_id=args.c_cudaid,
+                support_background=support_background,
+                multi_label_flag=multi_label_flag)
+            Cal_Loss.set_it(cal_lambda=args.cal_lambda)
+            masterloss.add(Cal_Loss)
+            
+        if args.cal_px:
+            Cal_Px_Loss = losses.CalPxLoss(
+                cuda_id=args.c_cudaid,
+                support_background=support_background,
+                multi_label_flag=multi_label_flag)
+            Cal_Px_Loss.set_it(cal_px_lambda=args.cal_px_lambda)
+            masterloss.add(Cal_Px_Loss)
+
         if args.ece:
             EnergyCE_loss = losses.EnergyCEloss(
                     cuda_id=args.c_cudaid,

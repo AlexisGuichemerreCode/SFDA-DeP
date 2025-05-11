@@ -1,10 +1,10 @@
-DLLL 2025-04-30 18:27:58.007190 0:00:00.283665 
-==================================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: CAMELYON512 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
-==================================================================================================
+DLLL 2025-05-08 21:48:13.914194 0:00:00.124362 
+===========================================================================================
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
+===========================================================================================
 
-DLLL 2025-04-30 18:28:00.110085 0:00:02.386560 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23518277
-DLLL 2025-04-30 18:28:00.110274 0:00:02.386749 Arch: STDClassifier
+DLLL 2025-05-08 21:48:14.937937 0:00:01.148105 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
+DLLL 2025-05-08 21:48:14.938109 0:00:01.148277 Arch: STDClassifier
 task: STD_CL
 encoder_name: resnet50
 encoder_weights: imagenet
@@ -23,7 +23,7 @@ aux_params:
 	gated: False
 	prm_ks: 3
 	prm_st: 1
-	pixel_wise_classification: True
+	pixel_wise_classification: False
 	batch_norm: False
 	multiple_layer: False
 	one_layer: False
@@ -34,15 +34,14 @@ freeze_cl: False
 im_rec: False
 img_range: tanh 
 
-DLLL 2025-04-30 18:28:00.114263 0:00:02.390738 u-resnet50. Task: STD_CL. 
+DLLL 2025-05-08 21:48:14.942036 0:00:01.152204 u-resnet50. Task: STD_CL. 
  NBR-PARAMS: 
 	Encoder [resnet50]: 23508032. 
 	Classification head [WGAP]: 6147. 
-	Pixel Wise Classification head [PixelWise]: 4098. 
-	Total: 23518277. 
+	Total: 23514179. 
 
-DLLL 2025-04-30 18:28:00.235388 0:00:02.511863 
-========================================================================================================================
- MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/MODEL_MIDL_2025/SOURCE/CAMELYON/BLOC/ID_SOURCE_0_CAMELYON512_ENERGYCAM_LAYERCAM_LOW_RES_2-TSK_STD_CL-DS_CAMELYON512-FOLD_0-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_ENERGYCAM-SPOOLING_WGAP-ARCH_STDCLASSIFIER-ECD_RESNET50/CAMELYON512-0-RESNET50-PIXELCAM-WGAP-CP_BEST_LOCALIZATION
-========================================================================================================================
+DLLL 2025-05-08 21:48:17.272280 0:00:03.482448 
+===========================================================================================
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
+===========================================================================================
 

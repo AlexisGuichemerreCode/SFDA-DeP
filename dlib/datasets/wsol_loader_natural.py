@@ -342,7 +342,7 @@ class RandomCrop(_BasicTransform):
         i = torch.randint(0, h - th + 1, size=(1, )).item()
         j = torch.randint(0, w - tw + 1, size=(1, )).item()
         return i, j, th, tw
-
+        
     def __init__(self, size, padding=None, pad_if_needed=False, fill=0,
                  padding_mode="constant"):
         super().__init__()
@@ -408,7 +408,7 @@ class Resize(_BasicTransform):
     def __call__(self, img, raw_img, std_cam):
         std_cam_ = std_cam
         if std_cam_ is not None:
-            std_cam_ = TF.resize(std_cam_, self.size, self.interpolation)
+            std_cam_ = TF.resize(std_cam_, self.size, self.interpolation, antialias = True)
 
         return TF.resize(img, self.size, self.interpolation), TF.resize(
             raw_img, self.size, self.interpolation), std_cam_

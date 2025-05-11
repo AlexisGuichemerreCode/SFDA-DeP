@@ -210,9 +210,9 @@ class Trainer(Basic):
             std_cams_folder=self.args.std_cams_folder,
             sfuda_faust=self.args.faust,
             sfuda_n_rnd_views=self._get_faust_n_views(),
-            chg_staining = self.chg_staining,
-            path_staining = self.path_staining,
-            dist_staining = self.dist_staining
+            #chg_staining = self.chg_staining,
+            #path_staining = self.path_staining,
+            #dist_staining = self.dist_staining
         )
 
         if self.args.target_domain_ds_to_compute_stats != None or self.args.ds_to_compute_acc_trainset_source_target != None:
