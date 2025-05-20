@@ -496,6 +496,9 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         "sat_drop_path_rate": 0.1,  # float [0, 1] drop path for stochastic depth same value in SAT code
         "sat_area_th": 0.35,  # float [0, 1] area threshold for SAT same value in SAT code
 
+        "entropy_models": False,  # save or not multiples source models.
+        "m_entropy_models": 5,  # number of models to save.
+
         #Pixel CAM ----------------------------------------------------------
         "pixel_wise_classification": False,  # Add this parameter to control the creation of the second head for localization for Energy Model
         "batch_norm_pixel_classifier": False,

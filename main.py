@@ -68,6 +68,9 @@ def main():
             split=constants.TRAINSET, epoch=epoch)
         trainer.evaluate(epoch, split=constants.VALIDSET)
 
+        if args.entropy_models:
+            trainer.update_best_entropy_model(epoch, split=constants.TRAINSET)
+
         # if args.ds_to_compute_acc_trainset_source_target and epoch % args.cmpt_epoch == 0:
         #     trainer.compute_acc_on_source_and_target(epoch)
         #     trainer.compute_loc_on_source_and_target(epoch)
@@ -89,6 +92,9 @@ def main():
         #trainer.plot_source_target_acc_curves(task = "loc", cmpt_epoch = args.cmpt_epoch)
 
         #trainer.plot_source_target_loc_curves(cmpt_epoch = args.cmpt_epoch)  
+
+    if args.entropy_models:
+        trainer.save_best_entropy_models()
 
     trainer.save_checkpoints()
 

@@ -195,6 +195,10 @@ class Trainer(Basic):
         self.path_staining = args.path_staining
         self.dist_staining = args.dist_staining
 
+        if args.entropy_models:
+            self.entropy_models = args.entropy_models
+            self.m_entropy_models = args.m_entropy_models
+
         self.loaders = get_data_loader(
             data_roots=self.args.data_paths,
             metadata_root=self.args.metadata_root,
@@ -1418,6 +1422,38 @@ class Trainer(Basic):
         torch.cuda.empty_cache()
         return classification_acc.item()
     
+
+    def _compute_accuracy_and_entropy(self, loader):
+        torch.cuda.empty_cache()
+
+        num_correct = 0
+        num_images = 0
+        total_entropy = 0.0
+
+        for i, (images, targets, *_ ) in enumerate(loader):
+            images = images.cuda(self.args.c_cudaid)
+            targets = targets.cuda(self.args.c_cudaid)
+
+            with torch.no_grad():
+                cl_logits = self.cl_forward(images)
+
+                # Accuracy
+                pred = cl_logits.argmax(dim=1)
+                num_correct += (pred == targets).sum().detach()
+                num_images += images.size(0)
+
+                # Entropy
+                probs = torch.softmax(cl_logits, dim=1)
+                log_probs = torch.log_softmax(cl_logits, dim=1)
+                entropy = -torch.sum(probs * log_probs, dim=1)  # [B]
+                total_entropy += entropy.sum().item()
+
+        classification_acc = num_correct / float(num_images) * 100
+        mean_entropy = total_entropy / float(num_images)
+
+        torch.cuda.empty_cache()
+        return classification_acc.item(), mean_entropy
+    
     def _compute_accuracy_entropy(self, loader):
         torch.cuda.empty_cache()
 
@@ -1656,7 +1692,75 @@ class Trainer(Basic):
             pkl.dump(curves_data, f)
 
 
+    def evaluate_entropy(self, epoch, split, checkpoint_type=None, fcam_argmax=False):
+        torch.cuda.empty_cache()
+        assert split in [constants.TESTSET, constants.VALIDSET, constants.TRAINSET]
 
+        if split == constants.TESTSET:
+            splitpx = split
+            splitcl = split
+        elif split == constants.VALIDSET:
+            splitpx = constants.PXVALIDSET
+            splitcl = constants.CLVALIDSET
+        elif split == constants.TRAINSET:
+            splitpx = split
+            splitcl = split
+        else:
+            raise NotImplementedError
+
+        if fcam_argmax:
+            assert self.args.task in [constants.F_CL, constants.NEGEV,
+                                    constants.SEG]
+
+        self.fcam_argmax_previous = self.fcam_argmax
+        self.fcam_argmax = fcam_argmax
+        tagargmax = ''
+        if self.args.task in [constants.F_CL, constants.NEGEV]:
+            tagargmax = 'Argmax {}'.format(fcam_argmax)
+
+        DLLogger.log(fmsg("Evaluate: Epoch {} Split {} {}".format(
+            epoch, split, tagargmax)))
+
+        outd = None
+        if split == constants.TESTSET:
+            assert checkpoint_type is not None
+            if fcam_argmax:
+                outd = join(self.args.outd, checkpoint_type, 'argmax-true',
+                            split)
+            else:
+                outd = join(self.args.outd, checkpoint_type, split)
+        elif split == constants.VALIDSET:
+            _chpt = 'training' if checkpoint_type is None else checkpoint_type
+            if fcam_argmax:
+                outd = join(self.args.outd, _chpt, 'argmax-true', split)
+            else:
+                outd = join(self.args.outd, _chpt, split)
+
+        elif split == constants.TRAINSET:
+            _chpt = 'training' if checkpoint_type is None else checkpoint_type
+            if fcam_argmax:
+                outd = join(self.args.outd, _chpt, 'argmax-true', split)
+            else:
+                outd = join(self.args.outd, _chpt, split)
+        else:
+            raise NotImplementedError
+
+        os.makedirs(outd, exist_ok=True)
+
+        set_seed(seed=self.default_seed, verbose=False)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        self.model.eval()
+
+        # cl.
+        accuracy = 0.0
+        if self.args.task != constants.SEG:
+            accuracy, entropy = self._compute_accuracy_and_entropy(loader=self.loaders[splitcl])
+
+        self.performance_meters[
+            splitcl][constants.CLASSIFICATION_MTR].update(accuracy)
+
+        torch.cuda.empty_cache()
 
     def evaluate(self, epoch, split, checkpoint_type=None, fcam_argmax=False):
         torch.cuda.empty_cache()
@@ -1936,6 +2040,71 @@ class Trainer(Basic):
     @property
     def cpu_device(self):
         return get_cpu_device()
+    
+
+    def save_best_entropy_models(self):
+
+        sorted_models = sorted(
+            self.best_entropy_models.items(), 
+            key=lambda x: x[1][0], 
+            reverse=True            
+        )
+            
+        entropy_log_path = os.path.join(self.args.outd, "best_models_entropy.txt")
+
+        with open(entropy_log_path, "w") as f:
+            f.write("Rank\tEpoch\tEntropy\n")
+            for rank, (epoch, (entropy, _model)) in enumerate(sorted_models, start=1):
+                f.write(f"{rank}\t{epoch}\t{entropy:.6f}\n")
+
+        #for epoch, (entropy, _model) in self.best_entropy_models.items():
+        for rank, (epoch, (entropy, _model)) in enumerate(sorted_models, start=1):
+            checkpoint_type = f"B-EPOCH{rank}"
+            tag = get_tag(self.args, checkpoint_type=checkpoint_type)
+            path = os.path.join(self.args.outd, tag)
+
+            if not os.path.isdir(path):
+                os.makedirs(path)
+            if self.args.task == constants.STD_CL:
+                if self.args.method in [constants.METHOD_ACOL,
+                                        constants.METHOD_ADL,
+                                        constants.METHOD_SPG,
+                                        constants.METHOD_TSCAM,
+                                        constants.METHOD_SAT]:
+                    torch.save(_model.state_dict(),
+                            join(path, 'model.pt'))
+
+                elif self.args.method == constants.METHOD_MAXMIN:
+                    torch.save(_model.encoder.state_dict(),
+                            join(path, 'encoder.pt'))
+                    torch.save(_model.classification_head1.state_dict(),
+                            join(path, 'classification_head1.pt'))
+                    torch.save(_model.classification_head2.state_dict(),
+                            join(path, 'classification_head2.pt'))
+                    if _model.mask_head is not None:
+                        torch.save(_model.mask_head.state_dict(),
+                                join(path, 'mask_head.pt'))
+
+                elif self.args.method == constants.METHOD_PIXELCAM:
+                    if "deit" in self.args.model['encoder_name']:
+                        torch.save(_model.state_dict(),
+                            join(path, 'model.pt'))
+                    else:
+                        torch.save(_model.encoder.state_dict(),
+                                join(path, 'encoder.pt'))
+                        torch.save(_model.classification_head.state_dict(),
+                                join(path, 'classification_head.pt')),
+                        torch.save(_model.pixel_wise_classification_head.state_dict(),
+                                    join(path, 'pixel_wise_classification_head.pt'))
+                else:
+                    torch.save(_model.encoder.state_dict(),
+                            join(path, 'encoder.pt'))
+                    torch.save(_model.classification_head.state_dict(),
+                            join(path, 'classification_head.pt'))
+                
+            self._save_args(path=join(path, 'config_model.yaml'))
+            DLLogger.log(message="Stored Model [CP: {} \t EPOCH: {} \t TAG: {}]:"
+                                " {}".format(checkpoint_type, epoch, tag, path))
 
     def save_best_epoch(self):
         if self.args.localization_avail:
@@ -2046,6 +2215,35 @@ class Trainer(Basic):
         self._save_args(path=join(path, 'config_model.yaml'))
         DLLogger.log(message="Stored Model [CP: {} \t EPOCH: {} \t TAG: {}]:"
                              " {}".format(checkpoint_type, epoch, tag, path))
+        
+
+    def update_best_entropy_model(self, epoch, split):
+        torch.cuda.empty_cache()
+        self.model.eval()
+        accuracy = 0.0
+        if self.args.task != constants.SEG:
+            accuracy, entropy = self._compute_accuracy_and_entropy(loader=self.loaders[split])
+
+        torch.cuda.empty_cache()
+
+        model_entropy = deepcopy(self.model).to(self.cpu_device).eval()
+        #model_state = model_entropy.state_dict()
+
+        if not hasattr(self, "best_entropy_models"):
+            self.best_entropy_models = {}  # {epoch: (entropy, state_dict)}
+
+        if len(self.best_entropy_models) < self.m_entropy_models:
+            self.best_entropy_models[epoch] = (entropy, model_entropy)
+
+        else:
+            min_epoch, (min_entropy, _) = min(self.best_entropy_models.items(), key=lambda x: x[1][0])
+
+            if entropy > min_entropy:
+                del self.best_entropy_models[min_epoch]
+                self.best_entropy_models[epoch] = (entropy, model_entropy)
+                print(f"[Entropy Replace] Replaced model from epoch {min_epoch} (entropy {min_entropy:.4f}) with epoch {epoch} (entropy {entropy:.4f})")
+            else:
+                print(f"[Entropy Skip] Model at epoch {epoch} with entropy {entropy:.4f} was not selected.")
 
     def _is_best_model_loc(self, epoch: int) -> bool:
         cnd = self.args.localization_avail

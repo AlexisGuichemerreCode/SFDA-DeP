@@ -115,6 +115,14 @@ def _compute_accuracy(args, model, loader):
     num_correct = 0
     num_images = 0
 
+    num_correct_normal = 0
+    num_images_normal = 0
+
+    num_correct_cancer = 0
+    num_images_cancer = 0
+
+    entropies = []
+
     for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
         images = images.cuda()
         targets = targets.cuda()
@@ -122,11 +130,36 @@ def _compute_accuracy(args, model, loader):
             cl_logits = cl_forward(args, model, images)
             pred = cl_logits.argmax(dim=1)
 
+            probs = F.softmax(cl_logits, dim=1)  # [B, C]
+            log_probs = torch.log_softmax(cl_logits, dim=1)
+
+            entropy = - torch.sum(probs * log_probs, dim=1)  # [B]
+            entropies.extend(entropy.cpu().tolist())
+
         num_correct += (pred == targets).sum().item()
         num_images += images.size(0)
 
+        # Compute accuracy for each class
+        for j in range(len(targets)):
+            if targets[j] == 0:
+                num_images_normal += 1
+                if pred[j] == targets[j]:
+                    num_correct_normal += 1
+            elif targets[j] == 1:
+                num_images_cancer += 1
+                if pred[j] == targets[j]:
+                    num_correct_cancer += 1
+            else:
+                raise ValueError("Unknown class label")
+            
+    # Compute accuracy for each class
+    classification_acc_normal = num_correct_normal / float(num_images_normal) * 100 if num_images_normal > 0 else 0
+    classification_acc_cancer = num_correct_cancer / float(num_images_cancer) * 100 if num_images_cancer > 0 else 0
+
+
     classification_acc = num_correct / float(num_images) * 100
-    return classification_acc
+    
+    return classification_acc, classification_acc_normal, classification_acc_cancer, entropies
 
 
 def img_entropy(args, model, loader):
@@ -212,6 +245,10 @@ def load_model(exp_path,dataset,checkpoint_type, cudaid, tmp_outd='tmp_outd', pa
     print(f'Loading model for {method_name}-{encoder_name} from {path_cl}')
     if parsedargs.external_model == None:
         if "tscam" in encoder_name:
+            model_tscam = torch.load(join(path_cl, 'model.pt'),map_location=get_cpu_device())
+
+            model.load_state_dict(model_tscam, strict=True)
+        elif "sat" in encoder_name:
             model_tscam = torch.load(join(path_cl, 'model.pt'),map_location=get_cpu_device())
 
             model.load_state_dict(model_tscam, strict=True)
@@ -430,7 +467,7 @@ def measure_model_diff(exp_path_source,exp_path_target, checkpoint_type, source_
     return 0
 
 
-def measure_entropy(exp_path_source,exp_path_target, checkpoint_type, source_dataset,target_dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None, args = None):
+def measure_entropy(exp_path_source,exp_path_target, checkpoint_type, source_dataset,target_dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None, args = None, multiple_model = None):
 
     source_model = load_model(exp_path_source, source_dataset, checkpoint_type, cudaid, tmp_outd=tmp_outd, parsedargs=parsedargs)
     #target_model = load_model(exp_path_target, target_dataset, checkpoint_type, cudaid, tmp_outd=tmp_outd, parsedargs=parsedargs)
@@ -442,12 +479,7 @@ def measure_entropy(exp_path_source,exp_path_target, checkpoint_type, source_dat
     #target_model.to(device)
     new_model.to(device)
 
-    state_dict_source_model = source_model.state_dict()
     
-
-    cl_perf_list = []
-    cam_perf_list = []
-    modified_param_names = []
 
 
     source_model.eval()
@@ -457,15 +489,61 @@ def measure_entropy(exp_path_source,exp_path_target, checkpoint_type, source_dat
     #target_loader, target_metadata_root, target_domain_data_paths, args = load_loader(exp_path_target, target_dataset, checkpoint_type, cudaid, split, tmp_outd=tmp_outd, parsedargs=parsedargs)
     source_loader, source_metadata_root, source_domain_data_paths, args = load_loader(exp_path_source, source_dataset, checkpoint_type, cudaid, split, tmp_outd=tmp_outd, parsedargs=parsedargs)
 
-    cl_performance = _compute_accuracy(args, source_model, source_loader[split])
+    cl_performance, class_0_performance, class_1_performance, entropies = _compute_accuracy(args, source_model, source_loader[split])
     print(f"[Initial Classification performance: {cl_performance}")
-
-    entropies = img_entropy(args, source_model, source_loader[split])
-
+    print(f"[Initial Normal Classification performance: {class_0_performance}")
+    print(f"[Initial Cancer Classification performance: {class_1_performance}")
     print(f"Initial Entropy performance: {np.mean(entropies)}")
+
+    #entropies = img_entropy(args, source_model, source_loader[split])
+
+    #print(f"Initial Entropy performance: {np.mean(entropies)}")
 
     return 0
     
+
+def avering_models(exp_path_source,exp_path_target, checkpoint_type, source_dataset,target_dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None, args = None, multiple_model=None):
+
+    model_0 = load_model(multiple_model[0], source_dataset, checkpoint_type, cudaid, tmp_outd=tmp_outd, parsedargs=parsedargs)
+    model_1 = load_model(multiple_model[1], target_dataset, checkpoint_type, cudaid, tmp_outd=tmp_outd, parsedargs=parsedargs)
+    model_2 = load_model(multiple_model[2], target_dataset, checkpoint_type, cudaid, tmp_outd=tmp_outd, parsedargs=parsedargs)
+    model_3 = load_model(multiple_model[3], target_dataset, checkpoint_type, cudaid, tmp_outd=tmp_outd, parsedargs=parsedargs)
+    model_4 = load_model(multiple_model[4], target_dataset, checkpoint_type, cudaid, tmp_outd=tmp_outd, parsedargs=parsedargs)
+
+    models = [model_0, model_1, model_2, model_3, model_4]
+
+    device = torch.device('cuda:{}'.format(cudaid))
+
+    avg_state_dict = deepcopy(models[0].state_dict())
+
+
+    for key in avg_state_dict.keys():
+        for i in range(1, len(models)):
+            avg_state_dict[key] += models[i].state_dict()[key]
+        avg_state_dict[key] = avg_state_dict[key] / len(models)
+
+    
+    new_model = deepcopy(model_0)
+    new_model.load_state_dict(avg_state_dict)
+
+    new_model.to(device)
+
+    new_model.eval()
+
+    #target_loader, target_metadata_root, target_domain_data_paths, args = load_loader(exp_path_target, target_dataset, checkpoint_type, cudaid, split, tmp_outd=tmp_outd, parsedargs=parsedargs)
+    source_loader, source_metadata_root, source_domain_data_paths, args = load_loader(exp_path_source, source_dataset, checkpoint_type, cudaid, split, tmp_outd=tmp_outd, parsedargs=parsedargs)
+
+    cl_performance, class_0_performance, class_1_performance, entropies = _compute_accuracy(args, new_model, source_loader[split])
+    print(f"[Initial Classification performance: {cl_performance}")
+    print(f"[Initial Normal Classification performance: {class_0_performance}")
+    print(f"[Initial Cancer Classification performance: {class_1_performance}")
+    print(f"Initial Entropy performance: {np.mean(entropies)}")
+
+    #entropies = img_entropy(args, source_model, source_loader[split])
+
+    #print(f"Initial Entropy performance: {np.mean(entropies)}")
+
+    return 0
 
 
 
@@ -490,9 +568,17 @@ def fast_eval():
     parser.add_argument("--source_dataset", type=str, default=None, help="Source dataset")
     parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
     parser.add_argument("--path_pre_trained_target", type=str, default=None, help="Path to the pre-trained target model.")
+
+    parser.add_argument("--path_pre_trained_source_1", type=str, default=None, help="Path to the pre-trained source model.")
+    parser.add_argument("--path_pre_trained_source_2", type=str, default=None, help="Path to the pre-trained source model.")
+    parser.add_argument("--path_pre_trained_source_3", type=str, default=None, help="Path to the pre-trained source model.")
+    parser.add_argument("--path_pre_trained_source_4", type=str, default=None, help="Path to the pre-trained source model.")
+    parser.add_argument("--path_pre_trained_source_5", type=str, default=None, help="Path to the pre-trained source model.")
+
     parser.add_argument("--external_model", type=str, default=None, help="Path to the external bb+cl.")
     parser.add_argument("--source_model_name", type=str, default=None, help="Name of source model.")
     parser.add_argument("--target_model_name", type=str, default=None, help="Name of target model.")
+
 
     parsedargs = parser.parse_args()
     
@@ -529,8 +615,14 @@ def fast_eval():
         exp_path_source = parsedargs.path_pre_trained_source
         exp_path_target = parsedargs.path_pre_trained_target
 
+        multiple_model = [parsedargs.path_pre_trained_source_1,
+                          parsedargs.path_pre_trained_source_2,
+                          parsedargs.path_pre_trained_source_3,
+                          parsedargs.path_pre_trained_source_4,
+                          parsedargs.path_pre_trained_source_5]
+        # exp_path_source = parsedargs.path_pre_trained_source
 
-        measure_entropy(exp_path_source=exp_path_source, exp_path_target = exp_path_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)
+        measure_entropy(exp_path_source=exp_path_source, exp_path_target = exp_path_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs, multiple_model=multiple_model)
 
 
         #overlay_images, input_images, method_name, gt_masks = measure_model_diff(exp_path_source=exp_path_source, exp_path_target = exp_path_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)

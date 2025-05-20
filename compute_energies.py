@@ -1178,6 +1178,12 @@ def _compute_accuracy(args, model, loader):
     num_correct = 0
     num_images = 0
 
+    num_correct_normal = 0
+    num_images_normal = 0
+
+    num_correct_cancer = 0
+    num_images_cancer = 0
+
     for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
         images = images.cuda()
         targets = targets.cuda()
@@ -1188,8 +1194,27 @@ def _compute_accuracy(args, model, loader):
         num_correct += (pred == targets).sum().item()
         num_images += images.size(0)
 
+        # Compute accuracy for each class
+        for j in range(len(targets)):
+            if targets[j] == 0:
+                num_images_normal += 1
+                if pred[j] == targets[j]:
+                    num_correct_normal += 1
+            elif targets[j] == 1:
+                num_images_cancer += 1
+                if pred[j] == targets[j]:
+                    num_correct_cancer += 1
+            else:
+                raise ValueError("Unknown class label")
+            
+    # Compute accuracy for each class
+    classification_acc_normal = num_correct_normal / float(num_images_normal) * 100 if num_images_normal > 0 else 0
+    classification_acc_cancer = num_correct_cancer / float(num_images_cancer) * 100 if num_images_cancer > 0 else 0
+
+
     classification_acc = num_correct / float(num_images) * 100
-    return classification_acc
+    
+    return classification_acc, classification_acc_normal, classification_acc_cancer
 
 
 
@@ -1567,7 +1592,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
     #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
     #plot_energy_histograms_by_class(source_energy, target_energy, out_dir, title_prefix="")
-    out_dir = "plots_energy"
+    out_dir = "plots_energy_test"
     os.makedirs(out_dir, exist_ok=True)
 
     #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)

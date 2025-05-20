@@ -115,6 +115,12 @@ def _compute_accuracy(args, model, loader):
     num_correct = 0
     num_images = 0
 
+    num_correct_normal = 0
+    num_images_normal = 0
+
+    num_correct_cancer = 0
+    num_images_cancer = 0
+
     for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
         images = images.cuda()
         targets = targets.cuda()
@@ -125,8 +131,27 @@ def _compute_accuracy(args, model, loader):
         num_correct += (pred == targets).sum().item()
         num_images += images.size(0)
 
+        # Compute accuracy for each class
+        for j in range(len(targets)):
+            if targets[j] == 0:
+                num_images_normal += 1
+                if pred[j] == targets[j]:
+                    num_correct_normal += 1
+            elif targets[j] == 1:
+                num_images_cancer += 1
+                if pred[j] == targets[j]:
+                    num_correct_cancer += 1
+            else:
+                raise ValueError("Unknown class label")
+            
+    # Compute accuracy for each class
+    classification_acc_normal = num_correct_normal / float(num_images_normal) * 100 if num_images_normal > 0 else 0
+    classification_acc_cancer = num_correct_cancer / float(num_images_cancer) * 100 if num_images_cancer > 0 else 0
+
+
     classification_acc = num_correct / float(num_images) * 100
-    return classification_acc
+    
+    return classification_acc, classification_acc_normal, classification_acc_cancer
 
 def load_model(exp_path,dataset,checkpoint_type, cudaid, tmp_outd='tmp_outd', parsedargs=None):
     with open(join(exp_path, 'config_obj_final.yaml'), 'r') as fy:
@@ -442,8 +467,10 @@ def measure_accuracy_diff_model(exp_path_source,exp_path_target, checkpoint_type
 
     target_loader, target_metadata_root, target_domain_data_paths, args = load_loader(exp_path_target, target_dataset, checkpoint_type, cudaid, split, tmp_outd=tmp_outd, parsedargs=parsedargs)
 
-    cl_performance = _compute_accuracy(args, source_model, target_loader[split])
+    cl_performance, class_0_performance, class_1_performance = _compute_accuracy(args, source_model, target_loader[split])
     print(f"[Initial Classification performance: {cl_performance}")
+    print(f"[Initial Normal Classification performance: {class_0_performance}")
+    print(f"[Initial Cancer Classification performance: {class_1_performance}")
 
     # Evaluation of localisation CAM
     cam_computer = CAMComputer(

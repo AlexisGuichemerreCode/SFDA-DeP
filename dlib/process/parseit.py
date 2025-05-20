@@ -494,6 +494,12 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--path_staining', type=str, default=None)
     parser.add_argument('--dist_staining', type=float, default=None)
 
+    parser.add_argument('--entropy_models', type=str2bool, default=None, 
+                        help='entropy_models: Save multiple models based on entropy.')
+    
+    parser.add_argument('--m_entropy_models', type=int, default=None, 
+                        help='m_entropy_models: number of models to save based on entropy.')
+
 
     #PixelCAM
     parser.add_argument('--pixel_wise_classification', type=str2bool, default=None,
