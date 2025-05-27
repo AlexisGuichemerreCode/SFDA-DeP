@@ -1771,7 +1771,7 @@ def sf_uda_load_set_source_weights(model, args: object):
     assert _args_trg.num_classes == args_src.num_classes
 
     checkpoint_type = _args_trg.sf_uda_source_checkpoint_type
-    assert checkpoint_type in [constants.BEST_LOC, constants.BEST_CL], checkpoint_type
+    #assert checkpoint_type in [constants.BEST_LOC, constants.BEST_CL], checkpoint_type
 
     assert _args_trg.task == args_src.task, f"{_args_trg.task} | " \
                                             f"{args_src.task}"

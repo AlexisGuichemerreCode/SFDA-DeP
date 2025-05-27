@@ -11,6 +11,8 @@ import argparse
 from dlib.sf_uda import adadsa
 import torch.nn as nn
 import pandas as pd
+import csv
+
 
 import numpy as np
 import numpy
@@ -110,6 +112,67 @@ def cl_forward(args, model, images):
         raise NotImplementedError
 
     return cl_logits
+
+def _compute_accuracy_distrib(args, model, loader):
+    import torch.nn.functional as F
+    from collections import Counter
+
+    num_correct = 0
+    num_images = 0
+
+    num_correct_normal = 0
+    num_images_normal = 0
+
+    num_correct_cancer = 0
+    num_images_cancer = 0
+
+    entropies = []
+    class_pred_counts = Counter()  # pour compter les classes prédictes
+
+    for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+        images = images.cuda()
+        targets = targets.cuda()
+        with torch.no_grad():
+            cl_logits = cl_forward(args, model, images)
+            pred = cl_logits.argmax(dim=1)
+
+            probs = F.softmax(cl_logits, dim=1)  # [B, C]
+            log_probs = torch.log_softmax(cl_logits, dim=1)
+
+            entropy = - torch.sum(probs * log_probs, dim=1)  # [B]
+            entropies.extend(entropy.cpu().tolist())
+
+            # Comptage des classes prédites
+            for p in pred.cpu().tolist():
+                class_pred_counts[p] += 1
+
+        num_correct += (pred == targets).sum().item()
+        num_images += images.size(0)
+
+        for j in range(len(targets)):
+            if targets[j] == 0:
+                num_images_normal += 1
+                if pred[j] == targets[j]:
+                    num_correct_normal += 1
+            elif targets[j] == 1:
+                num_images_cancer += 1
+                if pred[j] == targets[j]:
+                    num_correct_cancer += 1
+            else:
+                raise ValueError("Unknown class label")
+
+    classification_acc_normal = num_correct_normal / float(num_images_normal) * 100 if num_images_normal > 0 else 0
+    classification_acc_cancer = num_correct_cancer / float(num_images_cancer) * 100 if num_images_cancer > 0 else 0
+    classification_acc = num_correct / float(num_images) * 100
+
+    # Distribution prédite normalisée
+    total_preds = sum(class_pred_counts.values())
+    class_distribution = [
+        class_pred_counts[i] / total_preds if total_preds > 0 else 0.0
+        for i in range(args.num_classes)
+    ]
+
+    return classification_acc, classification_acc_normal, classification_acc_cancer, entropies, class_distribution
 
 def _compute_accuracy(args, model, loader):
     num_correct = 0
@@ -500,7 +563,451 @@ def measure_entropy(exp_path_source,exp_path_target, checkpoint_type, source_dat
     #print(f"Initial Entropy performance: {np.mean(entropies)}")
 
     return 0
+
+
+def find_worst_rank1_entropy(base_path):
+    worst_entropy = -1.0  # On veut la plus haute entropie
+    worst_folder = None
+
+    for folder_name in os.listdir(base_path):
+        folder_path = os.path.join(base_path, folder_name)
+        if not os.path.isdir(folder_path):
+            continue
+
+        file_path = os.path.join(folder_path, 'best_models_entropy.txt')
+        if not os.path.isfile(file_path):
+            print(f"[⚠️] Fichier manquant dans : {folder_name}")
+            continue
+
+        try:
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+
+            # Skip header and parse the first line (Rank = 1)
+            rank1_line = lines[1].strip().split()
+            if len(rank1_line) < 3:
+                print(f"[⚠️] Format invalide dans {file_path}")
+                continue
+
+            entropy = float(rank1_line[2])
+
+            if entropy > worst_entropy:
+                worst_entropy = entropy
+                worst_folder = folder_name
+
+        except Exception as e:
+            print(f"[❌] Erreur avec {file_path}: {e}")
+
+    if worst_folder:
+        print(f"\n📁 Dossier avec la plus haute entropie (Rank 1): {worst_folder}")
+        print(f"🔺 Entropie = {worst_entropy:.6f}")
+        return worst_folder, worst_entropy
+    else:
+        print("Aucun fichier valide trouvé.")
+        return None, None
     
+
+def measure_entropy_all_checkpoints(
+    exp_path_source,
+    source_dataset,
+    cudaid,
+    split,
+    tmp_outd='tmp_outd',
+    parsedargs=None,
+    #args=None,
+    output_csv='entropy_performance.csv',
+    max_epoch=20
+):
+    # Liste complète des checkpoints à évaluer
+    checkpoint_types = ['best_classification', 'best_localization']
+    checkpoint_types += [f'B-EPOCH{i}' for i in range(1, 11)]
+    #checkpoint_types += [f'B-EPOCH{i}' for i in range(1, 2)]
+
+    # Charger une seule fois le loader
+    source_loader, _, _, args = load_loader(
+        exp_path_source, source_dataset, checkpoint_types[0], cudaid, split,
+        tmp_outd=tmp_outd, parsedargs=parsedargs
+    )
+
+    # Coolect
+    results = []
+
+    for checkpoint_type in checkpoint_types:
+        try:
+            model = load_model(
+                exp_path_source, source_dataset, checkpoint_type, cudaid,
+                tmp_outd=tmp_outd, parsedargs=parsedargs
+            )
+        except Exception as e:
+            print(f"[⚠️] Erro while loading checkpoint {checkpoint_type}: {e}")
+            continue
+
+        device = torch.device(f'cuda:{cudaid}')
+        model = deepcopy(model).to(device).eval()
+
+        try:
+            cl_perf, norm_perf, cancer_perf, entropies = _compute_accuracy(
+                args, model, source_loader[split]
+            )
+        except Exception as e:
+            print(f"[⚠️] Échec du calcul des métriques pour {checkpoint_type}: {e}")
+            continue
+
+        mean_entropy = float(np.mean(entropies))
+        print(f"[{checkpoint_type}] CL: {cl_perf:.2f}, Normal: {norm_perf:.2f}, Cancer: {cancer_perf:.2f}, Entropy: {mean_entropy:.4f}")
+
+        results.append({
+            'checkpoint': checkpoint_type,
+            'classification': cl_perf,
+            'normal_class': norm_perf,
+            'cancer_class': cancer_perf,
+            'entropy': mean_entropy
+        })
+
+    # Écriture des résultats dans un fichier CSV
+    csv_path = os.path.join(exp_path_source, output_csv)
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['checkpoint', 'classification', 'normal_class', 'cancer_class', 'entropy'])
+        writer.writeheader()
+        writer.writerows(results)
+
+    print(f"\n✅ Résultats enregistrés dans : {csv_path}")
+
+
+
+
+
+def average_state_dicts(state_dicts):
+    """Calcule la moyenne pondérée (uniforme) de plusieurs state_dicts."""
+    avg_state_dict = {}
+    num_models = len(state_dicts)
+
+    for key in state_dicts[0]:
+        avg_state_dict[key] = sum(d[key] for d in state_dicts) / num_models
+
+    return avg_state_dict
+
+
+def measure_ensembled_entropy_from_checkpoints(
+    exp_path_source,
+    source_dataset,
+    cudaid,
+    split,
+    tmp_outd='tmp_outd',
+    parsedargs=None,
+    output_csv='ensembled_entropy.csv',
+    max_epoch=10
+):
+    # Chargement du loader (une fois)
+    loader, _, _, args = load_loader(
+        exp_path_source, source_dataset, 'B-EPOCH1', cudaid, split,
+        tmp_outd=tmp_outd, parsedargs=parsedargs
+    )
+
+    device = torch.device(f'cuda:{cudaid}')
+    model_ref = load_model(
+        exp_path_source, source_dataset, 'B-EPOCH1', cudaid,
+        tmp_outd=tmp_outd, parsedargs=parsedargs
+    ).to(device)
+
+    model_class = type(model_ref)
+    results = []
+    loaded_state_dicts = []
+
+    for j in range(1, max_epoch + 1):
+        checkpoint_name = f'B-EPOCH{j}'
+
+        try:
+            model_j = load_model(
+                exp_path_source, source_dataset, checkpoint_name, cudaid,
+                tmp_outd=tmp_outd, parsedargs=parsedargs
+            )
+            state_dict_j = model_j.state_dict()
+            loaded_state_dicts.append(state_dict_j)
+        except Exception as e:
+            print(f"[⚠️] Échec chargement {checkpoint_name}: {e}")
+            continue
+
+        # Moyennage progressif
+        averaged_dict = average_state_dicts(loaded_state_dicts)
+
+        # Charger dans un nouveau modèle
+        ensembled_model = model_ref.to(device)
+        ensembled_model.load_state_dict(averaged_dict)
+        ensembled_model.eval()
+
+        try:
+            cl_perf, norm_perf, cancer_perf, entropies = _compute_accuracy(
+                args, ensembled_model, loader[split]
+            )
+        except Exception as e:
+            print(f"[⚠️] Échec évaluation de l'ensemble 1..{j}: {e}")
+            continue
+
+        mean_entropy = float(np.mean(entropies))
+        print(f"[Ensemble B-EPOCH1..{j}] CL: {cl_perf:.2f}, Normal: {norm_perf:.2f}, Cancer: {cancer_perf:.2f}, Entropy: {mean_entropy:.4f}")
+
+        results.append({
+            'ensemble_until': f'B-EPOCH1_to_{j}',
+            'classification': cl_perf,
+            'normal_class': norm_perf,
+            'cancer_class': cancer_perf,
+            'entropy': mean_entropy
+        })
+
+    # Sauvegarde CSV
+    csv_path = os.path.join(exp_path_source, output_csv)
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['ensemble_until', 'classification', 'normal_class', 'cancer_class', 'entropy'])
+        writer.writeheader()
+        writer.writerows(results)
+
+    print(f"\n✅ Résultats de l'ensembling progressif enregistrés dans : {csv_path}")
+
+
+import csv
+
+def load_alpha_weights_csv(csv_path):
+    alpha_weights = {}
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                checkpoint = row['checkpoint']
+                kl = float(row['kl_target_uniform'])
+                if kl > 0:
+                    weight = 1.0 / kl
+                    alpha_weights[checkpoint] = weight
+            except Exception as e:
+                print(f"[⚠️] Erreur dans la ligne du CSV : {e}")
+                continue
+
+    # Normalisation
+    total = sum(alpha_weights.values())
+    for k in alpha_weights:
+        alpha_weights[k] /= total
+
+    return alpha_weights
+
+
+
+def evaluate_weighted_ensemble_model(
+    exp_path_source,
+    source_dataset,
+    target_dataset,
+    cudaid,
+    split='valid',
+    alpha_csv_path='entropy_performance_combined.csv',
+    merged_model_name='merged_model.pt',
+    tmp_outd='tmp_outd',
+    parsedargs=None
+):
+    import os
+    import torch
+    import numpy as np
+    import pandas as pd
+    from copy import deepcopy
+    import csv
+
+    # === Charger les poids alpha depuis le CSV ===
+    alpha_dict = {}
+    epsilon = 1e-6
+    
+    with open(os.path.join(exp_path_source, alpha_csv_path), 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                ckpt = row['checkpoint']
+                acc = float(row['classification'])              # accuracy source
+                kl = float(row['kl_target_uniform'])            # KL target
+                if kl > 0 and acc > 0:
+                    score = acc * (1.0 / (kl + epsilon))
+                    alpha_dict[ckpt] = score
+            except Exception as e:
+                print(f"[⚠️] Erreur lecture ligne {ckpt} : {e}")
+    # === Trier les checkpoints par score décroissant ===
+    sorted_checkpoints = sorted(alpha_dict.items(), key=lambda x: -x[1])
+    checkpoint_list = [ckpt for ckpt, _ in sorted_checkpoints]
+
+    device = torch.device(f'cuda:{cudaid}')
+
+    results = []
+
+    cumulative_weights = []
+    cumulative_states = []
+
+    # === Préparer la sauvegarde CSV ===
+    csv_path = os.path.join(exp_path_source, 'progressive_merge_evaluation.csv')
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            'n_models', 'merged_checkpoints',
+            'src_classification', 'src_normal', 'src_cancer', 'src_entropy',
+            'tgt_classification', 'tgt_normal', 'tgt_cancer'
+        ])
+        writer.writeheader()
+
+    for i in range(len(checkpoint_list)):
+        ckpt = checkpoint_list[i]
+        print(f"[🔁] Chargement checkpoint : {ckpt}")
+        try:
+            model = load_model(
+                exp_path_source, source_dataset, ckpt, cudaid,
+                tmp_outd=tmp_outd, parsedargs=parsedargs
+            )
+            state_dict = model.state_dict()
+            cumulative_states.append(state_dict)
+            cumulative_weights.append(alpha_dict[ckpt])
+
+            # === Fusion pondérée cumulative ===
+            weight_list = [w / sum(cumulative_weights) for w in cumulative_weights]
+            avg_state_dict = {}
+            for key in state_dict:
+                avg_state_dict[key] = sum(w * sd[key] for w, sd in zip(weight_list, cumulative_states))
+
+            # === Charger modèle de référence pour structure ===
+            model_ref = deepcopy(model).to(device)
+            model_ref.load_state_dict(avg_state_dict)
+            model_ref.eval()
+
+            # === Évaluation sur la source ===
+            source_loader, _, _, args = load_loader(
+                exp_path_source, source_dataset, ckpt, cudaid, split,
+                tmp_outd=tmp_outd, parsedargs=parsedargs
+            )
+            cl_src, norm_src, cancer_src, entropies = _compute_accuracy(args, model_ref, source_loader[split])
+            mean_entropy_src = float(np.mean(entropies))
+
+            # === Évaluation sur la target ===
+            target_loader, _, _, _ = load_loader(
+                exp_path_source, target_dataset, ckpt, cudaid, split,
+                tmp_outd=tmp_outd, parsedargs=parsedargs
+            )
+            cl_tgt, norm_tgt, cancer_tgt, _ = _compute_accuracy(args, model_ref, target_loader[split])
+
+            print(f"✅ Merge {i+1} modèles: {checkpoint_list[:i+1]}")
+            print(f"→ Source: CL={cl_src:.2f}, Normal={norm_src:.2f}, Cancer={cancer_src:.2f}, Entropy={mean_entropy_src:.4f}")
+            print(f"→ Target: CL={cl_tgt:.2f}, Normal={norm_tgt:.2f}, Cancer={cancer_tgt:.2f}")
+
+            writer.writerow({
+                'n_models': i + 1,
+                'merged_checkpoints': '|'.join(checkpoint_list[:i+1]),
+                'src_classification': cl_src,
+                'src_normal': norm_src,
+                'src_cancer': cancer_src,
+                'src_entropy': mean_entropy_src,
+                'tgt_classification': cl_tgt,
+                'tgt_normal': norm_tgt,
+                'tgt_cancer': cancer_tgt
+            })
+
+        except Exception as e:
+            print(f"[❌] Échec pour {ckpt} : {e}")
+            continue
+
+def compute_kl_divergence(pred_dist, epsilon=1e-12):
+    """
+    Calcule KL(pred_dist || uniforme)
+    :param pred_dist: liste ou tableau numpy des fréquences par classe, ex. [0.3, 0.7]
+    :param epsilon: petite valeur pour éviter log(0)
+    :return: float (KL divergence)
+    """
+    pred_dist = np.array(pred_dist) + epsilon  # pour éviter log(0)
+    pred_dist = pred_dist / pred_dist.sum()    # normalisation de sécurité
+
+    num_classes = len(pred_dist)
+    uniform = np.ones(num_classes) / num_classes
+
+    kl = np.sum(pred_dist * np.log(pred_dist / uniform))
+    return float(kl)
+
+def measure_entropy_all_checkpoints_dual(
+    exp_path_source,
+    source_dataset,
+    target_dataset,
+    cudaid,
+    split='valid',
+    tmp_outd='tmp_outd',
+    parsedargs=None,
+    output_csv='entropy_performance_combined.csv',
+    max_epoch=10
+):
+    import os, csv
+    import numpy as np
+    import torch
+    from copy import deepcopy
+
+    # ⚠️ Tu dois avoir ces deux fonctions dans utils ou localement
+
+    checkpoint_types = ['best_classification', 'best_localization']
+    checkpoint_types += [f'B-EPOCH{i}' for i in range(1, max_epoch + 1)]
+
+    # Loaders
+    source_loader, _, _, args = load_loader(
+        exp_path_source, source_dataset, checkpoint_types[0], cudaid, split,
+        tmp_outd=tmp_outd, parsedargs=parsedargs
+    )
+    target_loader, _, _, _ = load_loader(
+        exp_path_source, target_dataset, checkpoint_types[0], cudaid, split,
+        tmp_outd=tmp_outd, parsedargs=parsedargs
+    )
+
+    results = []
+
+    for checkpoint_type in checkpoint_types:
+        try:
+            model = load_model(
+                exp_path_source, source_dataset, checkpoint_type, cudaid,
+                tmp_outd=tmp_outd, parsedargs=parsedargs
+            )
+        except Exception as e:
+            print(f"[⚠️] Erreur au chargement du checkpoint {checkpoint_type}: {e}")
+            continue
+
+        device = torch.device(f'cuda:{cudaid}')
+        model = deepcopy(model).to(device).eval()
+
+        try:
+            cl_perf, norm_perf, cancer_perf, _ = _compute_accuracy(
+                args, model, source_loader[split]
+            )
+        except Exception as e:
+            print(f"[⚠️] Échec du calcul des performances source pour {checkpoint_type}: {e}")
+            continue
+
+        # ➤ Distribution prédite sur la target (sans labels)
+        try:
+            _, _, _, _, pred_dist = _compute_accuracy_distrib(
+                args, model, target_loader[split]
+            )
+        except Exception as e:
+            print(f"[⚠️] Échec du calcul de la distribution sur la cible pour {checkpoint_type}: {e}")
+            pred_dist = None
+
+        # ➤ KL divergence  
+        try:
+            kl_score = compute_kl_divergence(pred_dist)
+        except Exception as e:
+            print(f"[⚠️] Échec du calcul de la KL pour {checkpoint_type}: {e}")
+            kl_score = None
+
+        print(f"[{checkpoint_type}] Acc. source: {cl_perf:.2f}, KL(target ∥ uniform): {kl_score:.4f}" if kl_score is not None else "")
+
+        results.append({
+            'checkpoint': checkpoint_type,
+            'classification': cl_perf,
+            'normal_class': norm_perf,
+            'cancer_class': cancer_perf,
+            'kl_target_uniform': kl_score if kl_score is not None else -1
+        })
+
+    csv_path = os.path.join(exp_path_source, output_csv)
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['checkpoint', 'classification', 'normal_class', 'cancer_class', 'kl_target_uniform'])
+        writer.writeheader()
+        writer.writerows(results)
+
+    print(f"\n✅ Résultats enregistrés dans : {csv_path}")
+
 
 def avering_models(exp_path_source,exp_path_target, checkpoint_type, source_dataset,target_dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None, args = None, multiple_model=None):
 
@@ -579,6 +1086,8 @@ def fast_eval():
     parser.add_argument("--source_model_name", type=str, default=None, help="Name of source model.")
     parser.add_argument("--target_model_name", type=str, default=None, help="Name of target model.")
 
+    parser.add_argument("--path_folder_models", type=str, default=None, help="path for multiple models entropy with best cl or loc.")
+
 
     parsedargs = parser.parse_args()
     
@@ -620,11 +1129,21 @@ def fast_eval():
                           parsedargs.path_pre_trained_source_3,
                           parsedargs.path_pre_trained_source_4,
                           parsedargs.path_pre_trained_source_5]
+        
         # exp_path_source = parsedargs.path_pre_trained_source
 
-        measure_entropy(exp_path_source=exp_path_source, exp_path_target = exp_path_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs, multiple_model=multiple_model)
+        #measure_entropy(exp_path_source=exp_path_source, exp_path_target = exp_path_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs, multiple_model=multiple_model)
+
+        #measure_entropy(exp_path_source=exp_path_source, exp_path_target = exp_path_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs, multiple_model=multiple_model)
+        measure_entropy_all_checkpoints(exp_path_source=exp_path_source, source_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)  
+        #measure_entropy_all_checkpoints_dual(exp_path_source=exp_path_source, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)  
+        
 
 
+        #evaluate_weighted_ensemble_model(exp_path_source=exp_path_source, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split,  alpha_csv_path='entropy_performance_combined.csv', merged_model_name='merged_model.pt',tmp_outd='tmp_outd', parsedargs=parsedargs)  
+        #measure_ensembled_entropy_from_checkpoints(exp_path_source=exp_path_source, source_dataset=parsedargs.source_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)  
+
+        #find_worst_rank1_entropy(exp_path_source)
         #overlay_images, input_images, method_name, gt_masks = measure_model_diff(exp_path_source=exp_path_source, exp_path_target = exp_path_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)
 
 if __name__ == '__main__':
