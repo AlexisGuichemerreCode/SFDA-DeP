@@ -1801,15 +1801,18 @@ class Trainer(Basic):
          #Store data in a pickle
         curves_data = {
             'target_train_acc_cl': self.target_train_acc_cl,
+            'target_train_f1': self.target_train_f1,
+            'target_train_precision': self.target_train_precision,
+            'target_train_recall': self.target_train_recall,
+            'target_train_image_entropy': self.target_train_image_entropy,
+            'target_train_acc_normal': self.target_train_acc_normal,
+            'target_train_acc_cancer': self.target_train_acc_cancer,
 
             'target_train_pxap': self.target_train_pxap,
-
             'target_train_dice_bg': self.target_train_dice_bg,
-
-
             'target_train_dice_fg': self.target_train_dice_fg,
-
             'target_train_miou': self.target_train_miou,
+
         }
         
         #Store data in a pickle

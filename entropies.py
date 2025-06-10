@@ -1116,6 +1116,14 @@ def fast_eval():
 
 
     parsedargs = parser.parse_args()
+
+    import pickle as pkl
+
+
+    with open('/export/livia/home/vision/Aguichemerre/Energy_based_Adaptation/exps/GLAS/resnet50/STD_CL/PixelCAM/id_test_unlearning_6-tsk_STD_CL-ds_GLAS-fold_0-mag_None-runmode_search-mode-mth_PixelCAM-spooling_WGAP-arch_STDClassifier-ecd_resnet50/results_source_target_data.pickle', 'rb') as f:
+        curves_data = pkl.load(f)
+
+
     
     os.makedirs('tmp_outd', exist_ok=True)  
     log_backends = [
