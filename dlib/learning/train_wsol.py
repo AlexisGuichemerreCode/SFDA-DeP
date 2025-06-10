@@ -1162,7 +1162,7 @@ class Trainer(Basic):
             #self.compute_loc_on_source_and_target(self.epoch)
 
             self.compute_acc_on_target(self.epoch)
-            self.compute_loc_on_target(self.epoch)
+            #self.compute_loc_on_target(self.epoch)
 
 
         self.t_end_epoch = dt.datetime.now()
@@ -1312,7 +1312,7 @@ class Trainer(Basic):
                 self.model.eval()
                 with torch.no_grad():
                     self.compute_acc_on_target(self.epoch)
-                    self.compute_loc_on_target(self.epoch)
+                    #self.compute_loc_on_target(self.epoch)
                 self.model.train()
                 
 
