@@ -57,13 +57,15 @@ class CalLoss(ElementaryLoss):
 
         self.cal_lambda: float = 0.0
 
+        self.loss = Entropy().to(self._device)
+
         self.already_set = False
 
-    def entropy_loss(self, logits):
-        probs = torch.softmax(logits, dim=1)
-        log_probs = torch.log_softmax(logits, dim=1)
-        entropy = -torch.sum(probs * log_probs, dim=1) 
-        return entropy.mean()
+    # def entropy_loss(self, logits):
+    #     probs = torch.softmax(logits, dim=1)
+    #     log_probs = torch.log_softmax(logits, dim=1)
+    #     entropy = -torch.sum(probs * log_probs, dim=1) 
+    #     return entropy.mean()
 
     def set_it(self, cal_lambda: float):
         assert isinstance(cal_lambda, float), type(cal_lambda)
@@ -95,9 +97,19 @@ class CalLoss(ElementaryLoss):
         assert self.already_set
 
         assert cl_logits is not None, "cl_logits must be provided for entropy loss"
-        loss = self.entropy_loss(cl_logits)
 
-        return -loss * self.cal_lambda
+        assert cl_logits.ndim == 2, cl_logits.ndim
+
+        probs = torch.softmax(cl_logits, dim=1)
+
+        loss = - self.loss(probs).mean()
+
+        return loss * self.cal_lambda
+
+
+        #loss = self.entropy_loss(cl_logits)
+
+        #return -loss * self.cal_lambda
 
 
 class CalPxLoss(ElementaryLoss):

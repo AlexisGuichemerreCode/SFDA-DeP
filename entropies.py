@@ -32,6 +32,8 @@ from skimage.transform import resize
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score, precision_score, recall_score
+
 import seaborn as sns
 
 
@@ -126,6 +128,9 @@ def _compute_accuracy_distrib(args, model, loader):
     num_correct_cancer = 0
     num_images_cancer = 0
 
+    y_pred = []
+    y_true = []
+
     entropies = []
     class_pred_counts = Counter()  # pour compter les classes prédictes
 
@@ -145,6 +150,9 @@ def _compute_accuracy_distrib(args, model, loader):
             # Comptage des classes prédites
             for p in pred.cpu().tolist():
                 class_pred_counts[p] += 1
+
+        y_pred.extend(pred.cpu().tolist())
+        y_true.extend(targets.cpu().tolist())
 
         num_correct += (pred == targets).sum().item()
         num_images += images.size(0)
@@ -172,6 +180,8 @@ def _compute_accuracy_distrib(args, model, loader):
         for i in range(args.num_classes)
     ]
 
+    f1 = f1_score(y_true, y_pred, average='macro') 
+
     return classification_acc, classification_acc_normal, classification_acc_cancer, entropies, class_distribution
 
 def _compute_accuracy(args, model, loader):
@@ -185,6 +195,9 @@ def _compute_accuracy(args, model, loader):
     num_images_cancer = 0
 
     entropies = []
+
+    y_pred = []
+    y_true = []
 
     for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
         images = images.cuda()
@@ -201,6 +214,10 @@ def _compute_accuracy(args, model, loader):
 
         num_correct += (pred == targets).sum().item()
         num_images += images.size(0)
+
+        y_pred.extend(pred.cpu().tolist())
+        y_true.extend(targets.cpu().tolist())
+
 
         # Compute accuracy for each class
         for j in range(len(targets)):
@@ -221,8 +238,14 @@ def _compute_accuracy(args, model, loader):
 
 
     classification_acc = num_correct / float(num_images) * 100
+
+    #f1 = f1_score(y_true, y_pred, average='macro')
+
+    f1 = f1_score(y_true, y_pred, average='binary')
+    precision = precision_score(y_true, y_pred, average='binary')
+    recall = recall_score(y_true, y_pred, average='binary')
     
-    return classification_acc, classification_acc_normal, classification_acc_cancer, entropies
+    return classification_acc, classification_acc_normal, classification_acc_cancer, entropies, f1, precision, recall
 
 
 def img_entropy(args, model, loader):
@@ -552,11 +575,14 @@ def measure_entropy(exp_path_source,exp_path_target, checkpoint_type, source_dat
     #target_loader, target_metadata_root, target_domain_data_paths, args = load_loader(exp_path_target, target_dataset, checkpoint_type, cudaid, split, tmp_outd=tmp_outd, parsedargs=parsedargs)
     source_loader, source_metadata_root, source_domain_data_paths, args = load_loader(exp_path_source, source_dataset, checkpoint_type, cudaid, split, tmp_outd=tmp_outd, parsedargs=parsedargs)
 
-    cl_performance, class_0_performance, class_1_performance, entropies = _compute_accuracy(args, source_model, source_loader[split])
+    cl_performance, class_0_performance, class_1_performance, entropies, f1, precision, recall = _compute_accuracy(args, source_model, source_loader[split])
     print(f"[Initial Classification performance: {cl_performance}")
     print(f"[Initial Normal Classification performance: {class_0_performance}")
     print(f"[Initial Cancer Classification performance: {class_1_performance}")
     print(f"Initial Entropy performance: {np.mean(entropies)}")
+    print(f"F1 performance: {f1}")
+    print(f"Precision performance: {precision}")
+    print(f"Recall performance: {recall}")
 
     #entropies = img_entropy(args, source_model, source_loader[split])
 
@@ -1108,13 +1134,17 @@ def fast_eval():
     DLLogger.init_arb(backends=log_backends, master_pid=os.getpid())
     ##########
 
-    base_checkpoint_types = [parsedargs.checkpoint_type]
+    #base_checkpoint_types = [parsedargs.checkpoint_type]
+
+    base_checkpoint_types = ['best_classification', 'best_localization']
         
     for checkpoint_type_extended in base_checkpoint_types:
         checkpoint_type = checkpoint_type_extended
         
-        split = parsedargs.split
-        assert split == constants.TESTSET or split == constants.VALIDSET or split == constants.TRAINSET
+        #split = parsedargs.split
+        #assert split == constants.TESTSET or split == constants.VALIDSET or split == constants.TRAINSET
+
+        split = ['train', 'test']
         
         _CODE_FUNCTION = 'fast_eval_{}'.format(split)
 
@@ -1124,18 +1154,21 @@ def fast_eval():
         exp_path_source = parsedargs.path_pre_trained_source
         exp_path_target = parsedargs.path_pre_trained_target
 
-        multiple_model = [parsedargs.path_pre_trained_source_1,
-                          parsedargs.path_pre_trained_source_2,
-                          parsedargs.path_pre_trained_source_3,
-                          parsedargs.path_pre_trained_source_4,
-                          parsedargs.path_pre_trained_source_5]
+        multiple_model = []
+
+        # multiple_model = [parsedargs.path_pre_trained_source_1,
+        #                   parsedargs.path_pre_trained_source_2,
+        #                   parsedargs.path_pre_trained_source_3,
+        #                   parsedargs.path_pre_trained_source_4,
+        #                   parsedargs.path_pre_trained_source_5]
         
         # exp_path_source = parsedargs.path_pre_trained_source
 
-        #measure_entropy(exp_path_source=exp_path_source, exp_path_target = exp_path_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs, multiple_model=multiple_model)
+        for split_type in split: 
+            measure_entropy(exp_path_source=exp_path_source, exp_path_target = exp_path_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split_type, tmp_outd='tmp_outd', parsedargs=parsedargs, multiple_model=multiple_model)
 
         #measure_entropy(exp_path_source=exp_path_source, exp_path_target = exp_path_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs, multiple_model=multiple_model)
-        measure_entropy_all_checkpoints(exp_path_source=exp_path_source, source_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)  
+        #measure_entropy_all_checkpoints(exp_path_source=exp_path_source, source_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)  
         #measure_entropy_all_checkpoints_dual(exp_path_source=exp_path_source, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)  
         
 

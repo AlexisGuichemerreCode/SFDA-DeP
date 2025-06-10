@@ -88,8 +88,15 @@ def main():
     if args.ds_to_compute_acc_trainset_source_target:
         #dar curves for source and target clas acc in trainer.source_acc and trainer.target_acc
         trainer.save_curves(task = "cl", cmpt_epoch = args.cmpt_epoch)
-        #trainer.plot_source_target_acc_curves(task = "cl", cmpt_epoch = args.cmpt_epoch)
-        #trainer.plot_source_target_acc_curves(task = "loc", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "cl", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "loc", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "f1", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "precision", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "recall", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "image_entropy", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "acc_normal", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "acc_cancer", cmpt_epoch = args.cmpt_epoch)
+
 
         #trainer.plot_source_target_loc_curves(cmpt_epoch = args.cmpt_epoch)  
 

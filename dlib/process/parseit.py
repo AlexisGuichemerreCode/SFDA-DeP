@@ -1100,8 +1100,8 @@ def get_args(args: dict, eval: bool = False):
     # platform.
     # https://docs.python.org/3.7/library/os.html#os.environ
     if args['target_domain_ds_to_compute_stats'] is not None or args['ds_to_compute_acc_trainset_source_target'] is not None:
-        if args['target_domain_ds_to_compute_stats'] is not None and args['ds_to_compute_acc_trainset_source_target'] is not None:
-            assert args['target_domain_ds_to_compute_stats'] == args['ds_to_compute_acc_trainset_source_target']
+        #if args['target_domain_ds_to_compute_stats'] is not None and args['ds_to_compute_acc_trainset_source_target'] is not None:
+            #assert args['target_domain_ds_to_compute_stats'] == args['ds_to_compute_acc_trainset_source_target']
 
         dsname_target_domain = args['target_domain_ds_to_compute_stats']
         pre = constants.FORMAT_DEBUG.split('_')[0]

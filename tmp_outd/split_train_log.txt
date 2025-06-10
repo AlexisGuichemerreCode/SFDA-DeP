@@ -1,15 +1,10 @@
-DLLL 2025-05-26 18:52:34.632355 0:00:00.120821 
+DLLL 2025-06-10 01:44:46.793831 0:00:00.222392 
 ===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
-===========================================================================================
-
-DLLL 2025-05-26 18:52:36.391381 0:00:01.879847 
-===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
 ===========================================================================================
 
-DLLL 2025-05-26 18:52:37.421377 0:00:02.909843 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 18:52:37.421573 0:00:02.910039 Arch: STDClassifier
+DLLL 2025-06-10 01:44:47.533239 0:00:00.961800 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23518277
+DLLL 2025-06-10 01:44:47.533361 0:00:00.961922 Arch: STDClassifier
 task: STD_CL
 encoder_name: resnet50
 encoder_weights: imagenet
@@ -28,7 +23,7 @@ aux_params:
 	gated: False
 	prm_ks: 3
 	prm_st: 1
-	pixel_wise_classification: False
+	pixel_wise_classification: True
 	batch_norm: False
 	multiple_layer: False
 	one_layer: False
@@ -39,19 +34,25 @@ freeze_cl: False
 im_rec: False
 img_range: tanh 
 
-DLLL 2025-05-26 18:52:37.425549 0:00:02.914015 u-resnet50. Task: STD_CL. 
+DLLL 2025-06-10 01:44:47.536501 0:00:00.965062 u-resnet50. Task: STD_CL. 
  NBR-PARAMS: 
 	Encoder [resnet50]: 23508032. 
 	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
+	Pixel Wise Classification head [PixelWise]: 4098. 
+	Total: 23518277. 
 
-DLLL 2025-05-26 18:55:30.337631 0:02:55.826097 
+DLLL 2025-06-10 01:44:50.372727 0:00:03.801288 
 ===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
 ===========================================================================================
 
-DLLL 2025-05-26 18:55:31.110386 0:02:56.598852 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 18:55:31.110543 0:02:56.599009 Arch: STDClassifier
+DLLL 2025-06-10 01:46:56.398724 0:02:09.827285 
+===========================================================================================
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
+===========================================================================================
+
+DLLL 2025-06-10 01:46:57.257617 0:02:10.686178 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23518277
+DLLL 2025-06-10 01:46:57.257755 0:02:10.686316 Arch: STDClassifier
 task: STD_CL
 encoder_name: resnet50
 encoder_weights: imagenet
@@ -70,7 +71,7 @@ aux_params:
 	gated: False
 	prm_ks: 3
 	prm_st: 1
-	pixel_wise_classification: False
+	pixel_wise_classification: True
 	batch_norm: False
 	multiple_layer: False
 	one_layer: False
@@ -81,19 +82,25 @@ freeze_cl: False
 im_rec: False
 img_range: tanh 
 
-DLLL 2025-05-26 18:55:31.114523 0:02:56.602989 u-resnet50. Task: STD_CL. 
+DLLL 2025-06-10 01:46:57.261795 0:02:10.690356 u-resnet50. Task: STD_CL. 
  NBR-PARAMS: 
 	Encoder [resnet50]: 23508032. 
 	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
+	Pixel Wise Classification head [PixelWise]: 4098. 
+	Total: 23518277. 
 
-DLLL 2025-05-26 18:58:29.245278 0:05:54.733744 
+DLLL 2025-06-10 01:46:57.669378 0:02:11.097939 
 ===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
 ===========================================================================================
 
-DLLL 2025-05-26 18:58:30.072672 0:05:55.561138 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 18:58:30.072857 0:05:55.561323 Arch: STDClassifier
+DLLL 2025-06-10 01:48:11.497722 0:03:24.926283 
+===========================================================================================
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
+===========================================================================================
+
+DLLL 2025-06-10 01:48:12.100509 0:03:25.529070 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23518277
+DLLL 2025-06-10 01:48:12.100630 0:03:25.529191 Arch: STDClassifier
 task: STD_CL
 encoder_name: resnet50
 encoder_weights: imagenet
@@ -112,7 +119,7 @@ aux_params:
 	gated: False
 	prm_ks: 3
 	prm_st: 1
-	pixel_wise_classification: False
+	pixel_wise_classification: True
 	batch_norm: False
 	multiple_layer: False
 	one_layer: False
@@ -123,387 +130,15 @@ freeze_cl: False
 im_rec: False
 img_range: tanh 
 
-DLLL 2025-05-26 18:58:30.076780 0:05:55.565246 u-resnet50. Task: STD_CL. 
+DLLL 2025-06-10 01:48:12.104457 0:03:25.533018 u-resnet50. Task: STD_CL. 
  NBR-PARAMS: 
 	Encoder [resnet50]: 23508032. 
 	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
+	Pixel Wise Classification head [PixelWise]: 4098. 
+	Total: 23518277. 
 
-DLLL 2025-05-26 19:01:31.556930 0:08:57.045396 
+DLLL 2025-06-10 01:48:14.559628 0:03:27.988189 
 ===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
 ===========================================================================================
-
-DLLL 2025-05-26 19:01:32.832501 0:08:58.320967 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 19:01:32.832681 0:08:58.321147 Arch: STDClassifier
-task: STD_CL
-encoder_name: resnet50
-encoder_weights: imagenet
-classes: 2
-aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: True
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: False
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: False
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
-scale_in: 1.0
-freeze_cl: False
-im_rec: False
-img_range: tanh 
-
-DLLL 2025-05-26 19:01:32.846234 0:08:58.334700 u-resnet50. Task: STD_CL. 
- NBR-PARAMS: 
-	Encoder [resnet50]: 23508032. 
-	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
-
-DLLL 2025-05-26 19:04:29.426259 0:11:54.914725 
-===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
-===========================================================================================
-
-DLLL 2025-05-26 19:04:30.387725 0:11:55.876191 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 19:04:30.387882 0:11:55.876348 Arch: STDClassifier
-task: STD_CL
-encoder_name: resnet50
-encoder_weights: imagenet
-classes: 2
-aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: True
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: False
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: False
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
-scale_in: 1.0
-freeze_cl: False
-im_rec: False
-img_range: tanh 
-
-DLLL 2025-05-26 19:04:30.391702 0:11:55.880168 u-resnet50. Task: STD_CL. 
- NBR-PARAMS: 
-	Encoder [resnet50]: 23508032. 
-	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
-
-DLLL 2025-05-26 19:07:12.224869 0:14:37.713335 
-===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
-===========================================================================================
-
-DLLL 2025-05-26 19:07:13.058965 0:14:38.547431 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 19:07:13.059101 0:14:38.547567 Arch: STDClassifier
-task: STD_CL
-encoder_name: resnet50
-encoder_weights: imagenet
-classes: 2
-aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: True
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: False
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: False
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
-scale_in: 1.0
-freeze_cl: False
-im_rec: False
-img_range: tanh 
-
-DLLL 2025-05-26 19:07:13.063247 0:14:38.551713 u-resnet50. Task: STD_CL. 
- NBR-PARAMS: 
-	Encoder [resnet50]: 23508032. 
-	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
-
-DLLL 2025-05-26 19:10:01.352521 0:17:26.840987 
-===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
-===========================================================================================
-
-DLLL 2025-05-26 19:10:02.173150 0:17:27.661616 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 19:10:02.173301 0:17:27.661767 Arch: STDClassifier
-task: STD_CL
-encoder_name: resnet50
-encoder_weights: imagenet
-classes: 2
-aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: True
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: False
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: False
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
-scale_in: 1.0
-freeze_cl: False
-im_rec: False
-img_range: tanh 
-
-DLLL 2025-05-26 19:10:02.177131 0:17:27.665597 u-resnet50. Task: STD_CL. 
- NBR-PARAMS: 
-	Encoder [resnet50]: 23508032. 
-	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
-
-DLLL 2025-05-26 19:12:51.336439 0:20:16.824905 
-===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
-===========================================================================================
-
-DLLL 2025-05-26 19:12:51.993242 0:20:17.481708 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 19:12:51.993520 0:20:17.481986 Arch: STDClassifier
-task: STD_CL
-encoder_name: resnet50
-encoder_weights: imagenet
-classes: 2
-aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: True
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: False
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: False
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
-scale_in: 1.0
-freeze_cl: False
-im_rec: False
-img_range: tanh 
-
-DLLL 2025-05-26 19:12:52.000131 0:20:17.488597 u-resnet50. Task: STD_CL. 
- NBR-PARAMS: 
-	Encoder [resnet50]: 23508032. 
-	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
-
-DLLL 2025-05-26 19:15:40.378663 0:23:05.867129 
-===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
-===========================================================================================
-
-DLLL 2025-05-26 19:15:41.263680 0:23:06.752146 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 19:15:41.264038 0:23:06.752504 Arch: STDClassifier
-task: STD_CL
-encoder_name: resnet50
-encoder_weights: imagenet
-classes: 2
-aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: True
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: False
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: False
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
-scale_in: 1.0
-freeze_cl: False
-im_rec: False
-img_range: tanh 
-
-DLLL 2025-05-26 19:15:41.267917 0:23:06.756383 u-resnet50. Task: STD_CL. 
- NBR-PARAMS: 
-	Encoder [resnet50]: 23508032. 
-	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
-
-DLLL 2025-05-26 19:18:32.163003 0:25:57.651469 
-===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
-===========================================================================================
-
-DLLL 2025-05-26 19:18:33.154778 0:25:58.643244 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 19:18:33.154924 0:25:58.643390 Arch: STDClassifier
-task: STD_CL
-encoder_name: resnet50
-encoder_weights: imagenet
-classes: 2
-aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: True
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: False
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: False
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
-scale_in: 1.0
-freeze_cl: False
-im_rec: False
-img_range: tanh 
-
-DLLL 2025-05-26 19:18:33.158741 0:25:58.647207 u-resnet50. Task: STD_CL. 
- NBR-PARAMS: 
-	Encoder [resnet50]: 23508032. 
-	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
-
-DLLL 2025-05-26 19:21:22.476589 0:28:47.965055 
-===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
-===========================================================================================
-
-DLLL 2025-05-26 19:21:23.619354 0:28:49.107820 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 19:21:23.619491 0:28:49.107957 Arch: STDClassifier
-task: STD_CL
-encoder_name: resnet50
-encoder_weights: imagenet
-classes: 2
-aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: True
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: False
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: False
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
-scale_in: 1.0
-freeze_cl: False
-im_rec: False
-img_range: tanh 
-
-DLLL 2025-05-26 19:21:23.622794 0:28:49.111260 u-resnet50. Task: STD_CL. 
- NBR-PARAMS: 
-	Encoder [resnet50]: 23508032. 
-	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
-
-DLLL 2025-05-26 19:24:18.005810 0:31:43.494276 
-===========================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: LAYERCAM 	 ENCODER: RESNET50 	
-===========================================================================================
-
-DLLL 2025-05-26 19:24:19.420845 0:31:44.909311 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
-DLLL 2025-05-26 19:24:19.421160 0:31:44.909626 Arch: STDClassifier
-task: STD_CL
-encoder_name: resnet50
-encoder_weights: imagenet
-classes: 2
-aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: True
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: False
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: False
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
-scale_in: 1.0
-freeze_cl: False
-im_rec: False
-img_range: tanh 
-
-DLLL 2025-05-26 19:24:19.431633 0:31:44.920099 u-resnet50. Task: STD_CL. 
- NBR-PARAMS: 
-	Encoder [resnet50]: 23508032. 
-	Classification head [WGAP]: 6147. 
-	Total: 23514179. 
 

@@ -23,6 +23,8 @@ from torch.cuda.amp import GradScaler
 from torch import nn, Tensor
 from typing import Dict, Iterable, Callable
 
+from sklearn.metrics import f1_score, precision_score, recall_score
+
 
 root_dir = dirname(dirname(dirname(abspath(__file__))))
 sys.path.append(root_dir)
@@ -234,68 +236,104 @@ class Trainer(Basic):
                     proxy_training_set=self.args.proxy_training_set,
                     num_val_sample_per_class=self.args.num_val_sample_per_class,
                     std_cams_folder=None,
-                    get_splits_eval=[constants.TESTSET]
-                )
-            
-            self.source_domain_loaders = get_data_loader(
-                    data_roots=self.args.data_paths,
-                    metadata_root=self.args.source_domain_metadata_root,
-                    batch_size=self.args.batch_size,
-                    eval_batch_size=self.args.eval_batch_size,
-                    workers=self.args.num_workers,
-                    resize_size=self.args.resize_size,
-                    crop_size=self.args.crop_size,
-                    load_tr_masks=self.load_tr_masks,
-                    mask_root=mask_root,
-                    proxy_training_set=self.args.proxy_training_set,
-                    num_val_sample_per_class=self.args.num_val_sample_per_class,
-                    std_cams_folder=None,
-                    get_splits_eval=[constants.TESTSET]
-                )
-            
-            self.source_train_domain_loaders = get_data_loader(
-                    data_roots=self.args.data_paths,
-                    metadata_root=self.args.source_domain_metadata_root,
-                    batch_size=self.args.batch_size,
-                    eval_batch_size=self.args.eval_batch_size,
-                    workers=self.args.num_workers,
-                    resize_size=self.args.resize_size,
-                    crop_size=self.args.crop_size,
-                    load_tr_masks=self.load_tr_masks,
-                    mask_root=mask_root,
-                    proxy_training_set=self.args.proxy_training_set,
-                    num_val_sample_per_class=self.args.num_val_sample_per_class,
-                    std_cams_folder=None,
                     get_splits_eval=[constants.TRAINSET]
                 )
+
+            # self.target_domain_loaders = get_data_loader(
+            #         data_roots=args.target_domain_data_paths,
+            #         metadata_root=self.args.target_domain_metadata_root,
+            #         batch_size=self.args.batch_size,
+            #         eval_batch_size=self.args.eval_batch_size,
+            #         workers=self.args.num_workers,
+            #         resize_size=self.args.resize_size,
+            #         crop_size=self.args.crop_size,
+            #         load_tr_masks=self.load_tr_masks,
+            #         mask_root=mask_root,
+            #         proxy_training_set=self.args.proxy_training_set,
+            #         num_val_sample_per_class=self.args.num_val_sample_per_class,
+            #         std_cams_folder=None,
+            #         get_splits_eval=[constants.TESTSET]
+            #     )
             
-            self.target_test_acc_cl = []
-            self.source_test_acc_cl = []
-            self.source_train_acc_cl = []
+            # self.source_domain_loaders = get_data_loader(
+            #         data_roots=self.args.data_paths,
+            #         metadata_root=self.args.source_domain_metadata_root,
+            #         batch_size=self.args.batch_size,
+            #         eval_batch_size=self.args.eval_batch_size,
+            #         workers=self.args.num_workers,
+            #         resize_size=self.args.resize_size,
+            #         crop_size=self.args.crop_size,
+            #         load_tr_masks=self.load_tr_masks,
+            #         mask_root=mask_root,
+            #         proxy_training_set=self.args.proxy_training_set,
+            #         num_val_sample_per_class=self.args.num_val_sample_per_class,
+            #         std_cams_folder=None,
+            #         get_splits_eval=[constants.TESTSET]
+            #     )
+            
+            # self.source_train_domain_loaders = get_data_loader(
+            #         data_roots=self.args.data_paths,
+            #         metadata_root=self.args.source_domain_metadata_root,
+            #         batch_size=self.args.batch_size,
+            #         eval_batch_size=self.args.eval_batch_size,
+            #         workers=self.args.num_workers,
+            #         resize_size=self.args.resize_size,
+            #         crop_size=self.args.crop_size,
+            #         load_tr_masks=self.load_tr_masks,
+            #         mask_root=mask_root,
+            #         proxy_training_set=self.args.proxy_training_set,
+            #         num_val_sample_per_class=self.args.num_val_sample_per_class,
+            #         std_cams_folder=None,
+            #         get_splits_eval=[constants.TRAINSET]
+            #     )
+            
+            self.target_train_acc_cl = []
+            self.target_train_f1 = []
+            self.target_train_precision = []
+            self.target_train_recall = []
+            self.target_train_image_entropy = []
+            self.target_train_acc_normal = []
+            self.target_train_acc_cancer = []
 
-            self.target_test_image_entropy = []
-            self.source_test_image_entropy = []
-            self.source_train_image_entropy = []
 
-            self.target_test_pixel_entropy = []
-            self.source_test_pixel_entropy = []
-            self.source_train_pixel_entropy = []
+            self.target_train_pxap = []
+            self.target_train_dice_bg = []
+            self.target_train_dice_fg = []
+            self.target_train_miou = []
 
-            self.target_test_pxap = []
-            self.source_test_pxap = []
-            self.source_train_pxap = []
 
-            self.target_test_dice_bg = []
-            self.source_test_dice_bg = []
-            self.source_train_dice_bg = []
+            # self.target_train_acc_cl = []
+            # self.target_test_acc_cl = []
+            # self.source_test_acc_cl = []
+            # self.source_train_acc_cl = []
 
-            self.target_test_dice_fg = []
-            self.source_test_dice_fg = []
-            self.source_train_dice_fg = []
+            # self.target_test_image_entropy = []
+            # self.source_test_image_entropy = []
+            # self.source_train_image_entropy = []
 
-            self.target_test_miou = []
-            self.source_test_miou = []
-            self.source_train_miou = []
+            # self.target_test_pixel_entropy = []
+            # self.source_test_pixel_entropy = []
+            # self.source_train_pixel_entropy = []
+
+            # self.target_train_pxap = []
+            # self.target_test_pxap = []
+            # self.source_test_pxap = []
+            # self.source_train_pxap = []
+
+            # self.target_train_dice_bg = []
+            # self.target_test_dice_bg = []
+            # self.source_test_dice_bg = []
+            # self.source_train_dice_bg = []
+
+            # self.target_train_dice_fg = []
+            # self.target_test_dice_fg = []
+            # self.source_test_dice_fg = []
+            # self.source_train_dice_fg = []
+
+            # self.target_train_miou = []
+            # self.target_test_miou = []
+            # self.source_test_miou = []
+            # self.source_train_miou = []
 
         self.sl_mask_builder = None
         if args.task in [constants.F_CL, constants.NEGEV] or args.pixel_wise_classification:
@@ -1099,7 +1137,7 @@ class Trainer(Basic):
         self.model.train()
 
         if self.args.sf_uda:
-            if self.args.shot or self.args.faust or self.args.sfde or self.args.cdcl or self.args.pxsfde:  # shot/faust/sfde/cdcl method
+            if self.args.shot or self.args.faust or self.args.sfde or self.args.cdcl or self.args.pxsfde or self.args.esfda:  # shot/faust/sfde/cdcl method
                 self.model.freeze_cl_hypothesis()  # last linear weights +
                 # bias of classifier. some wsol methods do not have a last
                 # linear classifier: either simple fully conv layers, attention,
@@ -1120,8 +1158,11 @@ class Trainer(Basic):
 
 
         if self.args.ds_to_compute_acc_trainset_source_target == constants.CAMELYON512 and self.epoch % self.args.cmpt_epoch == 0:
-            self.compute_acc_on_source_and_target(self.epoch)
-            self.compute_loc_on_source_and_target(self.epoch)
+            #self.compute_acc_on_source_and_target(self.epoch)
+            #self.compute_loc_on_source_and_target(self.epoch)
+
+            self.compute_acc_on_target(self.epoch)
+            self.compute_loc_on_target(self.epoch)
 
 
         self.t_end_epoch = dt.datetime.now()
@@ -1262,10 +1303,16 @@ class Trainer(Basic):
                 # self.optimizer.step()
 
             if self.args.ds_to_compute_acc_trainset_source_target == constants.GLAS and batch_idx % self.args.cmpt_batch == 0:
+                # self.model.eval()
+                # with torch.no_grad():
+                #     self.compute_acc_on_source_and_target(self.epoch)
+                #     self.compute_loc_on_source_and_target(self.epoch)
+                # self.model.train()
+
                 self.model.eval()
                 with torch.no_grad():
-                    self.compute_acc_on_source_and_target(self.epoch)
-                    self.compute_loc_on_source_and_target(self.epoch)
+                    self.compute_acc_on_target(self.epoch)
+                    self.compute_loc_on_target(self.epoch)
                 self.model.train()
                 
 
@@ -1454,6 +1501,8 @@ class Trainer(Basic):
         torch.cuda.empty_cache()
         return classification_acc.item(), mean_entropy
     
+    
+    
     def _compute_accuracy_entropy(self, loader):
         torch.cuda.empty_cache()
 
@@ -1500,6 +1549,80 @@ class Trainer(Basic):
         torch.cuda.empty_cache()
         return classification_acc.item(), images_entropy, pixel_entropy
     
+    def _compute_accuracy_f1(self, loader):
+        torch.cuda.empty_cache()
+
+        num_correct = 0
+        num_images = 0
+
+        num_correct_normal = 0
+        num_images_normal = 0
+
+        num_correct_cancer = 0
+        num_images_cancer = 0
+
+        cam_size = 0
+        images_total_entropy = 0
+        pixel_total_entropy = 0
+
+        y_pred = []
+        y_true = []
+
+        for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+            images = images.cuda(self.args.c_cudaid)
+            targets = targets.cuda(self.args.c_cudaid)
+
+            _,_,x,y = images.size()
+
+            with torch.no_grad():
+                cl_logits = self.cl_forward(images)
+                pred = cl_logits.argmax(dim=1)
+
+                images_probs = torch.softmax(cl_logits, dim=1)
+                images_entropy = self.compute_entropy(images_probs)
+                images_total_entropy += images_entropy.sum().item()
+
+                # pixel_logits = self.model.cams
+                # pixel_probs = torch.softmax(pixel_logits, dim=1)
+                # pixel_entropy = self.compute_entropy(pixel_probs)
+                # # pixel_dist = torch.distributions.Categorical(pixel_probs)
+                # # pixel_entropies = pixel_dist.entropy()
+                # pixel_total_entropy += pixel_entropy.sum().item()
+                
+            num_correct += (pred == targets).sum().detach()
+            num_images += images.size(0)
+
+
+            y_pred.extend(pred.cpu().tolist())
+            y_true.extend(targets.cpu().tolist())
+
+            for j in range(len(targets)):
+                if targets[j] == 0:
+                    num_images_normal += 1
+                    if pred[j] == targets[j]:
+                        num_correct_normal += 1
+                elif targets[j] == 1:
+                    num_images_cancer += 1
+                    if pred[j] == targets[j]:
+                        num_correct_cancer += 1
+                else:
+                    raise ValueError("Unknown class label")
+
+
+        classification_acc = num_correct / float(num_images) * 100
+        classification_acc_normal = num_correct_normal / float(num_images_normal) * 100 if num_images_normal > 0 else 0
+        classification_acc_cancer = num_correct_cancer / float(num_images_cancer) * 100 if num_images_cancer > 0 else 0
+
+        images_entropy = images_total_entropy / num_images
+
+        f1 = f1_score(y_true, y_pred, average='binary')
+        precision = precision_score(y_true, y_pred, average='binary')
+        recall = recall_score(y_true, y_pred, average='binary')
+
+
+        torch.cuda.empty_cache()
+        return classification_acc.item(), classification_acc_normal, classification_acc_cancer, images_entropy, f1, precision, recall
+    
 
     def compute_entropy(self, probs):
         """ Computes the entropy of a probability distribution.
@@ -1544,6 +1667,61 @@ class Trainer(Basic):
             self.source_train_image_entropy.append(source_train_image_entropy)
             self.source_train_pixel_entropy.append(source_train_pixel_entropy)
 
+
+    def compute_acc_on_target(self, epoch, split=constants.TRAINSET):
+        self.model.eval()
+        with torch.no_grad():
+            target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[constants.TRAINSET])
+            self.target_train_acc_cl.append(target_train_acc)
+            self.target_train_f1.append(f1)
+            self.target_train_precision.append(precision)
+            self.target_train_recall.append(recall)
+            self.target_train_image_entropy.append(images_entropy)
+            self.target_train_acc_normal.append(target_train_acc_normal)
+            self.target_train_acc_cancer.append(target_train_acc_cancer)
+
+            #self.target_train_image_entropy.append(target_train_image_entropy)
+            #self.target_train_pixel_entropy.append(target_train_pixel_entropy)
+
+
+
+    def compute_loc_on_target(self, epoch, split=constants.TRAINSET):
+        self.model.eval()
+
+        cam_computer_target_train = CAMComputer(
+            args=deepcopy(self.args),
+            model=self.model,
+            loader=self.target_domain_loaders[split],
+            metadata_root=os.path.join(self.args.target_domain_metadata_root, split),
+            mask_root=self.args.mask_root_target,
+            iou_threshold_list=self.args.iou_threshold_list,
+            dataset_name=self.args.target_domain_ds_to_compute_stats,
+            split=split,
+            cam_curve_interval=self.args.cam_curve_interval,
+            multi_contour_eval=self.args.multi_contour_eval,
+            out_folder=self.args.outd,
+            fcam_argmax=self.fcam_argmax,
+            best_valid_tau= None
+        )
+
+
+        cam_performance_target_train = cam_computer_target_train.compute_and_evaluate_cams()
+
+        self.target_train_pxap.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_PXAP])
+        #self.source_test_pxap.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_PXAP])
+        #self.source_train_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
+
+        self.target_train_dice_bg.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
+        #self.source_test_dice_bg.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_DICEBG_05])
+        #self.source_train_dice_bg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
+
+        self.target_train_dice_fg.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
+        #self.source_test_dice_fg.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_DICEFG_05])
+        #self.source_train_dice_fg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
+
+        self.target_train_miou.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_MIOU_05])
+        #self.source_test_miou.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_MIOU_05])
+        #self.source_train_miou.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_MIOU_05])
 
     def compute_loc_on_source_and_target(self, epoch, split=constants.TESTSET):
         self.model.eval()
@@ -1620,40 +1798,57 @@ class Trainer(Basic):
 
 
     def save_curves(self, task, cmpt_epoch):
-        #Store data in a pickle
+         #Store data in a pickle
         curves_data = {
-            'target_test_acc_cl': self.target_test_acc_cl,
-            'source_test_acc_cl': self.source_test_acc_cl,
-            'source_train_acc_cl': self.source_train_acc_cl,
+            'target_train_acc_cl': self.target_train_acc_cl,
 
-            'target_test_image_entropy': self.target_test_image_entropy,
-            'source_test_image_entropy': self.source_test_image_entropy,
-            'source_train_image_entropy': self.source_train_image_entropy,
+            'target_train_pxap': self.target_train_pxap,
 
-            'target_test_pixel_entropy': self.target_test_pixel_entropy,
-            'source_test_pixel_entropy': self.source_test_pixel_entropy,
-            'source_train_pixel_entropy': self.source_train_pixel_entropy,
+            'target_train_dice_bg': self.target_train_dice_bg,
 
-            'target_test_pxap': self.target_test_pxap,
-            'source_test_pxap': self.source_test_pxap,
-            'source_train_pxap': self.source_train_pxap,
 
-            'target_test_dice_bg': self.target_test_dice_bg,
-            'source_test_dice_bg': self.source_test_dice_bg,
-            'source_train_dice_bg': self.source_train_dice_bg,
+            'target_train_dice_fg': self.target_train_dice_fg,
 
-            'target_test_dice_fg': self.target_test_dice_fg,
-            'source_test_dice_fg': self.source_test_dice_fg,
-            'source_train_dice_fg': self.source_train_dice_fg,
-
-            'target_test_miou': self.target_test_miou,
-            'source_test_miou': self.source_test_miou,
-            'source_train_miou': self.source_train_miou
+            'target_train_miou': self.target_train_miou,
         }
+        
+        #Store data in a pickle
+        # curves_data = {
+        #     'target_test_acc_cl': self.target_test_acc_cl,
+        #     'source_test_acc_cl': self.source_test_acc_cl,
+        #     'source_train_acc_cl': self.source_train_acc_cl,
+
+        #     'target_test_image_entropy': self.target_test_image_entropy,
+        #     'source_test_image_entropy': self.source_test_image_entropy,
+        #     'source_train_image_entropy': self.source_train_image_entropy,
+
+        #     'target_test_pixel_entropy': self.target_test_pixel_entropy,
+        #     'source_test_pixel_entropy': self.source_test_pixel_entropy,
+        #     'source_train_pixel_entropy': self.source_train_pixel_entropy,
+
+        #     'target_test_pxap': self.target_test_pxap,
+        #     'source_test_pxap': self.source_test_pxap,
+        #     'source_train_pxap': self.source_train_pxap,
+
+        #     'target_test_dice_bg': self.target_test_dice_bg,
+        #     'source_test_dice_bg': self.source_test_dice_bg,
+        #     'source_train_dice_bg': self.source_train_dice_bg,
+
+        #     'target_test_dice_fg': self.target_test_dice_fg,
+        #     'source_test_dice_fg': self.source_test_dice_fg,
+        #     'source_train_dice_fg': self.source_train_dice_fg,
+
+        #     'target_test_miou': self.target_test_miou,
+        #     'source_test_miou': self.source_test_miou,
+        #     'source_train_miou': self.source_train_miou
+        # }
 
         pickle_path = os.path.join(self.args.outd, 'results_source_target_data.pickle')
         with open(pickle_path, 'wb') as f:
             pkl.dump(curves_data, f)
+
+
+    
 
     def plot_source_target_acc_curves(self, task, cmpt_epoch):
         if task == "cl":
@@ -1688,6 +1883,64 @@ class Trainer(Basic):
         }
 
         pickle_path = os.path.join(self.args.outd, f'{file_prefix}_results_source_target_data.pickle')
+        with open(pickle_path, 'wb') as f:
+            pkl.dump(curves_data, f)
+
+    def plot_target_acc_curves(self, task, cmpt_epoch):
+        if task == "cl":
+            target_data = self.target_train_acc_cl
+            ylabel = 'Classification'
+
+        elif task == "f1":
+            target_data = self.target_train_f1
+            ylabel = 'F1 Score'
+
+        elif task == "precision":
+            target_data = self.target_train_precision
+            ylabel = 'Precision'
+
+        elif task == "recall":
+            target_data = self.target_train_recall
+            ylabel = 'Recall'
+
+        elif task == "image_entropy":
+            target_data = self.target_train_image_entropy
+            ylabel = 'Image Entropy'
+
+        elif task == "acc_normal":
+            target_data = self.target_train_acc_normal
+            ylabel = 'Normal Classification'
+            
+        elif task == "acc_cancer":
+            target_data = self.target_train_acc_cancer
+            ylabel = 'Cancer Classification'
+            
+        else:
+            target_data = self.target_train_pxap
+            ylabel = 'Localization'
+
+        plt.figure(figsize=(12, 3))
+        #plt.plot(np.arange(cmpt_epoch, len(source_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch), source_data, label='Source')
+        plt.plot(np.arange(cmpt_epoch, len(target_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch), target_data, label='Target')
+        plt.xlabel('Epoch')
+        plt.ylabel(ylabel)
+        plt.legend()
+        #set y axis labels only in integer with max value to len of source and target acc
+        #epochs = np.arange(0, len(source_data) * cmpt_epoch + 1, cmpt_epoch)
+        plt.xticks(np.arange(cmpt_epoch, len(target_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch))
+        plt.tight_layout()
+        #plt.savefig(os.path.join(self.args.outd, 'Classification accuracy curve on test set between source and target dataset.png'))
+        file_prefix = f"{ylabel}_Accuracy"
+        output_path = os.path.join(self.args.outd, f'{file_prefix}_curve_on_test_set_on_target_dataset.png')
+        plt.savefig(output_path)
+        plt.close()
+
+        #Store data in a pickle
+        curves_data = {
+            'target_acc_cl': target_data
+        }
+
+        pickle_path = os.path.join(self.args.outd, f'{file_prefix}_results_target_data.pickle')
         with open(pickle_path, 'wb') as f:
             pkl.dump(curves_data, f)
 

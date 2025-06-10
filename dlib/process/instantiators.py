@@ -448,6 +448,15 @@ def get_loss_target(args):
             )
             masterloss.add(div_loss)
 
+        if args.cal:
+            Cal_Loss = losses.CalLoss(
+                cuda_id=args.c_cudaid,
+                support_background=support_background,
+                multi_label_flag=multi_label_flag)
+            Cal_Loss.set_it(cal_lambda=args.cal_lambda)
+            masterloss.add(Cal_Loss)
+
+
         # FAUST
         if args.views_ft_consist:
             assert args.faust
@@ -707,6 +716,21 @@ def get_loss_source(args):
 
     # image classification loss
     if args.task == constants.STD_CL:
+
+        #test unlearning on target
+        if args.div_pseudo_lb:
+            div_loss = losses.UdaDiversityTargetClass(
+                cuda_id=args.c_cudaid,
+                lambda_=args.div_pseudo_lb_lambda,
+                support_background=support_background,
+                multi_label_flag=multi_label_flag,
+                start_epoch=args.div_pseudo_lb_start_ep,
+                end_epoch=args.div_pseudo_lb_end_ep
+            )
+            masterloss.add(div_loss)
+
+
+
         if args.method == constants.METHOD_SPG:
             cl_loss = losses.SpgLoss(
                 cuda_id=args.c_cudaid,
