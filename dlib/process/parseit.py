@@ -626,6 +626,7 @@ def get_args(args: dict, eval: bool = False):
     # 6- EnergySFDA
     parser.add_argument('--esfda', type=str2bool, default=None,
                         help='USE/NOT ESFDA method for SFUDA.')
+    parser.add_argument('--freeze_classifier_sfda', type=str2bool, default=None,)
 
 
     # losses SFUDA

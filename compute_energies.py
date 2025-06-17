@@ -541,8 +541,16 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     'min_logits_pxs': [],
     'max_logits_pxs': [],
     'lin_ft': [],
+    'img_ft': [],
+    'entropy_px': [],
+    'metrics_px_bg': [],
+    'metrics_px_fg': [],
+    'n_fg': [],
+    'n_bg': [],
+    'pct_fg': [],
     }
 
+    model.eval()
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
         enumerate(loader[split]), ncols=constants.NCOLS,
         total=len(loader[split])):
@@ -560,7 +568,40 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
             probs_img = F.softmax(lgt_imgs, dim=1)
             preds = probs_img.argmax(dim=1) 
 
+            probs_px = torch.softmax(lgt_pxs, dim=1)   
+            entropy_px = -(probs_px * probs_px.log()).sum(dim=1)
+            mean_H_img = entropy_px.mean(dim=(1, 2))
+
+            pred_px  = probs_px.argmax(1)                          # [B, H, W] 0=normal,1=cancer
+            mask_c   = (pred_px == 1)
+            mask_n   = (pred_px == 0)
+
+            area_img = mask_c.shape[1] * mask_c.shape[2]
+            n_fg = mask_c.sum(dim=(1, 2))                  # [B]  (tensor int64)
+
+            # 3. Compter les pixels prédits "normal" (background)
+            n_bg = mask_n.sum(dim=(1, 2))                  # [B]
+
+            # 4. (option) convertir en pourcentage
+            pct_fg = n_fg.float() / area_img              # [B]  entre 0 – 1
+            pct_bg = n_bg.float() / area_img
+
+            energy_data["n_fg"].append(n_fg.cpu())        # liste de tensors [B]
+            energy_data["n_bg"].append(n_bg.cpu())
+            energy_data["pct_fg"].append(pct_fg.cpu())
+
+            eps = 1e-6
+            H_c = (entropy_px * mask_c).sum((1,2)) / (mask_c.sum((1,2)).float() + eps)  # [B]
+            H_n = (entropy_px * mask_n).sum((1,2)) / (mask_n.sum((1,2)).float() + eps) 
+
+            energy_data['metrics_px_bg'].append(H_n.detach().cpu())
+            energy_data['metrics_px_fg'].append(H_c.detach().cpu())
+
+            energy_data['entropy_px'].append(mean_H_img.detach().cpu())
+
             energy_data['lin_ft'].append(px_lin_ft.flatten(start_dim=1).detach().cpu())
+            energy_data['img_ft'].append(model.lin_ft.flatten(start_dim=1).detach().cpu())
+
 
             energy_data['probs_images'].append(probs_img.max(dim=1).values.detach().cpu())
             energy_data['label_images'].append(targets.detach().cpu())
@@ -590,70 +631,70 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
                 energy_data['per_class'][int(label)].append(energy.item())
 
 
-        # Per-pixel foreground / background
-        for i, (label, image_id) in enumerate(zip(targets, index)):
-            _, _, h, w = px_lin_ft.shape
-            gt_bin = get_resized_gt_mask(
-                cam_computer.evaluator.mask_paths[image_id],
-                cam_computer.evaluator.ignore_paths[image_id],
-                dataset_name,
-                label.item(),
-                size=(h, w),
-                device=device
-            )
+    #     # Per-pixel foreground / background
+    #     for i, (label, image_id) in enumerate(zip(targets, index)):
+    #         _, _, h, w = px_lin_ft.shape
+    #         gt_bin = get_resized_gt_mask(
+    #             cam_computer.evaluator.mask_paths[image_id],
+    #             cam_computer.evaluator.ignore_paths[image_id],
+    #             dataset_name,
+    #             label.item(),
+    #             size=(h, w),
+    #             device=device
+    #         )
 
-            energy_map = energy_pixels[i]  # (H, W)
-            energy_data['foreground'].append(energy_map[gt_bin].detach().cpu())
-            energy_data['background'].append(energy_map[~gt_bin].detach().cpu())
+    #         energy_map = energy_pixels[i]  # (H, W)
+    #         energy_data['foreground'].append(energy_map[gt_bin].detach().cpu())
+    #         energy_data['background'].append(energy_map[~gt_bin].detach().cpu())
         
 
-        if cam_performance :
-        #Compute PXAP per image
-            for image, target, image_id in zip(images, targets, index):
+    #     if cam_performance :
+    #     #Compute PXAP per image
+    #         for image, target, image_id in zip(images, targets, index):
                 
-                dataset_source = os.path.basename(args.mask_root)
+    #             dataset_source = os.path.basename(args.mask_root)
 
-                if dataset_source == dataset_name:
-                    mask_root_data = args.mask_root
-                else:
-                    mask_root_data = os.path.join(os.path.dirname(args.mask_root), dataset_name)
+    #             if dataset_source == dataset_name:
+    #                 mask_root_data = args.mask_root
+    #             else:
+    #                 mask_root_data = os.path.join(os.path.dirname(args.mask_root), dataset_name)
 
-                new_mask_root = os.path.join(os.path.dirname(args.mask_root), dataset_name)
-                cam_computer = CAMComputer(
-                            args=deepcopy(args),
-                            model=model,
-                            loader=loader[split],
-                            metadata_root=os.path.join(metadata_root, split),
-                            mask_root=mask_root_data,
-                            iou_threshold_list=args.iou_threshold_list,
-                            dataset_name=dataset_name,
-                            split= split,
-                            cam_curve_interval=args.cam_curve_interval,
-                            multi_contour_eval=args.multi_contour_eval,
-                            out_folder=args.outd,
-                        )
+    #             new_mask_root = os.path.join(os.path.dirname(args.mask_root), dataset_name)
+    #             cam_computer = CAMComputer(
+    #                         args=deepcopy(args),
+    #                         model=model,
+    #                         loader=loader[split],
+    #                         metadata_root=os.path.join(metadata_root, split),
+    #                         mask_root=mask_root_data,
+    #                         iou_threshold_list=args.iou_threshold_list,
+    #                         dataset_name=dataset_name,
+    #                         split= split,
+    #                         cam_curve_interval=args.cam_curve_interval,
+    #                         multi_contour_eval=args.multi_contour_eval,
+    #                         out_folder=args.outd,
+    #                     )
                 
-                if dataset_name == constants.CAMELYON512:
-                    if target == 1:
-                        #image_id_formatted = [image_id]
-                        cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image=image, target=target, image_id=image_id, image_size=image_size)
-                        energy_data['cam_performance'].append(cam_performance)
-                    else:
-                        energy_data['cam_performance'].append(0)
-                else:
-                    cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image=image, target=target, image_id=image_id, image_size=image_size)
-                    energy_data['cam_performance'].append(cam_performance)
+    #             if dataset_name == constants.CAMELYON512:
+    #                 if target == 1:
+    #                     #image_id_formatted = [image_id]
+    #                     cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image=image, target=target, image_id=image_id, image_size=image_size)
+    #                     energy_data['cam_performance'].append(cam_performance)
+    #                 else:
+    #                     energy_data['cam_performance'].append(0)
+    #             else:
+    #                 cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image=image, target=target, image_id=image_id, image_size=image_size)
+    #                 energy_data['cam_performance'].append(cam_performance)
 
-    energy_data['cam_performance'] = np.array(energy_data['cam_performance'])
+    # energy_data['cam_performance'] = np.array(energy_data['cam_performance'])
 
-                #energy_data['cam_performance'].append(cam_performance)
-                #print("cam_performance", cam_performance)
+    #energy_data['cam_performance'].append(cam_performance)
+    #print("cam_performance", cam_performance)
 
     # Concatenation
     energy_data['images'] = torch.cat(energy_data['images']).numpy()
     energy_data['pixels'] = torch.cat(energy_data['pixels']).view(-1).numpy()
-    energy_data['foreground'] = torch.cat(energy_data['foreground']).numpy()
-    energy_data['background'] = torch.cat(energy_data['background']).numpy()
+    #energy_data['foreground'] = torch.cat(energy_data['foreground']).numpy()
+    #energy_data['background'] = torch.cat(energy_data['background']).numpy()
     energy_data['probs_images'] = torch.cat(energy_data['probs_images']).numpy()
     energy_data['label_images'] = torch.cat(energy_data['label_images']).numpy()
     energy_data['pred_images'] = torch.cat(energy_data['pred_images']).numpy()
@@ -661,7 +702,14 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     energy_data['min_logits_img'] = torch.cat(energy_data['min_logits_img']).view(-1).numpy()
     energy_data['max_logits_pxs'] = torch.cat(energy_data['max_logits_pxs']).view(-1).numpy()
     energy_data['min_logits_pxs'] = torch.cat(energy_data['min_logits_pxs']).view(-1).numpy()
-    energy_data['lin_ft'] = torch.cat(energy_data['lin_ft']).view(-1).numpy()
+    energy_data['lin_ft'] = torch.cat(energy_data['lin_ft'], dim=0).cpu().numpy()
+    energy_data['img_ft'] = torch.cat(energy_data['img_ft'], dim=0).cpu().numpy()
+    energy_data['entropy_px'] = torch.cat(energy_data['entropy_px']).cpu().numpy()
+    energy_data['metrics_px_bg'] = torch.cat(energy_data['metrics_px_bg']).cpu().numpy()
+    energy_data['metrics_px_fg'] = torch.cat(energy_data['metrics_px_fg']).cpu().numpy()
+    energy_data["n_fg"]   = torch.cat(energy_data["n_fg"]).numpy()      # [N]
+    energy_data["n_bg"]   = torch.cat(energy_data["n_bg"]).numpy()
+    energy_data["pct_fg"] = torch.cat(energy_data["pct_fg"]).numpy()
 
     return energy_data
 
@@ -729,7 +777,7 @@ def plot_logits(source_pxs_logits, target_pxs_logits, out_dir, title, type = Non
     plt.close()
 
 
-def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, title_prefix=None,target_dataset=None):
+def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, title_prefix=None,target_dataset=None, model = None):
     os.makedirs(out_dir, exist_ok=True)
 
     img_classes = target_dict['label_images']
@@ -758,24 +806,255 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
     img_energy_class1_incorrect = target_dict['images'][mask_class_1_incorrect]
     img_confidence_1_correct = img_confidence[mask_class_1_correct]
     img_confidence_1_incorrect = img_confidence[mask_class_1_incorrect]
+    img_ft_1_correct = target_dict['img_ft'][mask_class_1_correct]
+    img_ft_1_incorrect = target_dict['img_ft'][mask_class_1_incorrect]
+    
+
 
     img_energy_class0_correct = target_dict['images'][mask_class_0_correct]
     img_energy_class0_incorrect = target_dict['images'][mask_class_0_incorrect]
     img_confidence_0_correct = img_confidence[mask_class_0_correct]
     img_confidence_0_incorrect = img_confidence[mask_class_0_incorrect]
+    img_ft_0_correct = target_dict['img_ft'][mask_class_0_correct]
+    img_ft_0_incorrect = target_dict['img_ft'][mask_class_0_incorrect]
+
+
+    H = target_dict["entropy_px"] 
+    H_c1_correct = H[mask_class_1_correct] 
+    H_n0_fp      = H[mask_class_0_incorrect]  
+
+    bins = np.linspace(0, 1.2, 30)
+
+    plt.figure(figsize=(8,4))
+    plt.hist(H_c1_correct, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
+    plt.hist(H_n0_fp,     bins=bins, alpha=0.6, color='orange', label='Normal → FP cancer')
+
+    plt.xlabel('Entropy per image')
+    plt.ylabel('Number of images')
+    plt.legend()
+    plt.title('Distribution of image entropy \n(cancer correct vs normal misclassified)')
+    plt.tight_layout()
+    plt.savefig('hist_entropy_tp_vs_fp.png', dpi=300)
+    plt.show()
+
+
+    H_c = target_dict["metrics_px_fg"]
+    H_n = target_dict["metrics_px_bg"]
+    H_c_c1_correct = H_c[mask_class_1_correct]
+    H_n_c1_correct     = H_n[mask_class_1_correct]
+
+    H_c_c0_incorrect = H_c[mask_class_0_incorrect]
+    H_n_c0_incorrect     = H_n[mask_class_0_incorrect]
+
+
+
+
+
+    plt.figure(figsize=(8,4))
+    plt.hist(H_c_c1_correct, bins=bins, alpha=0.6, color='green', label='Img predicted cancer and cancer and entropy of predicted cancer pixels')
+    plt.hist(H_n_c1_correct,     bins=bins, alpha=0.6, color='orange', label='Img predicted cancer and cancer and entropy of predicted normal pixels')
+    plt.hist(H_c_c0_incorrect, bins=bins, alpha=0.6, color='blue', label='Img predict cancer  but normal and entropy of predicted cancer pixels')
+    plt.hist(H_n_c0_incorrect,     bins=bins, alpha=0.6, color='red', label='Img predict cancer  but normal and entropy of predicted normal pixels')
+    plt.xlabel('Average entropy per pixel')
+    plt.ylabel('Number of pixels')
+    plt.legend()
+    plt.title('Distribution of pixel-wise entropy\n(cancer correct vs normal misclassified)')
+    plt.tight_layout()
+    plt.savefig('hist_entropy_px_cancer_correct_vs_normal_misclassified.png', dpi=300)
+    plt.show()
+
+    
+
+    pct_fg = target_dict["pct_fg"]
+    pct_fg_c1_correct = pct_fg[mask_class_1_correct]
+    pct_fg_c0_incorrect = pct_fg[mask_class_0_incorrect]
+
+    pct_bg = 1 - pct_fg
+    pct_bg_c1_correct = pct_bg[mask_class_1_correct]
+    pct_bg_c0_incorrect = pct_bg[mask_class_0_incorrect]
+
+
+    entropy_px = target_dict["entropy_px"]
+    pct_bg = 1 - target_dict["pct_fg"]
+    mask_bg_dominant = pct_bg > 0.9
+    mask_cancer_correct_bg = mask_class_1_correct & mask_bg_dominant
+    mask_normal_incorrect_bg = mask_class_0_incorrect & mask_bg_dominant
+
+    # Sélection des valeurs d'entropie
+    entropy_cancer_correct_bg = entropy_px[mask_cancer_correct_bg]
+    entropy_normal_incorrect_bg = entropy_px[mask_normal_incorrect_bg]
+
+    # Affichage du plot
+    plt.figure(figsize=(8, 4))
+    plt.hist(entropy_cancer_correct_bg, bins=50, alpha=0.6, color='blue', label='Cancer bien classé (bg>90%)')
+    plt.hist(entropy_normal_incorrect_bg, bins=50, alpha=0.6, color='red', label='Normal mal classé (bg>90%)')
+    plt.xlabel("Entropie moyenne des pixels de l'image")
+    plt.ylabel("Nombre d’images")
+    plt.legend()
+    plt.title("Distribution de l’entropie des pixels\n(pour les images avec >90% de background)")
+    plt.tight_layout()
+    plt.savefig('hist_entropy_px_bg90_cancer_correct_vs_normal_misclassified.png', dpi=300)
+    plt.show()
+
+    plt.figure(figsize=(6, 4))
+    plt.boxplot(
+        [entropy_cancer_correct_bg, entropy_normal_incorrect_bg],
+        labels=["Cancer bien classé", "Normal mal classé"],
+        patch_artist=True
+    )
+    plt.ylabel("Entropie moyenne des pixels")
+    plt.title("Boxplot de l’entropie (images avec >90% background)")
+    plt.tight_layout()
+    plt.savefig('boxplot_entropy_px_bg90.png', dpi=300)
+    plt.show()
+
+
+    plt.figure(figsize=(8, 4))
+    plt.hist(pct_fg_c1_correct, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
+    plt.hist(pct_fg_c0_incorrect, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
+    plt.xlabel('Pourcentage de pixels prédits cancer')
+    plt.ylabel('Nombre d’images')
+    plt.legend()
+    plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
+    plt.tight_layout()
+    plt.savefig('hist_pct_fg_cancer_correct_vs_normal_misclassified_bloc.png', dpi=300)
+    plt.show()       
+
+    plt.hist(pct_bg_c1_correct, bins=bins, alpha=0.6, color='blue', label='Cancer bien classé (background)')
+    plt.hist(pct_bg_c0_incorrect, bins=bins, alpha=0.6, color='red', label='Normal mal classé (background)')
+
+    plt.figure(figsize=(8, 4))
+    plt.hist(pct_bg_c1_correct, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
+    plt.hist(pct_bg_c0_incorrect, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
+    plt.xlabel('Pourcentage de pixels prédits bg')
+    plt.ylabel('Nombre d’images')
+    plt.legend()
+    plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
+    plt.tight_layout()
+    plt.savefig('hist_pct_bg_cancer_correct_vs_normal_misclassified_bloc.png', dpi=300)
+    plt.show()  
+
+
+    pct_fg_c1_incorrect = pct_fg[mask_class_1_incorrect]
+    pct_fg_c0_correct = pct_fg[mask_class_0_correct]
+
+    pct_bg = 1 - pct_fg
+    pct_bg_c1_incorrect = pct_bg[mask_class_1_incorrect]
+    pct_bg_c0_correct = pct_bg[mask_class_0_correct]
+
+    plt.figure(figsize=(8, 4))
+    plt.hist(pct_bg_c1_incorrect, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
+    plt.hist(pct_bg_c0_correct, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
+    plt.xlabel('Pourcentage de pixels prédits cancer')
+    plt.ylabel('Nombre d’images')
+    plt.legend()
+    plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
+    plt.tight_layout()
+    plt.savefig('hist_pct_bg_normal_correct_vs_cancer_misclassified_bloc.png', dpi=300)
+    plt.show()
+
+    plt.figure(figsize=(8, 4))
+    plt.hist(pct_fg_c1_incorrect, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
+    plt.hist(pct_fg_c0_correct, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
+    plt.xlabel('Pourcentage de pixels prédits cancer')
+    plt.ylabel('Nombre d’images')
+    plt.legend()
+    plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
+    plt.tight_layout()
+    plt.savefig('hist_pct_fg_normal_correct_vs_cancer_misclassified_bloc.png', dpi=300)
+    plt.show()
+
+
+
+
+
+    features_pos = img_ft_1_correct
+    features_neg = img_ft_0_incorrect
+    # Concaténation
+    all_features = np.concatenate([features_pos, features_neg], axis=0)
+
+    # t-SNE
+    tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+    embedded_features = tsne.fit_transform(all_features)
+
+    # Séparation
+    n_pos = features_pos.shape[0]
+    embedded_pos = embedded_features[:n_pos]
+    embedded_neg = embedded_features[n_pos:]
+
+    # Visualisation
+    plt.figure(figsize=(6, 6))
+    plt.scatter(embedded_pos[:, 0], embedded_pos[:, 1], color='green', label='Class 1 - Correct')
+    plt.scatter(embedded_neg[:, 0], embedded_neg[:, 1], color='orange', label='Class 0 - Incorrect')
+
+    plt.legend()
+    plt.title('t-SNE of pixel features:\nforeground correctly predicted vs background misclassified')
+    plt.tight_layout()
+    plt.savefig('tsne_correct1_incorrect0_4.png', dpi=300)
+    plt.close()
+
+    n_pos = features_pos.shape[0]
+    n_neg = features_neg.shape[0]
+    true_labels = np.array([1]*n_pos + [0]*n_neg)   
+
+    from sklearn.cluster import KMeans
+
+    n_clusters = 10
+    kmeans = KMeans(n_clusters=n_clusters, random_state=0)
+    cluster_ids = kmeans.fit_predict(all_features)
+
+
+    for i in range(n_clusters):
+        mask = (cluster_ids == i)
+        true_c = true_labels[mask]
+        total = len(true_c)
+        n_cancer = np.sum(true_c == 1)
+        n_normal = np.sum(true_c == 0)
+        print(f"Cluster {i}: {total} points → {n_cancer} correct cancer, {n_normal} misclassified normal")
+
+
+    
+    center_cancer_pure=model.get_linear_weights[1].detach().cpu().numpy()
+
+    from sklearn.metrics import pairwise_distances
+
+    anchor_c1 = model.get_linear_weights[0].detach().cpu().numpy().reshape(1, -1)
+
+
+    for i in range(10):
+        cluster_feats = all_features[cluster_ids == i]
+        cluster_center = cluster_feats.mean(axis=0, keepdims=True)
+        dist = pairwise_distances(cluster_center, anchor_c1).item()
+        print(f"Cluster {i}: distance au vecteur classe 1 = {dist:.3f}")
 
     # Plot classe 1
     plt.figure(figsize=(8, 4))
-    counts_correct, bins_correct, _  = plt.hist(img_confidence_1_correct, bins=30, alpha=0.7, color='blue', label='Class 1 - Correct')
-    counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_1_incorrect, bins=30, alpha=0.7, color='red', label='Class 1 - Incorrect')
+
+    #all_conf_1 = np.concatenate([img_confidence_1_correct, img_confidence_1_incorrect])
+    #min_conf = float(np.min(all_conf_1))
+    #max_conf = float(np.max(all_conf_1))
+    # Ajuste dynamiquement le nombre de bins selon la plage de valeurs
+    #n_bins = 15 if max_conf - min_conf < 0.1 else 30
+    #bins = np.linspace(min_conf, max_conf + 1e-6, n_bins)
+
+    bins = np.linspace(0, 1, 31)
+    counts_correct, bins_correct, _  = plt.hist(img_confidence_1_correct, bins=bins, alpha=0.7, color='blue', label='Class 1 - Correct')
+    counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_1_incorrect, bins=bins, alpha=0.7, color='red', label='Class 1 - Incorrect')
+
+    #counts_correct, bins_correct, _  = plt.hist(img_confidence_1_correct, bins=30, alpha=0.7, color='blue', label='Class 1 - Correct')
+    #counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_1_incorrect, bins=30, alpha=0.7, color='red', label='Class 1 - Incorrect')
+
+    #counts_correct, bins_correct, _ = plt.hist(img_confidence_1_correct, bins=bins, alpha=0.7, color='blue', label='Class 1 - Correct')
+    #counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_1_incorrect, bins=bins, alpha=0.7, color='red', label='Class 1 - Incorrect')
+
 
     for count, x in zip(counts_correct, bins_correct[:-1]):
         if count > 0:
             plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
 
-        for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
-            if count > 0:
-                plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+    for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
+        if count > 0:
+            plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
 
     plt.xlabel("Confidence")
     plt.ylabel("Count")
@@ -786,27 +1065,6 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
     plt.savefig(os.path.join(out_dir, f"hist_class1_proba_{target_dataset}.png"), dpi=300)
     plt.close()
 
-    # Plot classe 1
-    plt.figure(figsize=(8, 4))
-    counts_correct, bins_correct, _  = plt.hist(img_energy_class1_correct, bins=30, alpha=0.7, color='blue', label='Class 1 - Correct')
-    counts_incorrect, bins_incorrect, _ = plt.hist(img_energy_class1_incorrect, bins=30, alpha=0.7, color='red', label='Class 1 - Incorrect')
-    for count, x in zip(counts_correct, bins_correct[:-1]):
-        if count > 0:
-            plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
-
-        for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
-            if count > 0:
-                plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
-
-    plt.xlabel("Energy")
-    plt.ylabel("Count")
-    plt.title(f"{title_prefix or ''} Class 1 - Energy")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, f"hist_class1_energy_{target_dataset}.png"), dpi=300)
-    plt.close()
-
     # Plot classe 0
     plt.figure(figsize=(8, 4))
     counts_correct, bins_correct, _  = plt.hist(img_confidence_0_correct, bins=30, alpha=0.7, color='blue', label='Class 0 - Correct')
@@ -815,9 +1073,9 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
         if count > 0:
             plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
 
-        for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
-            if count > 0:
-                plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+    for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
+        if count > 0:
+            plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
 
     plt.xlabel("Confidence")
     plt.ylabel("Count")
@@ -828,26 +1086,69 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
     plt.savefig(os.path.join(out_dir, f"hist_class0_proba_{target_dataset}.png"), dpi=300)
     plt.close()
 
-    # Plot classe 1
-    plt.figure(figsize=(8, 4))
-    counts_correct, bins_correct, _  = plt.hist(img_energy_class0_correct, bins=30, alpha=0.7, color='blue', label='Class 0 - Correct')
-    counts_incorrect, bins_incorrect, _ = plt.hist(img_energy_class0_incorrect, bins=30, alpha=0.7, color='red', label='Class 0 - Incorrect')
-    for count, x in zip(counts_correct, bins_correct[:-1]):
-        if count > 0:
-            plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
 
-        for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
-            if count > 0:
-                plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+    # # Plot classe 1
+    # plt.figure(figsize=(8, 4))
+    # counts_correct, bins_correct, _  = plt.hist(img_energy_class1_correct, bins=30, alpha=0.7, color='blue', label='Class 1 - Correct')
+    # counts_incorrect, bins_incorrect, _ = plt.hist(img_energy_class1_incorrect, bins=30, alpha=0.7, color='red', label='Class 1 - Incorrect')
+    # for count, x in zip(counts_correct, bins_correct[:-1]):
+    #     if count > 0:
+    #         plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
 
-    plt.xlabel("Energy")
-    plt.ylabel("Count")
-    plt.title(f"{title_prefix or ''} Class 0 - Energy")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, f"hist_class0_energy_{target_dataset}.png"), dpi=300)
-    plt.close()
+    #     for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
+    #         if count > 0:
+    #             plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+    # plt.xlabel("Energy")
+    # plt.ylabel("Count")
+    # plt.title(f"{title_prefix or ''} Class 1 - Energy")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.tight_layout()
+    # plt.savefig(os.path.join(out_dir, f"hist_class1_energy_{target_dataset}.png"), dpi=300)
+    # plt.close()
+
+    # # Plot classe 0
+    # plt.figure(figsize=(8, 4))
+    # counts_correct, bins_correct, _  = plt.hist(img_confidence_0_correct, bins=30, alpha=0.7, color='blue', label='Class 0 - Correct')
+    # counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_0_incorrect, bins=30, alpha=0.7, color='red', label='Class 0 - Incorrect')
+    # for count, x in zip(counts_correct, bins_correct[:-1]):
+    #     if count > 0:
+    #         plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+    #     for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
+    #         if count > 0:
+    #             plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+    # plt.xlabel("Confidence")
+    # plt.ylabel("Count")
+    # plt.title(f"{title_prefix or ''} Class 0 - Prediction Confidence")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.tight_layout()
+    # plt.savefig(os.path.join(out_dir, f"hist_class0_proba_{target_dataset}.png"), dpi=300)
+    # plt.close()
+
+    # # Plot classe 1
+    # plt.figure(figsize=(8, 4))
+    # counts_correct, bins_correct, _  = plt.hist(img_energy_class0_correct, bins=30, alpha=0.7, color='blue', label='Class 0 - Correct')
+    # counts_incorrect, bins_incorrect, _ = plt.hist(img_energy_class0_incorrect, bins=30, alpha=0.7, color='red', label='Class 0 - Incorrect')
+    # for count, x in zip(counts_correct, bins_correct[:-1]):
+    #     if count > 0:
+    #         plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+    #     for count, x in zip(counts_incorrect, bins_incorrect[:-1]):
+    #         if count > 0:
+    #             plt.text(x + (bins_incorrect[1] - bins_incorrect[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
+
+    # plt.xlabel("Energy")
+    # plt.ylabel("Count")
+    # plt.title(f"{title_prefix or ''} Class 0 - Energy")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.tight_layout()
+    # plt.savefig(os.path.join(out_dir, f"hist_class0_energy_{target_dataset}.png"), dpi=300)
+    # plt.close()
 
 
 def plot_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, title_prefix=None,target_dataset=None):
@@ -1571,7 +1872,18 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
     #plot_weights_model(model, support_background = args.model['support_background'], out_dir='plots_weights', title_prefix="")
     #source_energy_external_px_classifier = 
-    source_energy = compute_energy_distributions(model, source_loaders, source_cam_computer, source_dataset, energy_fn, split, device, args=args, metadata_root=source_metadata_root, cam_performance = False)
+
+    #source_energy = compute_energy_distributions(model, source_loaders, source_cam_computer, source_dataset, energy_fn, split, device, args=args, metadata_root=source_metadata_root, cam_performance = False)
+    
+    out_dir = "plots_energy_test"
+    os.makedirs(out_dir, exist_ok=True)
+    #plot_hist_energy_based_on_target_image_acc(source_energy, out_dir, save_path="tmp", target_dataset=source_dataset)
+
+
+
+
+    #plot_logits(source_energy['max_logits_img'], target_energy['max_logits_img'], out_dir, title="Logits Distribution for images", type = "images_max", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
+    
     
     if parsedargs.external_model is not None:
         external_pixel_classifier = True
@@ -1599,13 +1911,14 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
 
 
-    plot_hist_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
+    plot_hist_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset, model = model)
 
-    plot_logits(source_energy['max_logits_img'], target_energy['max_logits_img'], out_dir, title="Logits Distribution for images", type = "images_max", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
-    plot_logits(source_energy['min_logits_img'], target_energy['min_logits_img'], out_dir, title="Logits Distribution for images", type = "images_min", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
+    #plot_logits(source_energy['max_logits_img'], target_energy['max_logits_img'], out_dir, title="Logits Distribution for images", type = "images_max", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
     
-    plot_logits(source_energy['max_logits_pxs'], target_energy['max_logits_pxs'], out_dir, title="Logits Distribution for pixels", type = "pixels_max",xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
-    plot_logits(source_energy['min_logits_pxs'], target_energy['min_logits_pxs'], out_dir, title="Logits Distribution for pixels", type = "pixels_min",xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
+    #plot_logits(source_energy['min_logits_img'], target_energy['min_logits_img'], out_dir, title="Logits Distribution for images", type = "images_min", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
+    
+    #plot_logits(source_energy['max_logits_pxs'], target_energy['max_logits_pxs'], out_dir, title="Logits Distribution for pixels", type = "pixels_max",xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
+    #plot_logits(source_energy['min_logits_pxs'], target_energy['min_logits_pxs'], out_dir, title="Logits Distribution for pixels", type = "pixels_min",xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
 
 
     #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)

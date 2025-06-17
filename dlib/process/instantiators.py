@@ -1549,12 +1549,22 @@ def get_model(args, eval=False, eval_path_weights=''):
         model_src.eval()
         freeze_all_params(model_src)
 
-        if args.shot or args.faust or args.sfde or args.cdcl or args.esfda or args.pxsfde:  # shot/faust/sfde/cdcl methods
+        if args.shot or args.faust or args.sfde or args.cdcl:  # shot/faust/sfde/cdcl methods
             model.train()
             model.freeze_cl_hypothesis()  # last linear weights + bias of
             # classifier. some wsol methods do not have a last linear
             # classifier: either simple fully conv layers, attention,
             # or no weights (simple max pooling for e.g.)
+
+        elif args.esfda: # or args.esfda or args.pxsfde
+            if args.freeze_classifier_sfda:
+                model.train()
+                model.freeze_cl_hypothesis()  # last linear weights + bias of
+            # classifier. some wsol methods do not have a last linear
+            # classifier: either simple fully conv layers, attention,
+            # or no weights (simple max pooling for e.g.)
+            else:
+                model.train()
 
         elif args.adadsa:
             # Estimate BN stats over target trainset.

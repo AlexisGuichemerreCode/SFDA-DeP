@@ -1117,11 +1117,34 @@ def fast_eval():
 
     parsedargs = parser.parse_args()
 
-    import pickle as pkl
+    # import pickle as pkl
+    # import tifffile
+
+    # with tifffile.TiffFile("TCGA-E2-A154-01Z-00-DX1.01FC9B1A-8ECD-4467-9EDD-0B02E4AEEF72-labels.ome.tif") as tif:
+    #     print(f"Nombre de résolutions (series) : {len(tif.series)}")
+
+    #     # Lire résolution basse (par exemple niveau 2)
+    #     #lowres_mask = tif.series[2].asarray()
+
+    #     # Ou lire niveau full (niveau 0, à tes risques si très gros)
+    #     fullres_mask = tif.series[0].asarray()
+    #     unique_vals = np.unique(fullres_mask)
 
 
-    with open('/export/livia/home/vision/Aguichemerre/Energy_based_Adaptation/exps/GLAS/resnet50/STD_CL/PixelCAM/id_test_unlearning_6-tsk_STD_CL-ds_GLAS-fold_0-mag_None-runmode_search-mode-mth_PixelCAM-spooling_WGAP-arch_STDClassifier-ecd_resnet50/results_source_target_data.pickle', 'rb') as f:
-        curves_data = pkl.load(f)
+
+    # mask = tifffile.imread('TCGA-E2-A154-01Z-00-DX1.01FC9B1A-8ECD-4467-9EDD-0B02E4AEEF72-mask.tif')
+    # print(mask.shape)
+    # for i in range(mask.shape[0]):
+    #     uniques = np.unique(mask[i, :, :])
+    #     print(f"Canal {i} → valeurs uniques : {uniques}")
+
+    # unique_vals = np.unique(mask)
+    # print(f"Valeurs uniques dans le masque : {unique_vals}")
+
+
+
+    # with open('/export/livia/home/vision/Aguichemerre/Energy_based_Adaptation/exps/GLAS/resnet50/STD_CL/PixelCAM/id_test_unlearning_6-tsk_STD_CL-ds_GLAS-fold_0-mag_None-runmode_search-mode-mth_PixelCAM-spooling_WGAP-arch_STDClassifier-ecd_resnet50/results_source_target_data.pickle', 'rb') as f:
+    #     curves_data = pkl.load(f)
 
 
     
@@ -1152,7 +1175,7 @@ def fast_eval():
         #split = parsedargs.split
         #assert split == constants.TESTSET or split == constants.VALIDSET or split == constants.TRAINSET
 
-        split = ['train', 'test']
+        split = ['train']
         
         _CODE_FUNCTION = 'fast_eval_{}'.format(split)
 

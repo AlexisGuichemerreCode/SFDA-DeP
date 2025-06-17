@@ -811,6 +811,8 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # ======================================================================
         # ESFDA: "Energy Source-Free Domain Adaptation",
         'esfda': False,  # ESFDE method. ON/OFF.
+        'freeze_classifier_sfda': False,  # freeze the classifiers during
+        # training. If True, the classifiers are not updated.
         # ======================================================================
         #                     END - ENERGY DISTRIBUTION ESTIMATION
         # ======================================================================
