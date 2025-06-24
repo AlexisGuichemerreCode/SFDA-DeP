@@ -777,6 +777,44 @@ def plot_logits(source_pxs_logits, target_pxs_logits, out_dir, title, type = Non
     plt.close()
 
 
+def plot_histograms(data_list, labels, colors=None, bins=30, 
+                    xlabel='Value', ylabel='Count',
+                    title='Histogram', save_path=None, show=True, alpha=0.6):
+    """
+    Trace plusieurs histogrammes sur une même figure.
+
+    Args:
+        data_list (list of arrays): listes des tableaux de données à tracer.
+        labels (list of str): noms des courbes pour la légende.
+        colors (list of str, optional): couleurs à utiliser (doit être de même longueur que data_list).
+        bins (int or sequence): nombre de bins ou les bins exacts.
+        xlabel (str): nom de l'axe x.
+        ylabel (str): nom de l'axe y.
+        title (str): titre de la figure.
+        save_path (str or None): chemin pour sauvegarder la figure. Aucun fichier n'est enregistré si None.
+        show (bool): si True, affiche la figure.
+        alpha (float): transparence des courbes (entre 0 et 1).
+    """
+    plt.figure(figsize=(8, 4))
+    
+    for i, data in enumerate(data_list):
+        color = colors[i] if colors else None
+        plt.hist(data, bins=bins, alpha=alpha, label=labels[i], color=color)
+
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+    if show:
+        plt.show()
+    plt.close()
+
+
+
 def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=None, title_prefix=None,target_dataset=None, model = None):
     os.makedirs(out_dir, exist_ok=True)
 
@@ -820,26 +858,16 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
 
 
     H = target_dict["entropy_px"] 
-    H_c1_correct = H[mask_class_1_correct] 
-    H_n0_fp      = H[mask_class_0_incorrect]  
 
-    bins = np.linspace(0, 1.2, 30)
+    H_c_correct = H[mask_class_1_correct] 
+    H_n_incorrect      = H[mask_class_0_incorrect]  
 
-    plt.figure(figsize=(8,4))
-    plt.hist(H_c1_correct, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
-    plt.hist(H_n0_fp,     bins=bins, alpha=0.6, color='orange', label='Normal → FP cancer')
-
-    plt.xlabel('Entropy per image')
-    plt.ylabel('Number of images')
-    plt.legend()
-    plt.title('Distribution of image entropy \n(cancer correct vs normal misclassified)')
-    plt.tight_layout()
-    plt.savefig('hist_entropy_tp_vs_fp.png', dpi=300)
-    plt.show()
-
+    H_c_incorrect = H[mask_class_1_incorrect]
+    H_n_correct     = H[mask_class_0_correct]
 
     H_c = target_dict["metrics_px_fg"]
     H_n = target_dict["metrics_px_bg"]
+
     H_c_c1_correct = H_c[mask_class_1_correct]
     H_n_c1_correct     = H_n[mask_class_1_correct]
 
@@ -847,21 +875,76 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
     H_n_c0_incorrect     = H_n[mask_class_0_incorrect]
 
 
+    H_c_c1_incorrect = H_c[mask_class_1_incorrect]
+    H_n_c1_incorrect     = H_n[mask_class_1_incorrect]
+
+    H_c_c0_correct = H_c[mask_class_0_correct]
+    H_n_c0_correct     = H_n[mask_class_0_correct]
 
 
 
-    plt.figure(figsize=(8,4))
-    plt.hist(H_c_c1_correct, bins=bins, alpha=0.6, color='green', label='Img predicted cancer and cancer and entropy of predicted cancer pixels')
-    plt.hist(H_n_c1_correct,     bins=bins, alpha=0.6, color='orange', label='Img predicted cancer and cancer and entropy of predicted normal pixels')
-    plt.hist(H_c_c0_incorrect, bins=bins, alpha=0.6, color='blue', label='Img predict cancer  but normal and entropy of predicted cancer pixels')
-    plt.hist(H_n_c0_incorrect,     bins=bins, alpha=0.6, color='red', label='Img predict cancer  but normal and entropy of predicted normal pixels')
-    plt.xlabel('Average entropy per pixel')
-    plt.ylabel('Number of pixels')
-    plt.legend()
-    plt.title('Distribution of pixel-wise entropy\n(cancer correct vs normal misclassified)')
-    plt.tight_layout()
-    plt.savefig('hist_entropy_px_cancer_correct_vs_normal_misclassified.png', dpi=300)
-    plt.show()
+
+
+
+
+    out_dir = f"visualization/bcl/target/{target_dataset}/"
+    os.makedirs(out_dir, exist_ok=True)
+
+    plot_histograms([H_c_correct, H_n_incorrect],
+                 labels=['Cancer correctly classified', 'Normal misclassified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels per image',
+                 ylabel='Number of images',
+                 title='Distribution of pixel entropy \n(cancer correct vs normal misclassified)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_tp_vs_fp_cancer_class.png'))
+
+
+    plot_histograms([H_c_incorrect, H_n_correct],
+                 labels=['Cancer misclassified', 'Normal correctly classified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels per image',
+                 ylabel='Number of images',
+                 title='Distribution of pixel entropy \n(cancer misclassified vs normal correct)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_tp_vs_fp_normal_class.png'))
+
+
+    plot_histograms([H_c_c1_correct, H_c_c0_incorrect],
+                 labels=['Cancer correctly classified', 'Normal misclassified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels (fg) per image',
+                 ylabel='Number of images',
+                 title='Distribution of (fg) pixel entropy \n(cancer correctly classified vs normal misclassifier)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_tp_vs_fp_cancer_class_fg.png'))
+
+
+    plot_histograms([H_n_c1_correct, H_n_c0_incorrect],
+                 labels=['Cancer correctly classified', 'Normal misclassified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels (bg) per image',
+                 ylabel='Number of images',
+                 title='Distribution of (bg) pixel entropy \n(cancer correctly classified vs normal misclassifier)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_tp_vs_fp_cancer_class_bg.png'))
+    
+
+    plot_histograms([H_c_c1_incorrect, H_c_c0_correct],
+                 labels=['Cancer misclassified', 'Normal correctly classified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels (fg) per image',
+                 ylabel='Number of images',
+                 title='Distribution of (fg) pixel entropy \n(cancer misclassified vs normal correctly classified)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_tp_vs_fp_normal_class_fg.png'))
+    
+
+    plot_histograms([H_n_c1_incorrect, H_n_c0_correct],
+                 labels=['Cancer misclassified', 'Normal correctly classified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels (bg) per image',
+                 ylabel='Number of images',
+                 title='Distribution of (bg) pixel entropy \n(cancer misclassified vs normal correctly classified)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_tp_vs_fp_normal_class_bg.png'))
+    
+
+
 
     
 
@@ -874,95 +957,184 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
     pct_bg_c0_incorrect = pct_bg[mask_class_0_incorrect]
 
 
-    entropy_px = target_dict["entropy_px"]
-    pct_bg = 1 - target_dict["pct_fg"]
-    mask_bg_dominant = pct_bg > 0.9
-    mask_cancer_correct_bg = mask_class_1_correct & mask_bg_dominant
-    mask_normal_incorrect_bg = mask_class_0_incorrect & mask_bg_dominant
-
-    # Sélection des valeurs d'entropie
-    entropy_cancer_correct_bg = entropy_px[mask_cancer_correct_bg]
-    entropy_normal_incorrect_bg = entropy_px[mask_normal_incorrect_bg]
-
-    # Affichage du plot
-    plt.figure(figsize=(8, 4))
-    plt.hist(entropy_cancer_correct_bg, bins=50, alpha=0.6, color='blue', label='Cancer bien classé (bg>90%)')
-    plt.hist(entropy_normal_incorrect_bg, bins=50, alpha=0.6, color='red', label='Normal mal classé (bg>90%)')
-    plt.xlabel("Entropie moyenne des pixels de l'image")
-    plt.ylabel("Nombre d’images")
-    plt.legend()
-    plt.title("Distribution de l’entropie des pixels\n(pour les images avec >90% de background)")
-    plt.tight_layout()
-    plt.savefig('hist_entropy_px_bg90_cancer_correct_vs_normal_misclassified.png', dpi=300)
-    plt.show()
-
-    plt.figure(figsize=(6, 4))
-    plt.boxplot(
-        [entropy_cancer_correct_bg, entropy_normal_incorrect_bg],
-        labels=["Cancer bien classé", "Normal mal classé"],
-        patch_artist=True
-    )
-    plt.ylabel("Entropie moyenne des pixels")
-    plt.title("Boxplot de l’entropie (images avec >90% background)")
-    plt.tight_layout()
-    plt.savefig('boxplot_entropy_px_bg90.png', dpi=300)
-    plt.show()
-
-
-    plt.figure(figsize=(8, 4))
-    plt.hist(pct_fg_c1_correct, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
-    plt.hist(pct_fg_c0_incorrect, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
-    plt.xlabel('Pourcentage de pixels prédits cancer')
-    plt.ylabel('Nombre d’images')
-    plt.legend()
-    plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
-    plt.tight_layout()
-    plt.savefig('hist_pct_fg_cancer_correct_vs_normal_misclassified_bloc.png', dpi=300)
-    plt.show()       
-
-    plt.hist(pct_bg_c1_correct, bins=bins, alpha=0.6, color='blue', label='Cancer bien classé (background)')
-    plt.hist(pct_bg_c0_incorrect, bins=bins, alpha=0.6, color='red', label='Normal mal classé (background)')
-
-    plt.figure(figsize=(8, 4))
-    plt.hist(pct_bg_c1_correct, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
-    plt.hist(pct_bg_c0_incorrect, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
-    plt.xlabel('Pourcentage de pixels prédits bg')
-    plt.ylabel('Nombre d’images')
-    plt.legend()
-    plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
-    plt.tight_layout()
-    plt.savefig('hist_pct_bg_cancer_correct_vs_normal_misclassified_bloc.png', dpi=300)
-    plt.show()  
-
-
     pct_fg_c1_incorrect = pct_fg[mask_class_1_incorrect]
     pct_fg_c0_correct = pct_fg[mask_class_0_correct]
 
-    pct_bg = 1 - pct_fg
     pct_bg_c1_incorrect = pct_bg[mask_class_1_incorrect]
     pct_bg_c0_correct = pct_bg[mask_class_0_correct]
 
-    plt.figure(figsize=(8, 4))
-    plt.hist(pct_bg_c1_incorrect, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
-    plt.hist(pct_bg_c0_correct, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
-    plt.xlabel('Pourcentage de pixels prédits cancer')
-    plt.ylabel('Nombre d’images')
-    plt.legend()
-    plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
-    plt.tight_layout()
-    plt.savefig('hist_pct_bg_normal_correct_vs_cancer_misclassified_bloc.png', dpi=300)
-    plt.show()
 
-    plt.figure(figsize=(8, 4))
-    plt.hist(pct_fg_c1_incorrect, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
-    plt.hist(pct_fg_c0_correct, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
-    plt.xlabel('Pourcentage de pixels prédits cancer')
-    plt.ylabel('Nombre d’images')
-    plt.legend()
-    plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
-    plt.tight_layout()
-    plt.savefig('hist_pct_fg_normal_correct_vs_cancer_misclassified_bloc.png', dpi=300)
-    plt.show()
+    entropy_px = target_dict["entropy_px"]
+    mask_bg_90 = pct_bg > 0.9
+    mask_bg_60_90 = (pct_bg > 0.6) & (pct_bg <= 0.9)
+    mask_bg_00_60 = pct_bg <= 0.6
+
+    mask_fg_90 = pct_fg <= 0.1
+    mask_fg_60_90 = (pct_fg > 0.1) & (pct_fg <= 0.3)
+    mask_fg_00_60 = pct_fg > 0.3
+
+    ################################# BG #######################################
+
+    mask_cancer_correct_bg_90 = mask_class_1_correct & mask_bg_90
+    mask_normal_incorrect_bg_90 = mask_class_0_incorrect & mask_bg_90
+
+    entropy_cancer_correct_bg_90 = entropy_px[mask_cancer_correct_bg_90]
+    entropy_normal_incorrect_bg_90 = entropy_px[mask_normal_incorrect_bg_90]
+
+    mask_cancer_correct_bg_60_90 = mask_class_1_correct & mask_bg_60_90
+    mask_normal_incorrect_bg_60_90 = mask_class_0_incorrect & mask_bg_60_90
+
+    entropy_cancer_correct_bg_60_90 = entropy_px[mask_cancer_correct_bg_60_90]
+    entropy_normal_incorrect_bg_60_90 = entropy_px[mask_normal_incorrect_bg_60_90]
+
+    mask_cancer_correct_bg_00_60 = mask_class_1_correct & mask_bg_00_60
+    mask_normal_incorrect_bg_00_60 = mask_class_0_incorrect & mask_bg_00_60
+
+    entropy_cancer_correct_bg_00_60 = entropy_px[mask_cancer_correct_bg_00_60]
+    entropy_normal_incorrect_bg_00_60 = entropy_px[mask_normal_incorrect_bg_00_60]
+
+
+    ##################################### FG #################################
+
+    mask_cancer_correct_fg_90 = mask_class_1_correct & mask_fg_90
+    mask_normal_incorrect_fg_90 = mask_class_0_incorrect & mask_fg_90
+
+    entropy_cancer_correct_fg_90 = entropy_px[mask_cancer_correct_fg_90]
+    entropy_normal_incorrect_fg_90 = entropy_px[mask_normal_incorrect_fg_90]
+
+    mask_cancer_correct_fg_60_90 = mask_class_1_correct & mask_fg_60_90
+    mask_normal_incorrect_fg_60_90 = mask_class_0_incorrect & mask_fg_60_90
+
+    entropy_cancer_correct_fg_60_90 = entropy_px[mask_cancer_correct_fg_60_90]
+    entropy_normal_incorrect_fg_60_90 = entropy_px[mask_normal_incorrect_fg_60_90]
+
+    mask_cancer_correct_fg_00_60 = mask_class_1_correct & mask_fg_00_60
+    mask_normal_incorrect_fg_00_60 = mask_class_0_incorrect & mask_fg_00_60
+
+    entropy_cancer_correct_fg_00_60 = entropy_px[mask_cancer_correct_fg_00_60]
+    entropy_normal_incorrect_fg_00_60 = entropy_px[mask_normal_incorrect_fg_00_60]
+
+
+
+
+
+
+    #  BG
+    
+
+    plot_histograms([entropy_cancer_correct_bg_90, entropy_normal_incorrect_bg_90],
+                 labels=['Cancer correctly classified ', 'Normal misclassified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels (bg) per image',
+                 ylabel='Number of images',
+                 title='Distribution of (bg) pixel entropy \n(cancer correctly classified vs normal misclassified with bg > 90%)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_px_bg90_cancer_correct_vs_normal_misclassified.png'))
+    
+    
+    plot_histograms([entropy_cancer_correct_bg_60_90, entropy_normal_incorrect_bg_60_90],
+                 labels=['Cancer correctly classified ', 'Normal misclassified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels (bg) per image',
+                 ylabel='Number of images',
+                 title='Distribution of (bg) pixel entropy \n(cancer correctly classified vs normal misclassified with 90% >  bg > 60%)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_px_bg_60_90_cancer_correct_vs_normal_misclassified.png'))
+    
+
+    plot_histograms([entropy_cancer_correct_bg_00_60, entropy_normal_incorrect_bg_00_60],
+                 labels=['Cancer correctly classified ', 'Normal misclassified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels (bg) per image',
+                 ylabel='Number of images',
+                 title='Distribution of (bg) pixel entropy \n(cancer correctly classified vs normal misclassified with 60% >  bg > 00%)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_px_bg_00_60_cancer_correct_vs_normal_misclassified.png'))
+    
+
+
+
+    #  FG
+
+
+    plot_histograms([entropy_cancer_correct_fg_90, entropy_normal_incorrect_fg_90],
+                 labels=['Cancer correctly classified ', 'Normal misclassified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels (fg) per image',
+                 ylabel='Number of images',
+                 title='Distribution of (fg) pixel entropy \n(cancer correctly classified vs normal misclassified with bg > 90%)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_px_fg_bg90_cancer_correct_vs_normal_misclassified.png'))
+    
+    
+    plot_histograms([entropy_cancer_correct_fg_60_90, entropy_normal_incorrect_fg_60_90],
+                 labels=['Cancer correctly classified ', 'Normal misclassified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels (fg) per image',
+                 ylabel='Number of images',
+                 title='Distribution of (fg) pixel entropy \n(cancer correctly classified vs normal misclassified with 90% >  bg > 60%)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_px_fg_bg_60_90_cancer_correct_vs_normal_misclassified.png'))
+    
+
+    plot_histograms([entropy_cancer_correct_fg_00_60, entropy_normal_incorrect_fg_00_60],
+                 labels=['Cancer correctly classified ', 'Normal misclassified'],
+                 colors=['green', 'orange'],
+                 xlabel='Average entropy of pixels (fg) per image',
+                 ylabel='Number of images',
+                 title='Distribution of (fg) pixel entropy \n(cancer correctly classified vs normal misclassified with 60% >  bg > 00%)',
+                 save_path= os.path.join(out_dir, 'hist_entropy_px_fg_bg_00_60_cancer_correct_vs_normal_misclassified.png'))
+    
+
+    # plt.figure(figsize=(8, 4))
+    # plt.hist(pct_fg_c1_correct, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
+    # plt.hist(pct_fg_c0_incorrect, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
+    # plt.xlabel('Pourcentage de pixels prédits cancer')
+    # plt.ylabel('Nombre d’images')
+    # plt.legend()
+    # plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
+    # plt.tight_layout()
+    # plt.savefig('hist_pct_fg_cancer_correct_vs_normal_misclassified_bloc.png', dpi=300)
+    # plt.show()       
+
+    # plt.hist(pct_bg_c1_correct, bins=bins, alpha=0.6, color='blue', label='Cancer bien classé (background)')
+    # plt.hist(pct_bg_c0_incorrect, bins=bins, alpha=0.6, color='red', label='Normal mal classé (background)')
+
+    # plt.figure(figsize=(8, 4))
+    # plt.hist(pct_bg_c1_correct, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
+    # plt.hist(pct_bg_c0_incorrect, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
+    # plt.xlabel('Pourcentage de pixels prédits bg')
+    # plt.ylabel('Nombre d’images')
+    # plt.legend()
+    # plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
+    # plt.tight_layout()
+    # plt.savefig('hist_pct_bg_cancer_correct_vs_normal_misclassified_bloc.png', dpi=300)
+    # plt.show()  
+
+
+    # pct_fg_c1_incorrect = pct_fg[mask_class_1_incorrect]
+    # pct_fg_c0_correct = pct_fg[mask_class_0_correct]
+
+    # pct_bg = 1 - pct_fg
+    # pct_bg_c1_incorrect = pct_bg[mask_class_1_incorrect]
+    # pct_bg_c0_correct = pct_bg[mask_class_0_correct]
+
+    # plt.figure(figsize=(8, 4))
+    # plt.hist(pct_bg_c1_incorrect, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
+    # plt.hist(pct_bg_c0_correct, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
+    # plt.xlabel('Pourcentage de pixels prédits cancer')
+    # plt.ylabel('Nombre d’images')
+    # plt.legend()
+    # plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
+    # plt.tight_layout()
+    # plt.savefig('hist_pct_bg_normal_correct_vs_cancer_misclassified_bloc.png', dpi=300)
+    # plt.show()
+
+    # plt.figure(figsize=(8, 4))
+    # plt.hist(pct_fg_c1_incorrect, bins=bins, alpha=0.6, color='green', label='Cancer bien classé')
+    # plt.hist(pct_fg_c0_correct, bins=bins, alpha=0.6, color='orange', label='Normal mal classé (FP cancer)')
+    # plt.xlabel('Pourcentage de pixels prédits cancer')
+    # plt.ylabel('Nombre d’images')
+    # plt.legend()
+    # plt.title('Distribution du pourcentage de pixels prédits cancer\n(cancer correct vs normal mal classé)')
+    # plt.tight_layout()
+    # plt.savefig('hist_pct_fg_normal_correct_vs_cancer_misclassified_bloc.png', dpi=300)
+    # plt.show()
 
 
 
@@ -1018,14 +1190,23 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
 
     from sklearn.metrics import pairwise_distances
 
-    anchor_c1 = model.get_linear_weights[0].detach().cpu().numpy().reshape(1, -1)
+    anchor_c0 = model.get_linear_weights[0].detach().cpu().numpy().reshape(1, -1)
+
+
+    for i in range(10):
+        cluster_feats = all_features[cluster_ids == i]
+        cluster_center = cluster_feats.mean(axis=0, keepdims=True)
+        dist = pairwise_distances(cluster_center, anchor_c0).item()
+        print(f"Cluster {i}:Distance to anchors = {dist:.3f}")
+
+    anchor_c1 = model.get_linear_weights[1].detach().cpu().numpy().reshape(1, -1)
 
 
     for i in range(10):
         cluster_feats = all_features[cluster_ids == i]
         cluster_center = cluster_feats.mean(axis=0, keepdims=True)
         dist = pairwise_distances(cluster_center, anchor_c1).item()
-        print(f"Cluster {i}: distance au vecteur classe 1 = {dist:.3f}")
+        print(f"Cluster {i}:Distance to anchors = {dist:.3f}")
 
     # Plot classe 1
     plt.figure(figsize=(8, 4))
@@ -1038,8 +1219,8 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
     #bins = np.linspace(min_conf, max_conf + 1e-6, n_bins)
 
     bins = np.linspace(0, 1, 31)
-    counts_correct, bins_correct, _  = plt.hist(img_confidence_1_correct, bins=bins, alpha=0.7, color='blue', label='Class 1 - Correct')
-    counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_1_incorrect, bins=bins, alpha=0.7, color='red', label='Class 1 - Incorrect')
+    counts_correct, bins_correct, _  = plt.hist(img_confidence_1_correct, bins=bins, alpha=0.7, color='blue', label='Class 0 - Correct')
+    counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_1_incorrect, bins=bins, alpha=0.7, color='red', label='Class 0 - Incorrect')
 
     #counts_correct, bins_correct, _  = plt.hist(img_confidence_1_correct, bins=30, alpha=0.7, color='blue', label='Class 1 - Correct')
     #counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_1_incorrect, bins=30, alpha=0.7, color='red', label='Class 1 - Incorrect')
@@ -1058,7 +1239,7 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
 
     plt.xlabel("Confidence")
     plt.ylabel("Count")
-    plt.title(f"{title_prefix or ''} Class 1 - Prediction Confidence")
+    plt.title(f"{title_prefix or ''} Class 0 - Prediction Confidence")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -1067,8 +1248,8 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
 
     # Plot classe 0
     plt.figure(figsize=(8, 4))
-    counts_correct, bins_correct, _  = plt.hist(img_confidence_0_correct, bins=30, alpha=0.7, color='blue', label='Class 0 - Correct')
-    counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_0_incorrect, bins=30, alpha=0.7, color='red', label='Class 0 - Incorrect')
+    counts_correct, bins_correct, _  = plt.hist(img_confidence_0_correct, bins=30, alpha=0.7, color='blue', label='Class 1 - Correct')
+    counts_incorrect, bins_incorrect, _ = plt.hist(img_confidence_0_incorrect, bins=30, alpha=0.7, color='red', label='Class 1 - Incorrect')
     for count, x in zip(counts_correct, bins_correct[:-1]):
         if count > 0:
             plt.text(x + (bins_correct[1] - bins_correct[0]) / 2, count, str(int(count)), ha='center', va='bottom', fontsize=7)
@@ -1079,7 +1260,7 @@ def plot_hist_energy_based_on_target_image_acc(target_dict, out_dir, save_path=N
 
     plt.xlabel("Confidence")
     plt.ylabel("Count")
-    plt.title(f"{title_prefix or ''} Class 0 - Prediction Confidence")
+    plt.title(f"{title_prefix or ''} Class 1 - Prediction Confidence")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -1681,6 +1862,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         # args_dict = yaml.safe_load(fy)
         # args_dict['model']['freeze_encoder'] = False
         args_dict['model']['folder_pre_trained_cl'] = None
+        #args_dict['pixel_wise_classification'] = False
         args_dict['multiple_layer_pixel_classifier'] = False
         args_dict['anchors_ortogonal'] = False
         args_dict['detach_pixel_classifier'] = False
@@ -1697,7 +1879,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
     print(f'Loading model for {method_name}-{encoder_name} from {path_cl}')
     if parsedargs.external_model == None:
-        if "tscam" in encoder_name:
+        if "tscam" in encoder_name or "sat" in encoder_name:
             model_tscam = torch.load(join(path_cl, 'model.pt'),map_location=get_cpu_device())
 
             model.load_state_dict(model_tscam, strict=True)
@@ -1894,6 +2076,12 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     source_model_name = parsedargs.source_model_name
     target_model_name = parsedargs.target_model_name
 
+    cl_global, cl_normal, cl_cancer = _compute_accuracy(args, model, target_loaders['train'])
+
+    print(f"Classification accuracy on target dataset {target_dataset} is {cl_global:.2f}%")
+    print(f"Classification accuracy on target dataset {target_dataset} for normal class is {cl_normal:.2f}%")
+    print(f"Classification accuracy on target dataset {target_dataset} for cancer class is {cl_cancer:.2f}%")
+
     #plot_energy_for_source_images(source_energy['pixels'], out_dir='plots_energy', title="Energy Distribution", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
 
 
@@ -1908,7 +2096,6 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     os.makedirs(out_dir, exist_ok=True)
 
     #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
-
 
 
     plot_hist_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset, model = model)

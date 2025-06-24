@@ -813,6 +813,8 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'esfda': False,  # ESFDE method. ON/OFF.
         'freeze_classifier_sfda': False,  # freeze the classifiers during
         # training. If True, the classifiers are not updated.
+        'freeze_encoder_sfda': False,  # freeze the enocodeur during
+        # training. If True, the encodeur are not updated.
         # ======================================================================
         #                     END - ENERGY DISTRIBUTION ESTIMATION
         # ======================================================================

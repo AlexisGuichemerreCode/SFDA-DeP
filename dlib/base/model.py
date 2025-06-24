@@ -121,6 +121,20 @@ class STDClModel(torch.nn.Module):
 
         return True
     
+    def freeze_encoder(self):
+        #assert self.freeze_cl
+
+        for module in (self.encoder.modules()):
+            for param in module.parameters():
+                param.requires_grad = False
+
+            if isinstance(module, torch.nn.BatchNorm2d):
+                module.eval()
+
+            if isinstance(module, torch.nn.Dropout):
+                module.eval()
+
+    
     def train(self, mode=True):
         super(STDClModel, self).train(mode=mode)
 

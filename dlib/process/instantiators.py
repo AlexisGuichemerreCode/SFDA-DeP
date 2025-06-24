@@ -1563,6 +1563,10 @@ def get_model(args, eval=False, eval_path_weights=''):
             # classifier. some wsol methods do not have a last linear
             # classifier: either simple fully conv layers, attention,
             # or no weights (simple max pooling for e.g.)
+            
+            if args.freeze_encoder_sfda:
+                model.train()
+                model.freeze_encoder()  # freeze encoder weights.
             else:
                 model.train()
 

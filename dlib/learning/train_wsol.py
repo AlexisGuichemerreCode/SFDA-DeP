@@ -1137,11 +1137,20 @@ class Trainer(Basic):
         self.model.train()
 
         if self.args.sf_uda:
-            if self.args.shot or self.args.faust or self.args.sfde or self.args.cdcl or self.args.pxsfde or self.args.esfda:  # shot/faust/sfde/cdcl method
+            if self.args.shot or self.args.faust or self.args.sfde or self.args.cdcl or self.args.pxsfde:  # shot/faust/sfde/cdcl method
                 self.model.freeze_cl_hypothesis()  # last linear weights +
                 # bias of classifier. some wsol methods do not have a last
                 # linear classifier: either simple fully conv layers, attention,
                 # or no weights (simple max pooling for e.g.)
+            elif self.args.esfda:
+                if self.args.freeze_classifier_sfda:
+                    self.model.freeze_cl_hypothesis()  # last linear weights + bias of
+                    # classifier. some wsol methods do not have a last linear
+                    # classifier: either simple fully conv layers, attention,
+                    # or no weights (simple max pooling for e.g.)
+                if self.args.freeze_encoder_sfda:
+                    self.model.freeze_encoder()
+ 
 
             elif self.args.adadsa:
                 self.model = adadsa.adadsa_freeze_all_model_except_bn_a(
