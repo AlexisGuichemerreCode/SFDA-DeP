@@ -62,8 +62,8 @@ class UdaCrossEntropyImgPseudoLabels(ElementaryLoss):
         self.ce_label_smoothing: float = 0.0
 
         self.loss = nn.CrossEntropyLoss(
-            reduction="mean", label_smoothing=self.ce_label_smoothing
-        ).to(self._device)
+            reduction="mean", label_smoothing=self.ce_label_smoothing,
+            ignore_index=-255).to(self._device)
 
         self.already_set = False
 
@@ -74,8 +74,8 @@ class UdaCrossEntropyImgPseudoLabels(ElementaryLoss):
         self.ce_label_smoothing = ce_label_smoothing
 
         self.loss = nn.CrossEntropyLoss(
-            reduction="mean", label_smoothing=self.ce_label_smoothing
-        ).to(self._device)
+            reduction="mean", label_smoothing=self.ce_label_smoothing,
+            ignore_index=-255).to(self._device)
 
         self.already_set = True
 
@@ -98,11 +98,26 @@ class UdaCrossEntropyImgPseudoLabels(ElementaryLoss):
                 ):
         super(UdaCrossEntropyImgPseudoLabels, self).forward(epoch=epoch)
 
+        # assert self.already_set
+
+        # if not self.is_on():
+        #     return self._zero
+
+        # loss = self.loss(input=cl_logits, target=pseudo_glabel)
+
+        # return self.lambda_ * loss
+
         assert self.already_set
 
         if not self.is_on():
             return self._zero
 
+        # Check if pseudo_glabel is not None and has valid labels
+        if (pseudo_glabel != -255).sum() == 0:
+            # No valid pseudo-labels, return zero loss
+            return torch.tensor(0.0, device=cl_logits.device, requires_grad=True)
+
+        # Compute the loss only if there are valid pseudo-labels
         loss = self.loss(input=cl_logits, target=pseudo_glabel)
 
         return self.lambda_ * loss

@@ -57,6 +57,7 @@ class Clustering(object):
         self.stop = False
         self.feat_key = feat_key
         self.max_len = max_len
+        self.acc = 0.0
 
     def set_init_centers(self, init_centers):
         self.centers = init_centers
@@ -182,6 +183,8 @@ class Clustering(object):
         msg = f"SFDE - ACC pseudo-label image-class -- : {acc} %"
         DLLogger.log(fmsg(msg))
 
+        self.acc = acc.item()
+
         self.center_change = torch.mean(self.Dist.get_dist(self.centers,self.init_centers))
 
         for i in range(num_samples):
@@ -241,7 +244,7 @@ class Cdcl(object):
                 target_hypt, filtered_classes = self.filtering()
                 sfuda_select_ids_pl = {image_id: pseudo_label.item() for image_id, pseudo_label in zip(target_hypt['data'], target_hypt['label'])}
                 
-            return sfuda_select_ids_pl, target_hypt,  filtered_classes
+            return sfuda_select_ids_pl, target_hypt,  filtered_classes, self.clustering.acc
 
     def update_labels(self):
         init_target_centers = self.model.get_linear_weights

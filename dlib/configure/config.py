@@ -499,6 +499,9 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         "entropy_models": False,  # save or not multiples source models.
         "m_entropy_models": 5,  # number of models to save.
 
+        "cl_train_models": False,  # save or not best cl train models.
+
+
         #Pixel CAM ----------------------------------------------------------
         "pixel_wise_classification": False,  # Add this parameter to control the creation of the second head for localization for Energy Model
         "batch_norm_pixel_classifier": False,
@@ -665,6 +668,16 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'cmpt_batch': 10,  # int. batch when to compute the stats.
 
 
+        'correct_pseudo_labels': False,  # if true, we correct the
+        # pseudo-labels of the target dataset. 
+
+        'correct_and_incorrect_pseudo_labels': False,  # if true, we correct the
+        # pseudo-labels of the target dataset and incorrect the others samples. 
+
+        'correct_pseudo_labels_ratio': 0.5,  # float [0, 1]. ratio of
+        # pseudo-labels to be corrected. 0.5 means 50% of the
+        # pseudo-labels will be corrected. 0.0 means no correction.
+
         # SFUDA methods ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         # ======================================================================
         #                               SHOT
@@ -815,6 +828,16 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # training. If True, the classifiers are not updated.
         'freeze_encoder_sfda': False,  # freeze the enocodeur during
         # training. If True, the encodeur are not updated.
+
+        'esfda_select_imgs': False,  # select images to shift label
+        'esfda_select_imgs_ratio':  0.1,  # ratio of images to select
+
+        'esfda_entropy_partial': False,  # use or not partial entropy
+        'esfda_entropy_partial_lambda': 0.1,  # lambda of this term. >= 0.
+
+        'esfda_distance_cancer': 10.0,
+        'esfda_distance_normal': 4.0,
+
         # ======================================================================
         #                     END - ENERGY DISTRIBUTION ESTIMATION
         # ======================================================================

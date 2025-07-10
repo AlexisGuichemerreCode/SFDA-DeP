@@ -499,6 +499,9 @@ def get_args(args: dict, eval: bool = False):
     
     parser.add_argument('--m_entropy_models', type=int, default=None, 
                         help='m_entropy_models: number of models to save based on entropy.')
+    
+    parser.add_argument('--cl_train_models', type=str2bool, default=None, 
+                        help='cl_train_models: Save cl train model.')
 
 
     #PixelCAM
@@ -585,6 +588,14 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--mask_root_target', default=None,
                         help='path to masks target')
 
+    parser.add_argument('--correct_pseudo_labels', type=str2bool, default=None,
+                        help='If true, we correct the pseudo-labels ')
+    parser.add_argument('--correct_and_incorrect_pseudo_labels', type=str2bool, default=None,
+                        help='If true, we correct the pseudo-labels ')     
+    parser.add_argument('--correct_pseudo_labels_ratio', type=float, default=None,
+                        help='Ratio of the pseudo-labels to correct. '
+                             'If it is 0, we do not correct the pseudo-labels.')
+
     # methods SFUDA
     # 1- SHOT
     parser.add_argument('--shot', type=str2bool, default=None,
@@ -624,10 +635,18 @@ def get_args(args: dict, eval: bool = False):
                         help='Use gmm source model to perform the alignment in the pixel feature space between source and target.')
     
     # 6- EnergySFDA
-    parser.add_argument('--esfda', type=str2bool, default=None,
-                        help='USE/NOT ESFDA method for SFUDA.')
+    parser.add_argument('--esfda', type=str2bool, default=None, help='USE/NOT ESFDA method for SFUDA.')
     parser.add_argument('--freeze_classifier_sfda', type=str2bool, default=None,)
     parser.add_argument('--freeze_encoder_sfda', type=str2bool, default=None,)
+
+    parser.add_argument('--esfda_select_imgs', type=str2bool, default=None,)
+    parser.add_argument('--esfda_select_imgs_ratio', type=float, default=None,)
+
+    parser.add_argument('--esfda_entropy_partial', type=str2bool, default=None,)
+    parser.add_argument('--esfda_entropy_partial_lambda', type=float, default=None,)
+
+    parser.add_argument('--esfda_distance_cancer', type=float, default=None,)
+    parser.add_argument('--esfda_distance_normal', type=float, default=None,)
 
 
     # losses SFUDA
@@ -1113,14 +1132,14 @@ def get_args(args: dict, eval: bool = False):
         args['target_domain_data_paths'] = config.configure_data_paths(args, dsname_target_domain)
         if dsname_target_domain == constants.CAMELYON512:
             args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'],
-                                     f"fold-{6}")
+                                     f"fold-{7}")
             args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, constants.GLAS,
                                      f"fold-{args['fold']}")
         else:
             assert dsname_target_domain == constants.GLAS
             args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'], f"fold-{args['fold']}")
             args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, constants.CAMELYON512,
-                                     f"fold-{6}")
+                                     f"fold-{7}")
         
         args['mask_root_target'] = join(args['mask_root_target'], args['target_domain_ds_to_compute_stats'])
 

@@ -456,6 +456,14 @@ def get_loss_target(args):
             Cal_Loss.set_it(cal_lambda=args.cal_lambda)
             masterloss.add(Cal_Loss)
 
+        if args.esfda_entropy_partial:
+            Partial_Entropy_Loss = losses.PartialEntropy(
+                cuda_id=args.c_cudaid,
+                support_background=support_background,
+                multi_label_flag=multi_label_flag)
+            Partial_Entropy_Loss.set_it(esfda_entropy_partial_lambda=args.esfda_entropy_partial_lambda)
+            masterloss.add(Partial_Entropy_Loss)
+
 
         # FAUST
         if args.views_ft_consist:

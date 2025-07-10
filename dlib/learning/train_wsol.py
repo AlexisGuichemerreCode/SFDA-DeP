@@ -7,7 +7,7 @@ from copy import deepcopy
 import pickle as pkl
 import math
 import datetime as dt
-
+import random as py_random
 
 import numpy as np
 import torch
@@ -201,6 +201,10 @@ class Trainer(Basic):
             self.entropy_models = args.entropy_models
             self.m_entropy_models = args.m_entropy_models
 
+        if args.cl_train_models:
+            self.cl_train_models = args.cl_train_models
+
+        
         self.loaders = get_data_loader(
             data_roots=self.args.data_paths,
             metadata_root=self.args.metadata_root,
@@ -220,6 +224,8 @@ class Trainer(Basic):
             #path_staining = self.path_staining,
             #dist_staining = self.dist_staining
         )
+
+        
 
         if self.args.target_domain_ds_to_compute_stats != None or self.args.ds_to_compute_acc_trainset_source_target != None:
 
@@ -382,6 +388,17 @@ class Trainer(Basic):
 
         # SFUDA ================================================================
         self.sfuda_master = self.build_sfuda_master(self.args)
+
+        if self.args.sf_uda:
+            if self.args.shot or self.args.sfde or self.args.cdcl or self.args.pxsfde or self.args.esfda:
+                self.pseudo_labels =[]
+
+            if self.args.correct_pseudo_labels:
+                self.corrected_pseudo_labels = self.select_images_to_correct(self.model, self.loaders[constants.TRAINSET], select_imgs_ratio=self.args.correct_pseudo_labels_ratio)
+
+            if self.args.correct_and_incorrect_pseudo_labels:
+                self.corrected_pseudo_labels = self.select_images_to_correct_and_incorrect(self.model, self.loaders[constants.TRAINSET], select_imgs_ratio=self.args.correct_pseudo_labels_ratio)
+
         # ======================================================================
 
     def _get_faust_n_views(self) -> int:
@@ -1013,13 +1030,187 @@ class Trainer(Basic):
 
         return logits, loss
 
+    def _one_step_train_unlearning(self,
+                        images,
+                        raw_imgs,
+                        targets,
+                        p_glabel,
+                        std_cams,
+                        masks,
+                        views,
+                        cal_mask=None):
+        args = self.args
+        y_global = targets
+        y_pl_global = p_glabel
+
+        z_label = targets
+        cutmix_holder = None
+
+        if args.sf_uda:
+            z_label = p_glabel
+
+        if args.sf_uda:
+            if args.task == constants.STD_CL:
+                    output = self.model(images)
+                    cl_logits = output
+                    loss = self.loss(epoch=self.epoch,
+                                     model=self.model,
+                                     cl_logits=cl_logits,
+                                     glabel=y_global,
+                                     pseudo_glabel=y_pl_global,
+                                     cutmix_holder=cutmix_holder,
+                                     key_arg={"cal_mask": cal_mask} if cal_mask is not None else {}
+                                     )
+                    logits = cl_logits
+
+            elif args.task == constants.F_CL:
+                raise NotImplementedError
+
+            elif args.task == constants.NEGEV:
+                raise NotImplementedError
+
+            elif args.task == constants.SEG:
+                raise NotImplementedError
+
+
+        else:
+
+            output = self.model(images)
+
+            if args.task == constants.STD_CL:
+                if args.pixel_wise_classification:
+                    _, _, h, w = self.model.encoder_last_features.shape
+                    interpolation_mode = 'bilinear'
+                    if std_cams is None:
+                        cams_inter = self.get_std_cams_minibatch(images=images,
+                                                                targets=z_label)
+                    else:
+                        cams_inter = std_cams
+
+                    if self.args.low_res:
+                        fcams=self.model.cams
+                    else:
+                        _, _, i, x = cams_inter.shape
+                        fcams= F.interpolate(self.model.cams,
+                                    (i, x),
+                                    mode=interpolation_mode,
+                                    align_corners=False)
+
+                    with torch.no_grad():
+                        if self.args.low_res:
+                            cams_inter = F.interpolate(cams_inter,
+                                    (h, w),
+                                    mode=interpolation_mode,
+                                    align_corners=False)
+
+                        seeds = self.sl_mask_builder(cams_inter, class_idx=targets)
+
+                    
+
+                    cl_logits = output
+                    loss = self.loss(epoch=self.epoch,
+                                    model=self.model,
+                                    fcams=fcams,
+                                    cl_logits=cl_logits,
+                                    glabel=y_global,
+                                    pseudo_glabel=y_pl_global,
+                                    raw_img=raw_imgs,
+                                    cutmix_holder=cutmix_holder,
+                                    seeds=seeds
+                                    )
+                    logits = cl_logits
+                else:
+                    cl_logits = output
+                    loss_params = {'sat_aux_losses': self.model.losses_dict, "sat_area_th": self.args.sat_area_th} if self.args.method == constants.METHOD_SAT else {}
+                    loss = self.loss(epoch=self.epoch,
+                                    model=self.model,
+                                    cl_logits=cl_logits,
+                                    glabel=y_global,
+                                    pseudo_glabel=y_pl_global,
+                                    cutmix_holder=cutmix_holder,
+                                    **loss_params
+                                    )
+                    logits = cl_logits
+
+            elif args.task == constants.F_CL:
+                cl_logits, fcams, im_recon = output
+
+                if self.is_seed_required(_epoch=self.epoch):
+                    if std_cams is None:
+                        cams_inter = self.get_std_cams_minibatch(images=images,
+                                                                 targets=z_label)
+                    else:
+                        cams_inter = std_cams
+
+                    with torch.no_grad():
+                        seeds = self.sl_mask_builder(cams_inter)
+                else:
+                    cams_inter, seeds = None, None
+
+                loss = self.loss(
+                    epoch=self.epoch,
+                    cams_inter=cams_inter,
+                    fcams=fcams,
+                    cl_logits=cl_logits,
+                    glabel=y_global,
+                    pseudo_glabel=y_pl_global,
+                    raw_img=raw_imgs,
+                    x_in=self.model.x_in,
+                    im_recon=im_recon,
+                    seeds=seeds
+                )
+                logits = cl_logits
+
+            elif args.task == constants.NEGEV:
+                cl_logits, fcams, im_recon = output
+
+                if self.is_seed_required(_epoch=self.epoch):
+                    if std_cams is None:
+                        cams_inter = self.get_std_cams_minibatch(images=images,
+                                                                 targets=z_label)
+                    else:
+                        cams_inter = std_cams
+
+                    with torch.no_grad():
+                        seeds = self.sl_mask_builder(cams_inter)
+                else:
+                    cams_inter, seeds = None, None
+
+                loss = self.loss(
+                    epoch=self.epoch,
+                    cams_inter=cams_inter,
+                    fcams=fcams,
+                    cl_logits=cl_logits,
+                    glabel=y_global,
+                    pseudo_glabel=y_pl_global,
+                    raw_img=raw_imgs,
+                    x_in=self.model.x_in,
+                    im_recon=im_recon,
+                    seeds=seeds
+                )
+                logits = cl_logits
+
+            elif args.task == constants.SEG:
+                assert masks is not None
+                assert isinstance(masks, torch.Tensor)
+                assert masks.ndim == 4
+                assert masks.shape[1] == 1
+
+                seg_logits = output
+                loss = self.loss(seg_logits=seg_logits, masks=masks.squeeze(1))
+                logits = None
+            else:
+                raise NotImplementedError
+
+        return logits, loss
+
     #@staticmethod
     def _fill_minibatch(self, _x: torch.Tensor, mbatchsz: int) -> torch.Tensor:
         assert isinstance(_x, torch.Tensor)
         assert isinstance(mbatchsz, int)
         assert mbatchsz > 0
 
-        if _x.shape[0] == mbatchsz or self.args.nrc:
+        if _x.shape[0] == mbatchsz or self.args.nrc or self.args.esfda:
             return _x
 
         s = _x.shape[0]
@@ -1031,6 +1222,83 @@ class Trainer(Basic):
         assert out.shape[0] == mbatchsz
         return out
 
+    def select_images_to_correct_and_incorrect(self, model, loader, select_imgs_ratio=0.1):
+
+        all_indices = []
+        all_true_labels = []
+
+        for _, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views) in enumerate(loader):
+            all_indices.extend(list(index))
+            all_true_labels.extend(targets.cpu().tolist())
+
+        total = len(all_indices)
+        num_to_select = int(select_imgs_ratio * total)
+
+        py_random.seed(self.seed)
+        selected_indices = set(py_random.sample(range(total), num_to_select))
+
+        final_label_dict = {}
+
+        num_classes = len(list(set(all_true_labels)))
+
+        for i in range(total):
+            image_id = all_indices[i]
+            true_label = all_true_labels[i]
+
+            if i in selected_indices:
+
+                final_label_dict[image_id] = true_label
+            else:
+
+                wrong_labels = [c for c in range(num_classes) if c != true_label]
+                final_label_dict[image_id] = py_random.choice(wrong_labels)
+
+        return final_label_dict
+    
+    def select_images_to_correct(self, model, loader, select_imgs_ratio=0.1):
+
+        """
+        Select images to correct pseudo-labels.
+        :param model: Model to use for selection.
+        :param loader: DataLoader to use for selection.
+        :param select_imgs_ratio: Ratio of images to select.
+        :return: Indices of selected images.
+        """
+        # Implement the logic to select images based on the model and loader
+
+        all_indices = []
+        all_true_labels = []
+
+        for _, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views) in enumerate(loader):
+
+            all_indices.extend(list(index))
+            all_true_labels.extend(targets.cpu().tolist())
+
+        total = len(all_indices)
+        num_to_select = int(select_imgs_ratio * total)
+
+        py_random.seed(self.seed)
+        selected_indices = py_random.sample(range(total), num_to_select)
+        selected_dict = {all_indices[i]: all_true_labels[i] for i in selected_indices}
+
+        return selected_dict
+       
+    
+    def ratio_correct_pseudo_labels(self, pseudo_labels, selected_true_labels_dict):
+        """
+        Modify pseudo label with true label
+        :param true_labels: List of true labels for each epoch.
+        :param pseudo_labels: List of pseudo-labels for each epoch.
+        :return: new list of pseudo label.
+        """
+
+        corrected_pseudo_labels = pseudo_labels.copy()
+        for image_name, true_label in selected_true_labels_dict.items():
+            if image_name in corrected_pseudo_labels:
+                corrected_pseudo_labels[image_name] = true_label  # Only correct existing entries
+        return corrected_pseudo_labels
+
+
     def _sf_uda_before_epoch_process(self):
         assert self.args.sf_uda
 
@@ -1040,9 +1308,22 @@ class Trainer(Basic):
                 print(f'Running img-class pseudo-label estimation SHOT epoch: '
                       f'{self.epoch}')
 
-                pl = self.sfuda_master.update_img_cls_pseudo_lbs()
+                pl, acc = self.sfuda_master.update_img_cls_pseudo_lbs()
+
+                if self.args.correct_pseudo_labels:
+                    pl = self.ratio_correct_pseudo_labels(
+                        pseudo_labels=pl,
+                        selected_true_labels_dict=self.corrected_pseudo_labels
+                    )
+
+                if self.args.correct_and_incorrect_pseudo_labels:
+                    pl = self.corrected_pseudo_labels
+
+
                 self.loaders[constants.TRAINSET].dataset.set_img_pseudo_labels(
                     pl)
+                
+                self.pseudo_labels.append(acc)
 
         elif self.args.adadsa:
             if self.args.ce_pseudo_lb:
@@ -1083,6 +1364,18 @@ class Trainer(Basic):
             print(f'running label estimation SFDE epoch {self.epoch}')
             mask_root = self.mask_root if self.load_tr_masks else ''
             sfuda_select_ids_pl, target_hypt,  filtered_classes = self.sfuda_master.solve()
+
+            self.pseudo_labels.append(self.clustering_acc)
+
+            if self.args.correct_pseudo_labels:
+                sfuda_select_ids_pl = self.ratio_correct_pseudo_labels(
+                    pseudo_labels=sfuda_select_ids_pl,
+                    selected_true_labels_dict=self.corrected_pseudo_labels
+                )
+
+            if self.args.correct_and_incorrect_pseudo_labels:
+                sfuda_select_ids_pl = self.corrected_pseudo_labels
+
             print('Creation filtered dataloader')
             self.loaders_filtered = get_data_loader(data_roots=self.args.data_paths,
                 metadata_root=self.args.metadata_root,
@@ -1105,7 +1398,18 @@ class Trainer(Basic):
         if self.args.cdcl:
             print(f'running label estimation CDCL epoch {self.epoch}')
             mask_root = self.mask_root if self.load_tr_masks else ''
-            sfuda_select_ids_pl, target_hypt,  filtered_classes = self.sfuda_master.solve()
+            sfuda_select_ids_pl, target_hypt,  filtered_classes, self.clustering_acc = self.sfuda_master.solve()
+
+            self.pseudo_labels.append(self.clustering_acc)
+
+            if self.args.correct_pseudo_labels:
+                sfuda_select_ids_pl = self.ratio_correct_pseudo_labels(
+                    pseudo_labels=sfuda_select_ids_pl,
+                    selected_true_labels_dict=self.corrected_pseudo_labels
+                )
+
+            if self.args.correct_and_incorrect_pseudo_labels:
+                sfuda_select_ids_pl = self.corrected_pseudo_labels
             
             print('Creation filtered dataloader')
             self.loaders_filtered = get_data_loader(data_roots=self.args.data_paths,
@@ -1132,6 +1436,23 @@ class Trainer(Basic):
 
         if self.args.sf_uda:
             self._sf_uda_before_epoch_process()
+
+            if self.args.esfda:
+                if self.args.esfda_select_imgs:
+                    # select images to shift label
+                    
+                    self.flipped_indices, self.reinforce_indices = self.select_flippable_indices_distances(
+                        model=self.model,
+                        loader=self.loaders,
+                        select_imgs_ratio=self.args.esfda_select_imgs_ratio
+                    )
+
+                else:
+                    self.flipped_indices = self.select_flippable_indices(
+                        model=self.model,
+                        loader=self.loaders,
+                        select_imgs_ratio=self.args.esfda_select_imgs_ratio
+                    )
 
         # final
         self.model.train()
@@ -1185,6 +1506,128 @@ class Trainer(Basic):
         self.seed = self.seed + self.counter
         set_seed(seed=self.seed, verbose=False)
 
+
+    @torch.no_grad()
+    def select_flippable_indices(self, model, loader, select_imgs_ratio=0.1):
+        model.eval()
+        all_indices = []
+        cancer_pred_indices = []
+
+        loader = loader['train']
+
+        for batch_idx, (images, targets, p_glabel, index,
+                        raw_imgs, std_cams, masks, views) in tqdm(
+                enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+            images = images.cuda(self.args.c_cudaid)
+
+            logits = model(images)
+            preds = logits.argmax(dim=1)
+
+            for i in range(images.size(0)):
+                idx = index[i]
+                if preds[i].item() == 1:
+                    cancer_pred_indices.append(idx)
+
+
+        py_random.seed(self.seed)
+        num = int(len(cancer_pred_indices) * select_imgs_ratio)
+        selected_indices = py_random.sample(cancer_pred_indices, num)
+
+        return set(selected_indices) 
+
+    def compute_distance_to_opposite_anchor(self, features, preds, anchors):
+        """
+        Args:
+            features: Tensor [B, D] - feature vectors from the model
+            preds: Tensor [B] - predicted class indices (0 or 1)
+            anchors: Tensor [2, D] - linear classifier weights for each class
+        Returns:
+            distances: Tensor [B] - L2 distances to the opposite anchor
+        """
+        device = features.device
+        anchors = torch.from_numpy(anchors).to(device)
+        
+        
+        opp_class_indices = 1 - preds.long()  # [B]
+        
+        
+        opp_anchors = anchors[opp_class_indices]  # [B, D]
+        
+        # Distance L2
+        distances = F.pairwise_distance(features, opp_anchors, p=2)  # [B]
+        
+        return distances
+
+    @torch.no_grad()
+    def select_flippable_indices_distances_2(self, model, loader, esfda_distance_normal=4.0, esfda_distance_cancer=6.0, select_imgs_ratio=0.1):
+        model.eval()
+        flipped_indices = set()
+        reinforce_indices = set()
+        cancer_pred_indices = []
+
+        loader = loader['train']
+
+        for batch_idx, (images, targets, p_glabel, index,
+                        raw_imgs, std_cams, masks, views) in tqdm(
+                enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+            
+            images = images.cuda(self.args.c_cudaid)
+            logits = model(images)
+            preds = logits.argmax(dim=1)
+
+            anchors = model.get_linear_weights.detach().cpu().numpy()
+
+            features = model.lin_ft
+
+            distances = self.compute_distance_to_opposite_anchor(features, preds, anchors)
+
+            for i in range(images.size(0)):
+                idx = index[i]
+                pred = preds[i].item()
+                dist = distances[i].item()
+
+                if pred == 1:  
+                    if dist < esfda_distance_normal:
+                        cancer_pred_indices.append(idx)
+                    elif dist > esfda_distance_cancer:
+                        reinforce_indices.add(idx)  
+
+
+        py_random.seed(self.seed)
+        num = int(len(cancer_pred_indices) * select_imgs_ratio)
+        selected_flippable = py_random.sample(cancer_pred_indices, num)
+
+        return set(selected_flippable), reinforce_indices
+
+    @torch.no_grad()
+    def select_flippable_indices_distances(self, model, loader, select_imgs_ratio=0.1):
+        model.eval()
+        cancer_pred_distances = []  
+        loader = loader['train']
+
+        for batch_idx, (images, targets, p_glabel, index,
+                        raw_imgs, std_cams, masks, views) in tqdm(
+                enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+            images = images.cuda(self.args.c_cudaid)
+            logits = model(images)
+            preds = logits.argmax(dim=1)
+            anchors = model.get_linear_weights.detach().cpu().numpy()
+            features = model.lin_ft
+            distances = self.compute_distance_to_opposite_anchor(features, preds, anchors)
+            for i in range(images.size(0)):
+                idx = index[i]
+                pred = preds[i].item()
+                dist = distances[i].item()
+                if pred == 1:
+                    cancer_pred_distances.append((idx, dist))
+
+        cancer_pred_distances.sort(key=lambda x: x[1])
+        num = int(len(cancer_pred_distances) * select_imgs_ratio)
+        selected_flippable = set(idx for idx, _ in cancer_pred_distances[:num])
+        reinforce_indices = set() 
+        return selected_flippable, reinforce_indices
+    
+
     def train(self, split: str, epoch: int) -> dict:
         self.epoch = epoch
         self.random()
@@ -1206,10 +1649,32 @@ class Trainer(Basic):
         scaler = GradScaler(enabled=self.args.amp)
 
         mbatchsz = 0
+        
 
         for batch_idx, (images, targets, p_glabel, index,
                         raw_imgs, std_cams, masks, views) in tqdm(
                 enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+            
+
+            # if self.args.esfda and self.args.esfda_select_imgs:
+            #     supervised_labels = torch.full_like(p_glabel, -255)
+            #     for i in range(images.size(0)):
+            #         img_idx = index[i]
+            #         if img_idx in self.flipped_indices:
+            #             supervised_labels[i] = 0 
+                
+                #p_glabel = supervised_labels
+
+            if self.args.esfda and self.args.esfda_select_imgs:
+                supervised_labels = torch.full_like(p_glabel, -255)   #p_glabel
+                for i in range(images.size(0)):
+                    img_idx = index[i]
+                    if img_idx in self.flipped_indices:
+                        supervised_labels[i] = 0  
+                    # elif img_idx in self.reinforce_indices:
+                    #     supervised_labels[i] = 1  
+                p_glabel = supervised_labels
+                mask_list = [img_name not in self.flipped_indices for img_name in index]
             
             self.random()
             self.model.train()
@@ -1283,15 +1748,30 @@ class Trainer(Basic):
 
             self.optimizer.zero_grad(set_to_none=True)
 
-            with autocast(enabled=self.args.amp):
-                logits, loss = self._one_step_train(images,
-                                                    raw_imgs,
-                                                    targets,
-                                                    p_glabel,
-                                                    std_cams,
-                                                    masks,
-                                                    views
-                                                    )
+            if self.args.esfda and self.args.esfda_entropy_partial:
+                with autocast(enabled=self.args.amp):
+                    logits, loss = self._one_step_train_unlearning(images,
+                                                        raw_imgs,
+                                                        targets,
+                                                        p_glabel,
+                                                        std_cams,
+                                                        masks,
+                                                        views,
+                                                        cal_mask = mask_list
+                                                        )
+
+
+            else:
+
+                with autocast(enabled=self.args.amp):
+                    logits, loss = self._one_step_train(images,
+                                                        raw_imgs,
+                                                        targets,
+                                                        p_glabel,
+                                                        std_cams,
+                                                        masks,
+                                                        views
+                                                        )
 
             with torch.no_grad():
                 if self.args.task != constants.SEG:
@@ -2305,6 +2785,41 @@ class Trainer(Basic):
     @property
     def cpu_device(self):
         return get_cpu_device()
+
+    def save_pseudo_labels(self, filename="pseudo_label_distribution.png"):
+
+        os.makedirs(self.args.outd, exist_ok=True)
+
+        pickle_path = os.path.join(self.args.outd, "pseudo_labels.pkl")
+        with open(pickle_path, "wb") as f:
+            pkl.dump(self.pseudo_labels, f)
+        print(f"[Save] Pseudo-labels saved to {pickle_path}")
+
+
+        accuracies = self.pseudo_labels
+        epochs = list(range(len(accuracies)))
+        
+        plt.figure()
+        plt.plot(epochs, accuracies, marker='o')
+
+        plt.xlabel("Epoch")
+        plt.ylabel("Accuracy")
+        plt.title("Accuracy of pseudo labels")
+        plt.legend()
+        plt.grid(True)
+
+        save_path = os.path.join(self.args.outd, filename)
+        plt.savefig(save_path)
+        plt.close()
+        print(f"[INFO] Pseudo-labels saved : {save_path}")
+
+
+
+
+
+
+
+
     
 
     def save_best_entropy_models(self):
@@ -2370,6 +2885,55 @@ class Trainer(Basic):
             self._save_args(path=join(path, 'config_model.yaml'))
             DLLogger.log(message="Stored Model [CP: {} \t EPOCH: {} \t TAG: {}]:"
                                 " {}".format(checkpoint_type, epoch, tag, path))
+            
+
+    def save_best_cl_train_models(self):
+
+        model = self.cl_train_model  
+        epoch = self.best_epoch      
+        acc = self.best_accuracy    
+
+        save_dir = os.path.join(self.args.outd, "best_model_cl")
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Save in  .txt
+        with open(os.path.join(self.args.outd, "best_model_info.txt"), "w") as f:
+            f.write(f"Best classification model at epoch {epoch} with accuracy {acc:.2f}%\n")
+
+        # Sauvegarde du modèle selon la méthode utilisée
+        if self.args.task == constants.STD_CL:
+            method = self.args.method
+
+            if method in [constants.METHOD_ACOL,
+                        constants.METHOD_ADL,
+                        constants.METHOD_SPG,
+                        constants.METHOD_TSCAM,
+                        constants.METHOD_SAT]:
+                torch.save(model.state_dict(), os.path.join(save_dir, 'model.pt'))
+
+            elif method == constants.METHOD_MAXMIN:
+                torch.save(model.encoder.state_dict(), os.path.join(save_dir, 'encoder.pt'))
+                torch.save(model.classification_head1.state_dict(), os.path.join(save_dir, 'classification_head1.pt'))
+                torch.save(model.classification_head2.state_dict(), os.path.join(save_dir, 'classification_head2.pt'))
+                if model.mask_head is not None:
+                    torch.save(model.mask_head.state_dict(), os.path.join(save_dir, 'mask_head.pt'))
+
+            elif method == constants.METHOD_PIXELCAM:
+                if "deit" in self.args.model['encoder_name']:
+                    torch.save(model.state_dict(), os.path.join(save_dir, 'model.pt'))
+                else:
+                    torch.save(model.encoder.state_dict(), os.path.join(save_dir, 'encoder.pt'))
+                    torch.save(model.classification_head.state_dict(), os.path.join(save_dir, 'classification_head.pt'))
+                    torch.save(model.pixel_wise_classification_head.state_dict(), os.path.join(save_dir, 'pixel_wise_classification_head.pt'))
+
+            else:  
+                torch.save(model.encoder.state_dict(), os.path.join(save_dir, 'encoder.pt'))
+                torch.save(model.classification_head.state_dict(), os.path.join(save_dir, 'classification_head.pt'))
+
+        
+        self._save_args(path=os.path.join(save_dir, 'config_model.yaml'))
+
+        DLLogger.log(message=f"[SAVE] Best classification model (Epoch {epoch}, Acc {acc:.2f}%) saved to: {save_dir}")
 
     def save_best_epoch(self):
         if self.args.localization_avail:
@@ -2509,6 +3073,35 @@ class Trainer(Basic):
                 print(f"[Entropy Replace] Replaced model from epoch {min_epoch} (entropy {min_entropy:.4f}) with epoch {epoch} (entropy {entropy:.4f})")
             else:
                 print(f"[Entropy Skip] Model at epoch {epoch} with entropy {entropy:.4f} was not selected.")
+
+
+    def update_best_cl_train_model(self, epoch, split):
+        torch.cuda.empty_cache()
+        self.model.eval()
+        accuracy = 0.0
+        if self.args.task != constants.SEG:
+            accuracy = self._compute_accuracy(loader=self.loaders[split])
+
+        torch.cuda.empty_cache()
+
+        model_cl = deepcopy(self.model).to(self.cpu_device).eval()
+        #model_state = model_entropy.state_dict()
+
+        if not hasattr(self, "best_accuracy"):
+            self.cl_train_model = None
+            self.best_accuracy = -1.0
+            self.best_epoch = -1
+
+        if accuracy > self.best_accuracy:
+            self.best_accuracy = accuracy
+            self.cl_train_model = deepcopy(model_cl)
+            self.best_epoch = epoch
+            print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {accuracy:.2f}%")
+        else:
+            print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {accuracy:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
+
+
+
 
     def _is_best_model_loc(self, epoch: int) -> bool:
         cnd = self.args.localization_avail

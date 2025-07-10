@@ -84,6 +84,36 @@ class Entropy(ContCrossEntropy):
 
     def __str__(self):
         return "{}(): Entropy.".format(self.__class__.__name__)
+    
+class Partial_Entropy(ContCrossEntropy):
+    """
+    Class that computes the entropy of a distribution p:
+    entropy = - sum_i p_i * log(p_i).
+    """
+    def __init__(self):
+        """
+        Init. function.
+        """
+        super(Entropy, self).__init__(sumit=True)
+
+
+    def forward(self, p, q=None, ignore_mask=None):
+        """
+        :param p: tensor of shape (B, C), where each row is a prob distribution.
+        :param q: ignored here, kept for compatibility.
+        :param ignore_mask: bool tensor of shape (B,), where True means keep and False means ignore.
+        """
+        entropy = super(Entropy, self).forward(p, p)  # shape (B,)
+        
+        if ignore_mask is not None:
+            assert ignore_mask.shape[0] == entropy.shape[0], "Mismatch in batch size"
+            entropy = entropy[ignore_mask]
+
+        return entropy.mean() if entropy.numel() > 0 else torch.tensor(0., device=p.device)
+
+    def __str__(self):
+        return "{}(): Entropy.".format(self.__class__.__name__)
+
 
 
 def test_Entropy():

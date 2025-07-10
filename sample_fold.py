@@ -2,19 +2,19 @@ import os
 import random
 
 #input folder
-input_folder = '/export/livia/home/vision/Aguichemerre/Pixel-Adaptation/folds/wsol-done-right-splits/CAMELYON512/fold-0/train/'
+input_folder = '/export/livia/home/vision/Aguichemerre/Energy_based_Adaptation/folds/wsol-done-right-splits/CAMELYON512/fold-0/train/'
 class_labels_file = os.path.join(input_folder, 'class_labels.txt')
 image_ids_file = os.path.join(input_folder, 'image_ids.txt')
 images_size_file = os.path.join(input_folder, 'images_size.txt')
 localization_file = os.path.join(input_folder, 'localization.txt')
 
 #create output folder
-output_folder = '/export/livia/home/vision/Aguichemerre/Pixel-Adaptation/folds/wsol-done-right-splits/CAMELYON512/fold-6/train/'
+output_folder = '/export/livia/home/vision/Aguichemerre/Energy_based_Adaptation/folds/wsol-done-right-splits/CAMELYON512/fold-7/train/'
 os.makedirs(output_folder, exist_ok=True)
 
 
 #number of samples selected per class
-m = 250
+m = 1500
 
 #select image ids from image_ids.txt
 with open(image_ids_file, 'r') as f:
@@ -31,15 +31,22 @@ selected_normal_paths = random.sample(normal_paths, m)
 
 selected_paths = selected_cancer_paths + selected_normal_paths
 
+def infer_label_from_path(path: str) -> int:
+    if "metastatic-patches" in path:
+        return 1
+    elif "normal-patches" in path:
+        return 0
+    else:
+        raise ValueError(f"Cannot infer label from path: {path}")
+
 
 with open(os.path.join(output_folder, 'image_ids.txt'), 'w') as f:
     f.writelines(selected_paths)
 
 with open(os.path.join(output_folder, 'class_labels.txt'), 'w') as f:
-    for path in selected_cancer_paths:
-        f.write(f"{path.strip()},1\n")
-    for path in selected_normal_paths:
-        f.write(f"{path.strip()},0\n")
+    for path in selected_paths:
+        label = infer_label_from_path(path)
+        f.write(f"{path.strip()},{label}\n")
 
 with open(os.path.join(output_folder, 'images_size.txt'), 'w') as f:
     for path in selected_paths:

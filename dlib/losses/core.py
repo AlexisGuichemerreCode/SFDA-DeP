@@ -46,6 +46,7 @@ __all__ = [
     'EnergyCEloss',
     'CalLoss',
     'CalPxLoss',
+    'PartialEntropy',
     'PxOrtognalityloss',
     'Energy_Marginal'
 ]
@@ -110,6 +111,75 @@ class CalLoss(ElementaryLoss):
         #loss = self.entropy_loss(cl_logits)
 
         #return -loss * self.cal_lambda
+
+
+class PartialEntropy(ElementaryLoss):
+    def __init__(self, **kwargs):
+        super(PartialEntropy, self).__init__(**kwargs)
+
+        self.cal_lambda: float = 0.0
+
+        self.loss = Entropy().to(self._device)
+
+        self.already_set = False
+
+    # def entropy_loss(self, logits):
+    #     probs = torch.softmax(logits, dim=1)
+    #     log_probs = torch.log_softmax(logits, dim=1)
+    #     entropy = -torch.sum(probs * log_probs, dim=1) 
+    #     return entropy.mean()
+
+    def set_it(self, esfda_entropy_partial_lambda: float):
+        assert isinstance(esfda_entropy_partial_lambda, float), type(esfda_entropy_partial_lambda)
+        assert 0 <= esfda_entropy_partial_lambda <= 1., esfda_entropy_partial_lambda
+
+        self.esfda_entropy_partial_lambda = esfda_entropy_partial_lambda
+
+        self.already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+        super(PartialEntropy, self).forward(epoch=epoch)
+
+        assert self.already_set
+
+        assert cl_logits is not None, "cl_logits must be provided for entropy loss"
+
+        assert cl_logits.ndim == 2, cl_logits.ndim
+
+        probs = torch.softmax(cl_logits, dim=1)
+
+
+        # Get mask
+        if key_arg is not None and "cal_mask" in key_arg:
+            cal_mask = key_arg["cal_mask"]
+            cal_mask = torch.tensor(cal_mask, dtype=torch.bool, device=probs.device)
+            assert cal_mask.shape[0] == probs.shape[0], "Mismatch cal_mask / batch size"
+            probs = probs[cal_mask]
+
+        if probs.shape[0] == 0:
+            return torch.tensor(0.0, device=cl_logits.device, requires_grad=True)
+
+        loss = self.loss(probs).mean()
+        return loss * self.esfda_entropy_partial_lambda
+
+
+
 
 
 class CalPxLoss(ElementaryLoss):

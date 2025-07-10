@@ -495,7 +495,7 @@ class Adadsa(object):
 
         self.set_lambda_(v)
 
-    def _update_img_cls_pseudo_lbs(self) -> dict:
+    def _update_img_cls_pseudo_lbs(self) -> tuple[dict, float]:
         """
         Pseudo-label entire trainset at once.
         """
@@ -558,7 +558,7 @@ class Adadsa(object):
         for i, img_id in enumerate(all_image_ids):
             out[img_id] = all_plbs[i]
 
-        return out
+        return out, acc.item()
 
     def _pseudo_label_imgs(self, images: torch.Tensor) -> torch.Tensor:
         """

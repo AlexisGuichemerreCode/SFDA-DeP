@@ -158,9 +158,9 @@ class Shot(object):
         for i, img_id in enumerate(all_image_ids):
             out[img_id] = predict[i]
 
-        return out
+        return out, acc.item()
 
-    def update_img_cls_pseudo_lbs(self) -> dict:
+    def update_img_cls_pseudo_lbs(self) -> tuple[dict, float]:
 
         with torch.no_grad():
             return self._update_img_cls_pseudo_lbs()
