@@ -1363,7 +1363,7 @@ class Trainer(Basic):
         if self.args.sfde:
             print(f'running label estimation SFDE epoch {self.epoch}')
             mask_root = self.mask_root if self.load_tr_masks else ''
-            sfuda_select_ids_pl, target_hypt,  filtered_classes = self.sfuda_master.solve()
+            sfuda_select_ids_pl, target_hypt,  filtered_classes, self.clustering_acc = self.sfuda_master.solve()
 
             self.pseudo_labels.append(self.clustering_acc)
 
