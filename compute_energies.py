@@ -2076,6 +2076,24 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     source_model_name = parsedargs.source_model_name
     target_model_name = parsedargs.target_model_name
 
+
+    # target_loaders = get_data_loader(
+    #     data_roots=target_domain_data_paths,
+    #     metadata_root=target_metadata_root,
+    #     batch_size=32,#args.batch_size,
+    #     workers=args.num_workers,
+    #     resize_size=args.resize_size,
+    #     crop_size=args.crop_size,
+    #     proxy_training_set=args.proxy_training_set,
+    #     num_val_sample_per_class=args.num_val_sample_per_class,
+    #     std_cams_folder=args.std_cams_folder,
+    #     # distributed_eval=False,
+    #     get_splits_eval=['test'],
+    #     #constants.TRAINSET
+    #     eval_batch_size = 32#args.eval_batch_size,
+    # )
+
+    model.eval()
     cl_global, cl_normal, cl_cancer = _compute_accuracy(args, model, target_loaders['train'])
 
     print(f"Classification accuracy on target dataset {target_dataset} is {cl_global:.2f}%")

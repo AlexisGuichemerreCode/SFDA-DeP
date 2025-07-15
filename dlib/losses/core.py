@@ -48,7 +48,9 @@ __all__ = [
     'CalPxLoss',
     'PartialEntropy',
     'PxOrtognalityloss',
-    'Energy_Marginal'
+    'Energy_Marginal',
+    'CENotFlipLoss',
+    'CEFlipLoss'
 ]
 
 
@@ -177,6 +179,137 @@ class PartialEntropy(ElementaryLoss):
 
         loss = self.loss(probs).mean()
         return loss * self.esfda_entropy_partial_lambda
+    
+
+class CENotFlipLoss(ElementaryLoss):
+    def __init__(self, **kwargs):
+        super(CENotFlipLoss, self).__init__(**kwargs)
+        self.ce_label_smoothing: float = 0.0
+        self.lambda_: float = 1.0
+        self.loss = nn.CrossEntropyLoss(reduction="mean", label_smoothing=self.ce_label_smoothing).to(self._device)
+        self.already_set = False
+
+    def set_it(self, lambda_: float, ce_label_smoothing: float = 0.0):
+        assert isinstance(ce_label_smoothing, float)
+        assert 0 <= ce_label_smoothing <= 1.
+        self.ce_label_smoothing = ce_label_smoothing
+
+        assert isinstance(lambda_, float)
+        assert 0 <= lambda_ <= 1.
+        self.lambda_ = lambda_
+
+        self.loss = nn.CrossEntropyLoss(reduction="mean", label_smoothing=self.ce_label_smoothing).to(self._device)
+        self.already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+        super(CENotFlipLoss, self).forward(epoch=epoch)
+        assert self.already_set
+
+        if not self.is_on():
+            return self._zero
+
+        assert cl_logits is not None 
+        assert cl_logits.shape[0] == glabel.shape[0], "Mismatch between logits and labels"
+
+        y_pred_batch = key_arg["y_pred_batch"]
+        assert y_pred_batch.shape[0] == cl_logits.shape[0], "Mismatch between logits and pseudo-labels"
+
+        if key_arg is not None and "cal_mask" in key_arg:
+            cal_mask = torch.tensor(key_arg["cal_mask"], dtype=torch.bool, device=cl_logits.device)
+            assert cal_mask.shape[0] == cl_logits.shape[0], "Mask size mismatch"
+
+            keep_mask = cal_mask
+            cl_logits = cl_logits[keep_mask]
+            y_pred_batch_not_flip = y_pred_batch[keep_mask]
+
+
+
+        if cl_logits.shape[0] == 0:
+            return torch.tensor(0.0, device=cl_logits.device, requires_grad=True)
+
+        return self.loss(input=cl_logits, target=y_pred_batch_not_flip) * self.lambda_
+
+
+class CEFlipLoss(ElementaryLoss):
+    def __init__(self, **kwargs):
+        super(CEFlipLoss, self).__init__(**kwargs)
+        self.ce_label_smoothing: float = 0.0
+        self.lambda_: float = 1.0
+        self.loss = nn.CrossEntropyLoss(reduction="mean", label_smoothing=self.ce_label_smoothing).to(self._device)
+        self.already_set = False
+
+    def set_it(self, lambda_: float, ce_label_smoothing: float = 0.0):
+        assert isinstance(ce_label_smoothing, float)
+        assert 0 <= ce_label_smoothing <= 1.
+        self.ce_notflip_label_smoothing = ce_label_smoothing
+
+        assert isinstance(lambda_, float)
+        assert 0 <= lambda_ <= 1.
+        self.lambda_ = lambda_
+
+        self.loss = nn.CrossEntropyLoss(reduction="mean", label_smoothing=self.ce_label_smoothing).to(self._device)
+        self.already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+        super(CEFlipLoss, self).forward(epoch=epoch)
+        assert self.already_set
+        if not self.is_on():
+            return self._zero
+
+
+        assert cl_logits is not None 
+        assert cl_logits.shape[0] == glabel.shape[0], "Mismatch between logits and labels"
+
+        y_pred_batch = key_arg["y_pred_batch"]
+        assert y_pred_batch.shape[0] == cl_logits.shape[0], "Mismatch between logits and pseudo-labels"
+
+        if key_arg is not None and "cal_mask" in key_arg:
+            cal_mask = torch.tensor(key_arg["cal_mask"], dtype=torch.bool, device=cl_logits.device)
+            assert cal_mask.shape[0] == cl_logits.shape[0], "Mask size mismatch"
+
+            flip_mask = ~cal_mask
+            cl_logits = cl_logits[flip_mask]
+            y_pred_batch_to_flip = y_pred_batch[flip_mask]
+            
+
+        if cl_logits.shape[0] == 0:
+            return torch.tensor(0.0, device=cl_logits.device, requires_grad=True)
+
+        flipped_label = 1 - y_pred_batch_to_flip
+        return self.loss(input=cl_logits, target=flipped_label) * self.lambda_
+    
 
 
 

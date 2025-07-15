@@ -457,13 +457,28 @@ def get_loss_target(args):
             masterloss.add(Cal_Loss)
 
         if args.esfda_entropy_partial:
-            Partial_Entropy_Loss = losses.PartialEntropy(
-                cuda_id=args.c_cudaid,
-                support_background=support_background,
-                multi_label_flag=multi_label_flag)
-            Partial_Entropy_Loss.set_it(esfda_entropy_partial_lambda=args.esfda_entropy_partial_lambda)
-            masterloss.add(Partial_Entropy_Loss)
+            # Partial_Entropy_Loss = losses.PartialEntropy(
+            #     cuda_id=args.c_cudaid,
+            #     support_background=support_background,
+            #     multi_label_flag=multi_label_flag)
+            # Partial_Entropy_Loss.set_it(esfda_entropy_partial_lambda=args.esfda_entropy_partial_lambda)
+            # masterloss.add(Partial_Entropy_Loss)
+            if args.esfda_flip_labels:
+                CEFlipLoss = losses.CEFlipLoss(
+                    cuda_id=args.c_cudaid,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag)
+                CEFlipLoss.set_it(lambda_=args.CEFlipLoss_lambda)
+                masterloss.add(CEFlipLoss)
 
+            if args.esfda_notflip_labels:
+                CENotFlipLoss = losses.CENotFlipLoss(
+                    cuda_id=args.c_cudaid,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag)
+                CENotFlipLoss.set_it(lambda_=args.CENotFlipLoss_lambda)
+                masterloss.add(CENotFlipLoss)
+            
 
         # FAUST
         if args.views_ft_consist:

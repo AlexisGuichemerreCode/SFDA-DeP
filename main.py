@@ -75,8 +75,9 @@ def main():
         if args.entropy_models:
             trainer.update_best_entropy_model(epoch, split=constants.TRAINSET)
 
-        if args.cl_train_models:
-            trainer.update_best_cl_train_model(epoch, split=constants.TRAINSET)
+
+        #if args.dataset == constants.GLAS and args.cl_train_models:
+            #trainer.update_best_cl_train_model(epoch, split=constants.TRAINSET)
 
         # if args.ds_to_compute_acc_trainset_source_target and epoch % args.cmpt_epoch == 0:
         #     trainer.compute_acc_on_source_and_target(epoch)

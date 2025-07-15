@@ -648,6 +648,12 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_distance_cancer', type=float, default=None,)
     parser.add_argument('--esfda_distance_normal', type=float, default=None,)
 
+    parser.add_argument('--esfda_flip_labels', type=str2bool, default=None,)
+    parser.add_argument('--CEFlipLoss_lambda', type=float, default=None,)
+
+
+    parser.add_argument('--esfda_notflip_labels', type=str2bool, default=None,)
+    parser.add_argument('--CENotFlipLoss_lambda', type=float, default=None,)
 
     # losses SFUDA
     parser.add_argument('--ce_pseudo_lb', type=str2bool, default=None,

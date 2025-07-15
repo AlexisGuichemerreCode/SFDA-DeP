@@ -1038,7 +1038,9 @@ class Trainer(Basic):
                         std_cams,
                         masks,
                         views,
-                        cal_mask=None):
+                        cal_mask=None,
+                        y_pred_batch=None):
+        
         args = self.args
         y_global = targets
         y_pl_global = p_glabel
@@ -1051,6 +1053,12 @@ class Trainer(Basic):
 
         if args.sf_uda:
             if args.task == constants.STD_CL:
+                    key_arg = {}
+                    if cal_mask is not None:
+                        key_arg["cal_mask"] = cal_mask
+                    if y_pred_batch is not None:
+                        key_arg["y_pred_batch"] = y_pred_batch
+
                     output = self.model(images)
                     cl_logits = output
                     loss = self.loss(epoch=self.epoch,
@@ -1059,7 +1067,7 @@ class Trainer(Basic):
                                      glabel=y_global,
                                      pseudo_glabel=y_pl_global,
                                      cutmix_holder=cutmix_holder,
-                                     key_arg={"cal_mask": cal_mask} if cal_mask is not None else {}
+                                     key_arg=key_arg
                                      )
                     logits = cl_logits
 
@@ -1441,7 +1449,7 @@ class Trainer(Basic):
                 if self.args.esfda_select_imgs:
                     # select images to shift label
                     
-                    self.flipped_indices, self.reinforce_indices = self.select_flippable_indices_distances(
+                    self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_distances(
                         model=self.model,
                         loader=self.loaders,
                         select_imgs_ratio=self.args.esfda_select_imgs_ratio
@@ -1605,6 +1613,8 @@ class Trainer(Basic):
         cancer_pred_distances = []  
         loader = loader['train']
 
+        idx_to_pred = {} 
+
         for batch_idx, (images, targets, p_glabel, index,
                         raw_imgs, std_cams, masks, views) in tqdm(
                 enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
@@ -1618,6 +1628,10 @@ class Trainer(Basic):
                 idx = index[i]
                 pred = preds[i].item()
                 dist = distances[i].item()
+
+                idx_to_pred[idx] = pred
+
+
                 if pred == 1:
                     cancer_pred_distances.append((idx, dist))
 
@@ -1625,7 +1639,7 @@ class Trainer(Basic):
         num = int(len(cancer_pred_distances) * select_imgs_ratio)
         selected_flippable = set(idx for idx, _ in cancer_pred_distances[:num])
         reinforce_indices = set() 
-        return selected_flippable, reinforce_indices
+        return selected_flippable, reinforce_indices, idx_to_pred
     
 
     def train(self, split: str, epoch: int) -> dict:
@@ -1675,6 +1689,8 @@ class Trainer(Basic):
                     #     supervised_labels[i] = 1  
                 p_glabel = supervised_labels
                 mask_list = [img_name not in self.flipped_indices for img_name in index]
+                y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
+
             
             self.random()
             self.model.train()
@@ -1693,6 +1709,9 @@ class Trainer(Basic):
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)
             p_glabel = p_glabel.cuda(self.args.c_cudaid)
+            
+            if self.args.esfda and self.args.esfda_select_imgs:
+                y_pred_batch = y_pred_batch.cuda(self.args.c_cudaid)
 
             # SFUDA: estimate img-class pseudo-label on the fly ================
             if self.args.sf_uda:
@@ -1757,7 +1776,8 @@ class Trainer(Basic):
                                                         std_cams,
                                                         masks,
                                                         views,
-                                                        cal_mask = mask_list
+                                                        cal_mask = mask_list,
+                                                        y_pred_batch = y_pred_batch
                                                         )
 
 
@@ -1800,8 +1820,11 @@ class Trainer(Basic):
 
                 self.model.eval()
                 with torch.no_grad():
-                    self.compute_acc_on_target(self.epoch)
+                    self.compute_acc_on_target_came(self.epoch)
                     #self.compute_loc_on_target(self.epoch)
+
+                    if self.args.dataset == constants.CAMELYON512 and self.args.cl_train_models:
+                        self.update_best_cl_train_model_came(epoch, split=constants.TRAINSET)
                 self.model.train()
                 
 
@@ -2172,6 +2195,65 @@ class Trainer(Basic):
             #self.target_train_image_entropy.append(target_train_image_entropy)
             #self.target_train_pixel_entropy.append(target_train_pixel_entropy)
 
+            with torch.no_grad():
+                accuracy = 0.0
+                # if self.args.task != constants.SEG:
+                #     accuracy = self._compute_accuracy(loader=self.loaders[split])
+
+                torch.cuda.empty_cache()
+
+                model_cl = deepcopy(self.model).to(self.cpu_device).eval()
+                #model_state = model_entropy.state_dict()
+
+                if not hasattr(self, "best_accuracy"):
+                    self.cl_train_model = None
+                    self.best_accuracy = -1.0
+                    self.best_epoch = -1
+
+                if target_train_acc > self.best_accuracy:
+                    self.best_accuracy = target_train_acc
+                    self.cl_train_model = deepcopy(model_cl)
+                    self.best_epoch = epoch
+                    print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {target_train_acc:.2f}%")
+                else:
+                    print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {target_train_acc:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
+
+
+    def compute_acc_on_target_came(self, epoch, split=constants.TRAINSET):
+        self.model.eval()
+        with torch.no_grad():
+            target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[constants.TRAINSET])
+            self.target_train_acc_cl.append(target_train_acc)
+            self.target_train_f1.append(f1)
+            self.target_train_precision.append(precision)
+            self.target_train_recall.append(recall)
+            self.target_train_image_entropy.append(images_entropy)
+            self.target_train_acc_normal.append(target_train_acc_normal)
+            self.target_train_acc_cancer.append(target_train_acc_cancer)
+            self.current_acc_cl = target_train_acc
+
+        with torch.no_grad():
+            accuracy = 0.0
+            # if self.args.task != constants.SEG:
+            #     accuracy = self._compute_accuracy(loader=self.loaders[split])
+
+            torch.cuda.empty_cache()
+
+            model_cl = deepcopy(self.model).to(self.cpu_device).eval()
+            #model_state = model_entropy.state_dict()
+
+            if not hasattr(self, "best_accuracy"):
+                self.cl_train_model = None
+                self.best_accuracy = -1.0
+                self.best_epoch = -1
+
+            if target_train_acc > self.best_accuracy:
+                self.best_accuracy = target_train_acc
+                self.cl_train_model = deepcopy(model_cl)
+                self.best_epoch = epoch
+                print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {target_train_acc:.2f}%")
+            else:
+                print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {target_train_acc:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
 
 
     def compute_loc_on_target(self, epoch, split=constants.TRAINSET):
@@ -3079,8 +3161,8 @@ class Trainer(Basic):
         torch.cuda.empty_cache()
         self.model.eval()
         accuracy = 0.0
-        if self.args.task != constants.SEG:
-            accuracy = self._compute_accuracy(loader=self.loaders[split])
+        # if self.args.task != constants.SEG:
+        #     accuracy = self._compute_accuracy(loader=self.loaders[split])
 
         torch.cuda.empty_cache()
 
@@ -3099,6 +3181,30 @@ class Trainer(Basic):
             print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {accuracy:.2f}%")
         else:
             print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {accuracy:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
+
+    def update_best_cl_train_model_came(self, epoch, split):
+        torch.cuda.empty_cache()
+        self.model.eval()
+        # if self.args.task != constants.SEG:
+        #     accuracy = self._compute_accuracy(loader=self.loaders[split])
+
+        torch.cuda.empty_cache()
+
+        model_cl = deepcopy(self.model).to(self.cpu_device).eval()
+        #model_state = model_entropy.state_dict()
+
+        if not hasattr(self, "best_accuracy"):
+            self.cl_train_model = None
+            self.best_accuracy = -1.0
+            self.best_epoch = -1
+
+        if self.current_acc_cl > self.best_accuracy:
+            self.best_accuracy = self.current_acc_cl
+            self.cl_train_model = deepcopy(model_cl)
+            self.best_epoch = epoch
+            print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {self.current_acc_cl:.2f}%")
+        else:
+            print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {self.current_acc_cl:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
 
 
 

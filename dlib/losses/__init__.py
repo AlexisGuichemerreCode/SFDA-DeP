@@ -39,6 +39,8 @@ from dlib.losses.core import PartialEntropy
 from dlib.losses.core import PxOrtognalityloss
 from dlib.losses.core import EnergyMGloss
 from dlib.losses.core import ConRanFieldPxcams
+from dlib.losses.core import CEFlipLoss
+from dlib.losses.core import CENotFlipLoss
 
 from dlib.losses.sf_uda import UdaCrossEntropyImgPseudoLabels
 from dlib.losses.sf_uda import UdaTargetClassProbEntropy

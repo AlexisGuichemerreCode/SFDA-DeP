@@ -1754,7 +1754,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         # args_dict = yaml.safe_load(fy)
         # args_dict['model']['freeze_encoder'] = False
         args_dict['model']['folder_pre_trained_cl'] = None
-        #args_dict['pixel_wise_classification'] = False
+        args_dict['pixel_wise_classification'] = False
         args_dict['multiple_layer_pixel_classifier'] = False
         args_dict['anchors_ortogonal'] = False
         args_dict['detach_pixel_classifier'] = False
@@ -1980,7 +1980,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     plt.ylabel("Number of Images")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "distances_class_0_cam_test.png"), dpi=300)
+    plt.savefig(os.path.join(out_dir, "distances_class_0_cam_bcl_deepmil.png"), dpi=300)
 
     # Classe prédite = 1
     plt.figure(figsize=(6, 4))
@@ -1991,7 +1991,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     plt.ylabel("Number of Images")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "distances_class_1_cam_test.png"), dpi=300)
+    plt.savefig(os.path.join(out_dir, "distances_class_1_cam_bcl_deepmil.png"), dpi=300)
 
     out_dir = "plots_energy_test"
     os.makedirs(out_dir, exist_ok=True)

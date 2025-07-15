@@ -838,6 +838,12 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'esfda_distance_cancer': 10.0,
         'esfda_distance_normal': 4.0,
 
+        'esfda_flip_labels': False,  # flip labels of the images
+        'CEFlipLoss_lambda': 0.1,  # lambda of this term. >= 0.
+
+        'esfda_notflip_labels': False,  # do not flip labels of the images
+        'CENotFlipLoss_lambda': 0.1,  # lambda of this term. >= 0.
+
         # ======================================================================
         #                     END - ENERGY DISTRIBUTION ESTIMATION
         # ======================================================================
