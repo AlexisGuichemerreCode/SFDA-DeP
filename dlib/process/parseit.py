@@ -641,6 +641,7 @@ def get_args(args: dict, eval: bool = False):
 
     parser.add_argument('--esfda_select_imgs', type=str2bool, default=None,)
     parser.add_argument('--esfda_select_imgs_ratio', type=float, default=None,)
+    parser.add_argument('--random_select_ratio', type=float, default=None,)
 
     parser.add_argument('--esfda_entropy_partial', type=str2bool, default=None,)
     parser.add_argument('--esfda_entropy_partial_lambda', type=float, default=None,)

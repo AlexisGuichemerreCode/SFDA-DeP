@@ -399,6 +399,28 @@ class Trainer(Basic):
             if self.args.correct_and_incorrect_pseudo_labels:
                 self.corrected_pseudo_labels = self.select_images_to_correct_and_incorrect(self.model, self.loaders[constants.TRAINSET], select_imgs_ratio=self.args.correct_pseudo_labels_ratio)
 
+
+        if self.args.sf_uda:
+            #self._sf_uda_before_epoch_process()
+
+            if self.args.esfda:
+                if self.args.esfda_select_imgs:
+                    # select images to shift label
+                    
+                    self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_distances(
+                        model=self.model,
+                        loader=self.loaders,
+                        select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+                        random_select_ratio=self.args.random_select_ratio
+                    )
+
+                else:
+                    self.flipped_indices = self.select_flippable_indices(
+                        model=self.model,
+                        loader=self.loaders,
+                        select_imgs_ratio=self.args.esfda_select_imgs_ratio
+                    )
+
         # ======================================================================
 
     def _get_faust_n_views(self) -> int:
@@ -1442,25 +1464,25 @@ class Trainer(Basic):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = True
 
-        if self.args.sf_uda:
-            self._sf_uda_before_epoch_process()
+        # if self.args.sf_uda:
+        #     self._sf_uda_before_epoch_process()
 
-            if self.args.esfda:
-                if self.args.esfda_select_imgs:
-                    # select images to shift label
+        #     if self.args.esfda:
+        #         if self.args.esfda_select_imgs:
+        #             # select images to shift label
                     
-                    self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_distances(
-                        model=self.model,
-                        loader=self.loaders,
-                        select_imgs_ratio=self.args.esfda_select_imgs_ratio
-                    )
+        #             self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_distances(
+        #                 model=self.model,
+        #                 loader=self.loaders,
+        #                 select_imgs_ratio=self.args.esfda_select_imgs_ratio
+        #             )
 
-                else:
-                    self.flipped_indices = self.select_flippable_indices(
-                        model=self.model,
-                        loader=self.loaders,
-                        select_imgs_ratio=self.args.esfda_select_imgs_ratio
-                    )
+        #         else:
+        #             self.flipped_indices = self.select_flippable_indices(
+        #                 model=self.model,
+        #                 loader=self.loaders,
+        #                 select_imgs_ratio=self.args.esfda_select_imgs_ratio
+        #             )
 
         # final
         self.model.train()
@@ -1608,7 +1630,8 @@ class Trainer(Basic):
         return set(selected_flippable), reinforce_indices
 
     @torch.no_grad()
-    def select_flippable_indices_distances(self, model, loader, select_imgs_ratio=0.1):
+    def select_flippable_indices_distances(self, model, loader, select_imgs_ratio=0.1,
+                                       random_select_ratio=1.0):
         model.eval()
         cancer_pred_distances = []  
         loader = loader['train']
@@ -1636,9 +1659,21 @@ class Trainer(Basic):
                     cancer_pred_distances.append((idx, dist))
 
         cancer_pred_distances.sort(key=lambda x: x[1])
-        num = int(len(cancer_pred_distances) * select_imgs_ratio)
-        selected_flippable = set(idx for idx, _ in cancer_pred_distances[:num])
-        reinforce_indices = set() 
+        # num = int(len(cancer_pred_distances) * select_imgs_ratio)
+        # selected_flippable = set(idx for idx, _ in cancer_pred_distances[:num])
+        # reinforce_indices = set() 
+
+        py_random.seed(self.seed)
+
+        preselect_num = int(len(cancer_pred_distances) * select_imgs_ratio)
+        preselected_indices = cancer_pred_distances[:preselect_num]
+
+        final_select_num = max(1, int(len(preselected_indices) * random_select_ratio))
+        selected_indices = py_random.sample(preselected_indices, final_select_num)
+
+        selected_flippable = set(idx for idx, _ in selected_indices)
+        reinforce_indices = set()
+
         return selected_flippable, reinforce_indices, idx_to_pred
     
 

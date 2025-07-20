@@ -831,6 +831,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
 
         'esfda_select_imgs': False,  # select images to shift label
         'esfda_select_imgs_ratio':  0.1,  # ratio of images to select
+        'random_select_ratio':  0.1,  # ratio of images to select
 
         'esfda_entropy_partial': False,  # use or not partial entropy
         'esfda_entropy_partial_lambda': 0.1,  # lambda of this term. >= 0.

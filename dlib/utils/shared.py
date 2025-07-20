@@ -13,6 +13,8 @@ from sklearn.metrics import auc
 import torch
 import numpy as np
 
+import umap
+
 root_dir = dirname(dirname(dirname(abspath(__file__))))
 sys.path.append(root_dir)
 

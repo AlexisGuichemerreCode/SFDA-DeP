@@ -13,7 +13,7 @@ from typing import Union
 from sklearn.metrics import auc
 import torch
 import numpy as np
-from pynvml.smi import nvidia_smi
+#from pynvml.smi import nvidia_smi
 import cv2
 
 _CONTOUR_INDEX = 1 if cv2.__version__.split('.')[0] == '3' else 0
