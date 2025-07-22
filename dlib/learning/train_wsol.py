@@ -1464,8 +1464,8 @@ class Trainer(Basic):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = True
 
-        # if self.args.sf_uda:
-        #     self._sf_uda_before_epoch_process()
+        if self.args.sf_uda:
+            self._sf_uda_before_epoch_process()
 
         #     if self.args.esfda:
         #         if self.args.esfda_select_imgs:
