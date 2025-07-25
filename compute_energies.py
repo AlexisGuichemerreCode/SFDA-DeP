@@ -542,6 +542,7 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     'max_logits_pxs': [],
     'lin_ft': [],
     'img_ft': [],
+    'entropy_imgs': [],
     'entropy_px': [],
     'metrics_px_bg': [],
     'metrics_px_fg': [],
@@ -551,6 +552,8 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     }
 
     model.eval()
+    eps = 1e-8
+
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
         enumerate(loader[split]), ncols=constants.NCOLS,
         total=len(loader[split])):
@@ -567,6 +570,7 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
 
             probs_img = F.softmax(lgt_imgs, dim=1)
             preds = probs_img.argmax(dim=1) 
+            entropy_img = -(probs_img * (probs_img + eps).log()).sum(dim=1)
 
             probs_px = torch.softmax(lgt_pxs, dim=1)   
             entropy_px = -(probs_px * probs_px.log()).sum(dim=1)
@@ -606,6 +610,7 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
             energy_data['probs_images'].append(probs_img.max(dim=1).values.detach().cpu())
             energy_data['label_images'].append(targets.detach().cpu())
             energy_data['pred_images'].append(preds.detach().cpu())
+            energy_data['entropy_imgs'].append(entropy_img.detach().cpu())
 
             energy_images = energy_fn(lgt_imgs)
             energy_pixels = energy_fn(lgt_pxs)
@@ -704,6 +709,7 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     energy_data['min_logits_pxs'] = torch.cat(energy_data['min_logits_pxs']).view(-1).numpy()
     energy_data['lin_ft'] = torch.cat(energy_data['lin_ft'], dim=0).cpu().numpy()
     energy_data['img_ft'] = torch.cat(energy_data['img_ft'], dim=0).cpu().numpy()
+    energy_data['entropy_imgs'] = torch.cat(energy_data['entropy_imgs']).cpu().numpy()
     energy_data['entropy_px'] = torch.cat(energy_data['entropy_px']).cpu().numpy()
     energy_data['metrics_px_bg'] = torch.cat(energy_data['metrics_px_bg']).cpu().numpy()
     energy_data['metrics_px_fg'] = torch.cat(energy_data['metrics_px_fg']).cpu().numpy()

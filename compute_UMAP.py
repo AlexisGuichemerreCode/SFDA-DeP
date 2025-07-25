@@ -1796,8 +1796,17 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
     device = torch.device('cuda:{}'.format(cudaid))
 
-    tag = get_tag(args, checkpoint_type=checkpoint_type)
+    if checkpoint_type == 'best_model_cl':
+        tag == "best_model_cl"
+    else:
+        tag = get_tag(args, checkpoint_type=checkpoint_type)
+    
+
     path_cl = join(exp_path, tag)
+    
+
+    checkpoint_type = 'best_classification'
+
     with open(join(path_cl, 'config_model.yaml'), 'r') as fy:
         args_dict = yaml.load(fy, Loader=IgnoreKeyLoader)
         # args_dict = yaml.safe_load(fy)
@@ -1997,7 +2006,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
 
 
-    image_anchor_weights = model.classification_head.fc.weight[:2] 
+    image_anchor_weights = model.classification_head.fc.weight[1:] 
 
     anchor_weights = image_anchor_weights.cpu().detach().numpy()
 
@@ -2007,8 +2016,8 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     # reducer = umap.UMAP(n_components=2, n_neighbors=100, min_dist=0.05,metric="cosine",random_state=42)
     # embedding = reducer.fit_transform(X_umap) 
 
-    for min_dist in [0.05]:
-        for n_neighbors in [1000]:
+    for min_dist in [0.2]:
+        for n_neighbors in [5]:
             reducer = umap.UMAP(
                 n_components=2,
                 n_neighbors=n_neighbors,
@@ -2042,7 +2051,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             plt.xlabel("UMAP 1")
             plt.ylabel("UMAP 2")
             plt.tight_layout()
-            filename = f"umap_n{n_neighbors}_mindist{min_dist}.png"
+            filename = f"umap_n_{target_dataset}.png"
             plt.savefig(filename, dpi=300, bbox_inches="tight")
             plt.close()
             # plt.savefig("UMAP.png", dpi=300)

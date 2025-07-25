@@ -531,9 +531,11 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     'pred_images': [],
     'label_images': [],
     'img_ft': [],
+    'entropy_imgs': [],
     }
 
     model.eval()
+    eps = 1e-8
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
         enumerate(loader[split]), ncols=constants.NCOLS,
         total=len(loader[split])):
@@ -549,16 +551,19 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
 
             probs_img = F.softmax(lgt_imgs, dim=1)
             preds = probs_img.argmax(dim=1) 
+            entropy_img = -(probs_img * (probs_img + eps).log()).sum(dim=1)
 
         energy_data['pred_images'].append(preds.detach().cpu())
         energy_data['label_images'].append(targets.detach().cpu())
         energy_data['img_ft'].append(features.detach().cpu())
-           
+        energy_data['entropy_imgs'].append(entropy_img.detach().cpu())
 
     # Concatenation
     energy_data['pred_images'] = torch.cat(energy_data['pred_images']).numpy()
     energy_data['label_images'] = torch.cat(energy_data['label_images']).numpy()
     energy_data['img_ft'] = torch.cat(energy_data['img_ft']).numpy()
+
+    energy_data['entropy_imgs'] = torch.cat(energy_data['entropy_imgs']).cpu().numpy()
 
     return energy_data
 
@@ -703,6 +708,47 @@ def compute_distances_by_predicted_class_and_correctness(energy_data, model):
         'class_0_incorrect': distances[(preds == 0) & (preds != labels)],
         'class_1_correct': distances[(preds == 1) & (preds == labels)],
         'class_1_incorrect': distances[(preds == 1) & (preds != labels)],
+    }
+
+    return results
+
+def compute_entropy_by_predicted_class_and_correctness(energy_data, model):
+    """
+    Calcule les distances à l'ancre opposée pour chaque image,
+    et les regroupe par classe prédite (0 ou 1) et par justesse de la prédiction.
+
+    Args:
+        energy_data (dict): avec les clés 'pred_images', 'label_images', 'img_ft'
+        model: modèle avec méthode get_linear_weights()
+
+    Returns:
+        dict contenant 4 groupes :
+        {
+            'class_0_correct': [...],
+            'class_0_incorrect': [...],
+            'class_1_correct': [...],
+            'class_1_incorrect': [...],
+        }
+    """
+    preds = energy_data['pred_images']
+    labels = energy_data['label_images']
+    entropy_imgs = energy_data['entropy_imgs']
+
+    if isinstance(preds, torch.Tensor):
+        preds = preds.numpy()
+    if isinstance(labels, torch.Tensor):
+        labels = labels.numpy()
+    if isinstance(entropy_imgs, torch.Tensor):
+         entropy_imgs = entropy_imgs.cpu().numpy()
+
+    anchors = model.get_linear_weights.detach().cpu().numpy()
+
+
+    results = {
+        'class_0_correct': entropy_imgs[(preds == 0) & (preds == labels)],
+        'class_0_incorrect': entropy_imgs[(preds == 0) & (preds != labels)],
+        'class_1_correct': entropy_imgs[(preds == 1) & (preds == labels)],
+        'class_1_incorrect': entropy_imgs[(preds == 1) & (preds != labels)],
     }
 
     return results
@@ -1666,7 +1712,34 @@ def extract_features(mask, feature, label, image_id):
 
     return foreground_features, background_features
 
+def plot_histogram_with_counts_and_percentages(correct_data, incorrect_data, title, xlabel, ylabel, out_path, bin):
+    plt.figure(figsize=(20, 12))
 
+    counts_correct, bins = np.histogram(correct_data, bins=bin)
+    counts_incorrect, _ = np.histogram(incorrect_data, bins=bins)
+
+    bin_centers = 0.5 * (bins[:-1] + bins[1:])
+    total_counts = counts_correct + counts_incorrect
+
+    plt.bar(bin_centers, counts_correct, width=np.diff(bins), alpha=0.7, label='Correctly Predicted', align='center')
+    plt.bar(bin_centers, counts_incorrect, width=np.diff(bins), bottom=counts_correct, alpha=0.7, label='Incorrectly Predicted', align='center')
+
+    for total, correct, incorrect, x in zip(total_counts, counts_correct, counts_incorrect, bin_centers):
+        if total > 0:
+            plt.text(x, total, f"{total}", rotation=90, ha='center', va='bottom', fontsize=8)
+            if correct > 0:
+                plt.text(x, correct / 2, f"{100 * correct / total:.1f}%", ha='center', va='center', fontsize=7, color='white')
+            if incorrect > 0:
+                plt.text(x, correct + incorrect / 2, f"{100 * incorrect / total:.1f}%", ha='center', va='center', fontsize=7, color='black')
+
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+    
 
 def show_cam_on_image(img: np.ndarray,
                       mask: np.ndarray,
@@ -1754,7 +1827,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         # args_dict = yaml.safe_load(fy)
         # args_dict['model']['freeze_encoder'] = False
         args_dict['model']['folder_pre_trained_cl'] = None
-        args_dict['pixel_wise_classification'] = False
+        args_dict['pixel_wise_classification'] = True
         args_dict['multiple_layer_pixel_classifier'] = False
         args_dict['anchors_ortogonal'] = False
         args_dict['detach_pixel_classifier'] = False
@@ -1965,11 +2038,40 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
     #plot_energy_histograms_by_class(source_energy, target_energy, out_dir, title_prefix="")
 
+    results_entropy = compute_entropy_by_predicted_class_and_correctness(target_energy, model)
     results = compute_distances_by_predicted_class_and_correctness(target_energy, model)
 
 
     # Optionnel : plot
     import matplotlib.pyplot as plt
+
+
+    # Classe prédite = 0
+    plt.figure(figsize=(6, 4))
+    plt.hist(results_entropy['class_0_correct'], bins=50, alpha=0.7, label='Correctly Predicted')
+    plt.hist(results_entropy['class_0_incorrect'], bins=50, alpha=0.7, label='Incorrectly Predicted')
+    plt.title("Distances to Opposite Anchor (Predicted Class: 0 - Normal)")
+    plt.xlabel("Distance to Opposite Anchor")
+    plt.ylabel("Number of Images")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "entropy_class_0_cam_bcl_pixelcam.png"), dpi=300)
+
+    # Classe prédite = 1
+    plt.figure(figsize=(6, 4))
+    plt.hist(results_entropy['class_1_correct'], bins=50, alpha=0.7, label='Correctly Predicted')
+    plt.hist(results_entropy['class_1_incorrect'], bins=50, alpha=0.7, label='Incorrectly Predicted')
+    plt.title("Distances to Opposite Anchor (Predicted Class: 1 - Cancer)")
+    plt.xlabel("Distance to Opposite Anchor")
+    plt.ylabel("Number of Images")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "entropy_class_1_cam_bcl_pixelcam.png"), dpi=300)
+
+
+    plot_histogram_with_counts_and_percentages(results_entropy['class_1_correct'], results_entropy['class_1_incorrect'], "Entropy", "entropy", "nb imgs", os.path.join(out_dir, "count_entropy_class_1_cam_bcl_pixelcam.png"), 20)
+
+
 
     # Classe prédite = 0
     plt.figure(figsize=(6, 4))
@@ -1980,7 +2082,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     plt.ylabel("Number of Images")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "distances_class_0_cam_bcl_deepmil.png"), dpi=300)
+    plt.savefig(os.path.join(out_dir, "distances_class_0_cam_bcl_pixelcam.png"), dpi=300)
 
     # Classe prédite = 1
     plt.figure(figsize=(6, 4))
@@ -1991,7 +2093,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     plt.ylabel("Number of Images")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "distances_class_1_cam_bcl_deepmil.png"), dpi=300)
+    plt.savefig(os.path.join(out_dir, "distances_class_1_cam_bcl_pixelcam.png"), dpi=300)
 
     out_dir = "plots_energy_test"
     os.makedirs(out_dir, exist_ok=True)

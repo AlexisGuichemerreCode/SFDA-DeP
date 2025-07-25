@@ -406,13 +406,22 @@ class Trainer(Basic):
             if self.args.esfda:
                 if self.args.esfda_select_imgs:
                     # select images to shift label
-                    
-                    self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_distances(
-                        model=self.model,
-                        loader=self.loaders,
-                        select_imgs_ratio=self.args.esfda_select_imgs_ratio,
-                        random_select_ratio=self.args.random_select_ratio
-                    )
+
+                    if self.args.select_distance:
+                        self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_distances(
+                            model=self.model,
+                            loader=self.loaders,
+                            select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+                            random_select_ratio=self.args.random_select_ratio
+                        )
+
+                    if self.args.select_entropy:
+                        self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_entropy(
+                            model=self.model,
+                            loader=self.loaders,
+                            select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+                            random_select_ratio=self.args.random_select_ratio
+                        )
 
                 else:
                     self.flipped_indices = self.select_flippable_indices(
@@ -1667,6 +1676,53 @@ class Trainer(Basic):
 
         preselect_num = int(len(cancer_pred_distances) * select_imgs_ratio)
         preselected_indices = cancer_pred_distances[:preselect_num]
+
+        final_select_num = max(1, int(len(preselected_indices) * random_select_ratio))
+        selected_indices = py_random.sample(preselected_indices, final_select_num)
+
+        selected_flippable = set(idx for idx, _ in selected_indices)
+        reinforce_indices = set()
+
+        return selected_flippable, reinforce_indices, idx_to_pred
+
+    @torch.no_grad()
+    def select_flippable_indices_entropy(self, model, loader, select_imgs_ratio=0.1,
+                                        random_select_ratio=1.0):
+        model.eval()
+        entropy_list = []  # (index, entropy) for cancer-predicted images
+        loader = loader['train']
+
+        idx_to_pred = {}
+
+        for batch_idx, (images, targets, p_glabel, index,
+                        raw_imgs, std_cams, masks, views) in tqdm(
+                enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+
+            images = images.cuda(self.args.c_cudaid)
+            logits = model(images)
+            probs = F.softmax(logits, dim=1)
+            preds = probs.argmax(dim=1)
+
+            # Entropy computation
+            entropy = -torch.sum(probs * torch.log(probs + 1e-6), dim=1)
+
+            for i in range(images.size(0)):
+                idx = index[i]
+                pred = preds[i].item()
+                ent = entropy[i].item()
+
+                idx_to_pred[idx] = pred
+
+                if pred == 1:  # Only select from predicted cancer
+                    entropy_list.append((idx, ent))
+
+        # Sort by descending entropy (most uncertain first)
+        entropy_list.sort(key=lambda x: x[1], reverse=True)
+
+        py_random.seed(self.seed)
+
+        preselect_num = int(len(entropy_list) * select_imgs_ratio)
+        preselected_indices = entropy_list[:preselect_num]
 
         final_select_num = max(1, int(len(preselected_indices) * random_select_ratio))
         selected_indices = py_random.sample(preselected_indices, final_select_num)
