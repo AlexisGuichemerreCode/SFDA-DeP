@@ -645,6 +645,7 @@ def get_args(args: dict, eval: bool = False):
     
     parser.add_argument('--select_distance', type=str2bool, default=None,)
     parser.add_argument('--select_entropy', type=str2bool, default=None,)
+    parser.add_argument('--esfda_reverse_imgs', type=str2bool, default=None,)
 
     parser.add_argument('--esfda_entropy_partial', type=str2bool, default=None,)
     parser.add_argument('--esfda_entropy_partial_lambda', type=float, default=None,)

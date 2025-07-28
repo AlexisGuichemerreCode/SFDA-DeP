@@ -420,7 +420,8 @@ class Trainer(Basic):
                             model=self.model,
                             loader=self.loaders,
                             select_imgs_ratio=self.args.esfda_select_imgs_ratio,
-                            random_select_ratio=self.args.random_select_ratio
+                            random_select_ratio=self.args.random_select_ratio,
+                            reverse_imgs=self.args.esfda_reverse_imgs
                         )
 
                 else:
@@ -1687,7 +1688,7 @@ class Trainer(Basic):
 
     @torch.no_grad()
     def select_flippable_indices_entropy(self, model, loader, select_imgs_ratio=0.1,
-                                        random_select_ratio=1.0):
+                                        random_select_ratio=1.0, reverse_imgs = True):
         model.eval()
         entropy_list = []  # (index, entropy) for cancer-predicted images
         loader = loader['train']
@@ -1717,7 +1718,10 @@ class Trainer(Basic):
                     entropy_list.append((idx, ent))
 
         # Sort by descending entropy (most uncertain first)
-        entropy_list.sort(key=lambda x: x[1], reverse=True)
+        if reverse_imgs:
+            entropy_list.sort(key=lambda x: x[1], reverse=reverse_imgs)
+        else:
+            entropy_list.sort(key=lambda x: x[1])
 
         py_random.seed(self.seed)
 

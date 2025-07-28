@@ -835,6 +835,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
 
         'select_distance': False, # select images based on distance
         'select_entropy': False, # select images based on entropy
+        'esfda_reverse_imgs': True, # select images based on entropy
 
         'esfda_entropy_partial': False,  # use or not partial entropy
         'esfda_entropy_partial_lambda': 0.1,  # lambda of this term. >= 0.
