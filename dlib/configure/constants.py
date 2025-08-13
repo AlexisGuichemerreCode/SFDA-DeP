@@ -288,6 +288,8 @@ STD_CL_METHOD_2_ARCH = {
 
 # resnet
 RESNET50 = 'resnet50'
+RESNET18 = 'resnet18'
+RESNET101 = 'resnet101'
 
 # vgg
 VGG16 = 'vgg16'
@@ -310,6 +312,8 @@ DEIT_SAT_TINY_P16_224 = 'deit_sat_tiny_patch16_224'
 # RESNET50_ENERGY = 'resnet50_energy'
 
 BACKBONES = [RESNET50,
+             RESNET18,
+             RESNET101,
              VGG16,
              INCEPTIONV3,
              DEIT_TSCAM_SMALL_P16_224,
@@ -439,18 +443,23 @@ RANGE_SIGMOID = 'sigmoid'
 # cams extractor
 TRG_LAYERS = {
             RESNET50: 'encoder.layer4.2.relu3',
+            RESNET18: 'encoder.layer4.1.bn2',
+            RESNET101: 'encoder.layer4.2.relu3',
             VGG16: 'encoder.relu',
             INCEPTIONV3: 'encoder.SPG_A3_2b.2'
         }
 
 FC_LAYERS = {
     RESNET50: 'classification_head.fc',
+    RESNET18: 'classification_head.fc',
+    RESNET101: 'classification_head.fc',
     VGG16: 'classification_head.fc',
     INCEPTIONV3: 'classification_head.fc'
 }
 
 PIXEL_FC_LAYERS = {
     RESNET50: 'pixel_wise_classification_head.fc',
+    RESNET18: 'pixel_wise_classification_head.fc',
     VGG16: 'pixel_wise_classification_head.fc',
     INCEPTIONV3: 'pixel_wise_classification_head.fc'
 }

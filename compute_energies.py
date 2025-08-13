@@ -448,6 +448,33 @@ def pixel_feature_errors(model,loader,cam_computer, dataset_name, split, device)
 
     return 0
 
+def plot_histogram_with_counts_and_percentages(correct_data, incorrect_data, title, xlabel, ylabel, out_path, bin):
+    plt.figure(figsize=(20, 12))
+
+    counts_correct, bins = np.histogram(correct_data, bins=bin)
+    counts_incorrect, _ = np.histogram(incorrect_data, bins=bins)
+
+    bin_centers = 0.5 * (bins[:-1] + bins[1:])
+    total_counts = counts_correct + counts_incorrect
+
+    plt.bar(bin_centers, counts_correct, width=np.diff(bins), alpha=0.7, label='Correctly Predicted', align='center')
+    plt.bar(bin_centers, counts_incorrect, width=np.diff(bins), bottom=counts_correct, alpha=0.7, label='Incorrectly Predicted', align='center')
+
+    for total, correct, incorrect, x in zip(total_counts, counts_correct, counts_incorrect, bin_centers):
+        if total > 0:
+            plt.text(x, total, f"{total}", rotation=90, ha='center', va='bottom', fontsize=8)
+            if correct > 0:
+                plt.text(x, correct / 2, f"{100 * correct / total:.1f}%", ha='center', va='center', fontsize=7, color='white')
+            if incorrect > 0:
+                plt.text(x, correct + incorrect / 2, f"{100 * incorrect / total:.1f}%", ha='center', va='center', fontsize=7, color='black')
+
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300)
+    plt.close()
 
 def plot_weights_model(model, support_background, out_dir, title_prefix=""):
     with torch.no_grad():
@@ -549,6 +576,13 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     'n_fg': [],
     'n_bg': [],
     'pct_fg': [],
+    'entropy_px_all': [],    # pour stocker l'entropie de chaque pixel
+    'pred_px_all': [],       # pour stocker la prédiction (0/1) de chaque pixel
+    'true_px_all': [],       # pour stocker le label vrai (0/1) de chaque pixel
+    'pixel_tp': [],          # nombre de vrais positifs par batch/image
+    'pixel_fp': [],          # nombre de faux positifs
+    'pixel_tn': [],          # vrais négatifs
+    'pixel_fn': [],          # faux négatifs
     }
 
     model.eval()
@@ -630,27 +664,44 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
             energy_data['max_logits_pxs'].append(max_vals_pxs.flatten(start_dim=1).cpu())
             energy_data['min_logits_pxs'].append(min_vals_pxs.flatten(start_dim=1).cpu())
 
+            #energy_data['entropy_px_all'].append(entropy_px.detach().cpu())
+            #energy_data['pred_px_all'].append(pred_px.detach().cpu())
 
 
             for energy, label in zip(energy_images.cpu(), targets.cpu()):
                 energy_data['per_class'][int(label)].append(energy.item())
 
 
-    #     # Per-pixel foreground / background
-    #     for i, (label, image_id) in enumerate(zip(targets, index)):
-    #         _, _, h, w = px_lin_ft.shape
-    #         gt_bin = get_resized_gt_mask(
-    #             cam_computer.evaluator.mask_paths[image_id],
-    #             cam_computer.evaluator.ignore_paths[image_id],
-    #             dataset_name,
-    #             label.item(),
-    #             size=(h, w),
-    #             device=device
-    #         )
+        # Per-pixel foreground / background 
+        for i, (label, image_id) in enumerate(zip(targets, index)):
+            _, _, h, w = px_lin_ft.shape
+            gt_bin = get_resized_gt_mask(
+                cam_computer.evaluator.mask_paths[image_id],
+                cam_computer.evaluator.ignore_paths[image_id],
+                dataset_name,
+                label.item(),
+                size=(h, w),
+                device=device
+            )
 
-    #         energy_map = energy_pixels[i]  # (H, W)
-    #         energy_data['foreground'].append(energy_map[gt_bin].detach().cpu())
-    #         energy_data['background'].append(energy_map[~gt_bin].detach().cpu())
+            single_ent = entropy_px[i]                     # [H, W]
+            single_pred= pred_px[i]                        # [H, W]
+
+            flat_ent  = torch.flatten(single_ent).cpu()    # Tensor 1-D
+            flat_pred = torch.flatten(single_pred).cpu()
+            flat_true = torch.flatten(gt_bin).cpu().int()
+
+            energy_data['entropy_px_all'].append(flat_ent)
+            energy_data['pred_px_all'].append(flat_pred)
+            energy_data['true_px_all'].append(flat_true)  
+
+            #energy_data['true_px_all'].append(flat_true)
+
+            #energy_map = energy_pixels[i]  # (H, W)
+            #energy_data['foreground'].append(energy_map[gt_bin].detach().cpu())
+            #energy_data['background'].append(energy_map[~gt_bin].detach().cpu())
+
+
         
 
     #     if cam_performance :
@@ -695,6 +746,13 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     #energy_data['cam_performance'].append(cam_performance)
     #print("cam_performance", cam_performance)
 
+    ent_list = energy_data['entropy_px_all']
+    pr_list  = energy_data['pred_px_all']
+    tr_list  = energy_data['true_px_all']
+
+    # for i, t in enumerate(ent_list):
+    #     print(i, t.dim(), t.shape)  # doit indiquer dim=1 shape=[H*W]
+
     # Concatenation
     energy_data['images'] = torch.cat(energy_data['images']).numpy()
     energy_data['pixels'] = torch.cat(energy_data['pixels']).view(-1).numpy()
@@ -716,6 +774,13 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     energy_data["n_fg"]   = torch.cat(energy_data["n_fg"]).numpy()      # [N]
     energy_data["n_bg"]   = torch.cat(energy_data["n_bg"]).numpy()
     energy_data["pct_fg"] = torch.cat(energy_data["pct_fg"]).numpy()
+
+    # for i, t in enumerate(energy['entropy_px_all']):
+    #     print(i, t.shape)
+
+    energy_data['entropy_px_all'] = torch.cat(ent_list, dim=0).numpy()
+    energy_data['pred_px_all']    = torch.cat(pr_list,  dim=0).numpy()
+    energy_data['true_px_all']    = torch.cat(tr_list,  dim=0).numpy()
 
     return energy_data
 
@@ -1869,6 +1934,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         # args_dict['model']['freeze_encoder'] = False
         args_dict['model']['folder_pre_trained_cl'] = None
         #args_dict['pixel_wise_classification'] = False
+        #args_dict['pixel_wise_classification'] = False
         args_dict['multiple_layer_pixel_classifier'] = False
         args_dict['anchors_ortogonal'] = False
         args_dict['detach_pixel_classifier'] = False
@@ -1940,7 +2006,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     ####################################################################################
     ###############load performance log file from orignal exp checkpoint ###############
     ####################################################################################
-    assert split == constants.TESTSET or split == constants.VALIDSET or split == constants.TRAINSET
+    assert split == constants.TESTSET or split == constants.CLVALIDSET or split == constants.TRAINSET
     #split == constants.VALIDSET
     #split = constants.VALIDSET
     log_file_path_best_loc = os.path.join(exp_path, f'performance_log_{checkpoint_type}.pickle')
@@ -1989,12 +2055,12 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     source_cam_computer = CAMComputer(
             args=deepcopy(args),
             model=model,
-            loader=source_loaders['train'],
-            metadata_root=os.path.join(source_metadata_root, 'train'),
+            loader=source_loaders[split],
+            metadata_root=os.path.join(source_metadata_root, split),
             mask_root=args.mask_root,
             iou_threshold_list=args.iou_threshold_list,
             dataset_name=source_dataset,
-            split= 'train',
+            split= split,
             cam_curve_interval=args.cam_curve_interval,
             multi_contour_eval=args.multi_contour_eval,
             out_folder=args.outd,
@@ -2041,12 +2107,12 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         target_cam_computer = CAMComputer(
                 args=deepcopy(args),
                 model=model,
-                loader=target_loaders['train'],
-                metadata_root=os.path.join(target_metadata_root, 'train'),
+                loader=target_loaders[split],
+                metadata_root=os.path.join(target_metadata_root, split),
                 mask_root=args.mask_root,
                 iou_threshold_list=args.iou_threshold_list,
                 dataset_name=target_dataset,
-                split= 'train',
+                split= split,
                 cam_curve_interval=args.cam_curve_interval,
                 multi_contour_eval=args.multi_contour_eval,
                 out_folder=args.outd,
@@ -2100,7 +2166,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     # )
 
     model.eval()
-    cl_global, cl_normal, cl_cancer = _compute_accuracy(args, model, target_loaders['train'])
+    cl_global, cl_normal, cl_cancer = _compute_accuracy(args, model, target_loaders[split])
 
     print(f"Classification accuracy on target dataset {target_dataset} is {cl_global:.2f}%")
     print(f"Classification accuracy on target dataset {target_dataset} for normal class is {cl_normal:.2f}%")
@@ -2118,6 +2184,47 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     #plot_energy_histograms_by_class(source_energy, target_energy, out_dir, title_prefix="")
     out_dir = "plots_energy_test"
     os.makedirs(out_dir, exist_ok=True)
+
+    ent = target_energy['entropy_px_all']  # shape [N_pixels]
+    pred = target_energy['pred_px_all']    # 0=background,1=foreground
+    true = target_energy['true_px_all']    # 0=background,1=foreground
+
+    # 2. Sépare correct vs incorrect
+    correct_mask   = (pred == true)
+    incorrect_mask = (pred != true)
+
+    correct_data   = ent[correct_mask]
+    incorrect_data = ent[incorrect_mask]
+
+    # 3. Choisis le nombre de bins et le chemin de sortie
+    n_bins  = 20
+    #out_dir = "./figures/"
+
+    # 3. Fonction helper pour filtrer et tracer
+    def plot_for_pred(pred_value):
+        mask_pred     = (pred == pred_value)
+        correct_mask  = mask_pred & (pred == true)
+        incorrect_mask= mask_pred & (pred != true)
+
+        correct_data   = ent[correct_mask]
+        incorrect_data = ent[incorrect_mask]
+
+        cls = "1" if pred_value==1 else "0"
+        plot_histogram_with_counts_and_percentages(
+            correct_data,
+            incorrect_data,
+            title=f"Entropie des pixels prédits = {cls}\n(correct vs incorrect)",
+            xlabel="Entropie pixel",
+            ylabel="Nombre de pixels",
+            out_path=f"{out_dir}hist_pred{cls}.png",
+            bin=n_bins
+        )
+        print(f"Histogramme préd={cls} → {out_dir}hist_pred{cls}.png")
+
+    plot_for_pred(1)
+    plot_for_pred(0)
+
+    #print(f"Histogramme enregistré dans : {out_png}")
 
     #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
 
@@ -2194,7 +2301,7 @@ def fast_eval():
         checkpoint_type = checkpoint_type_extended
         
         split = parsedargs.split
-        assert split == constants.TESTSET or split == constants.VALIDSET or split == constants.TRAINSET
+        assert split == constants.TESTSET or split == constants.CLVALIDSET or split == constants.TRAINSET
         
         _CODE_FUNCTION = 'fast_eval_{}'.format(split)
 

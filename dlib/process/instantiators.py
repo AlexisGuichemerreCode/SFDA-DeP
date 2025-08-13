@@ -2026,10 +2026,18 @@ def _get_model_params_for_opt(args, model):
                 param_features.append(parameter)
             elif architecture == constants.RESNET50:
                 param_classifiers.append(parameter)
+            elif architecture == constants.RESNET18:
+                param_features.append(parameter)
+            elif architecture == constants.RESNET101:
+                param_features.append(parameter)
         else:
             if architecture in (constants.VGG16, constants.INCEPTIONV3):
                 param_classifiers.append(parameter)
             elif architecture == constants.RESNET50:
+                param_features.append(parameter)
+            elif architecture == constants.RESNET18:
+                param_features.append(parameter)
+            elif architecture == constants.RESNET101:
                 param_features.append(parameter)
 
     return [
