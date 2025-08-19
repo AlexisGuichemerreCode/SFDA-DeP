@@ -93,6 +93,8 @@ def main():
         trainer.adjust_learning_rate()
         DLLogger.flush()
 
+
+
     if args.ds_to_compute_acc_trainset_source_target:
         #dar curves for source and target clas acc in trainer.source_acc and trainer.target_acc
         trainer.save_curves(task = "cl", cmpt_epoch = args.cmpt_epoch)
@@ -108,7 +110,11 @@ def main():
 
         #trainer.plot_source_target_loc_curves(cmpt_epoch = args.cmpt_epoch)  
 
+    if args.esfda:
+        trainer.save_metrics(filename="metrics_history.pickle")
+        trainer.save_loss(filename="loss_history.pickle")
 
+        
     if args.sf_uda:
         if args.shot or args.cdcl or args.sfde:
             trainer.save_pseudo_labels()

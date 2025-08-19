@@ -161,6 +161,108 @@ class Basic(object):
         }
         return eval_dict
 
+class KLConsistencyMetrics:
+    def __init__(self, device, tau=0.7, window=10, eps=1e-8):
+        """
+        Args:
+            device: 'cuda' or 'cpu'
+            tau: confidence threshold on current predictions
+            window: sliding window size for normalization
+            eps: epsilon to avoid division by zero
+        """
+        self.device = device
+        self.tau = tau
+        self.window = window
+        self.eps = eps
+
+        # Store raw KL values over time (sliding window)
+        self.hist = []
+        # Store normalized J_t values for monitoring/early stopping
+        self.J_hist = []
+
+
+        # Store marginal entropy history
+        self.hm_hist = []       # raw Hm
+        self.htilde_hist = []   # Htilde = log(K) - Hm
+
+        
+
+    @torch.no_grad()
+    def compute_batch_kl(self, logits, indices, idx_to_pred):
+        """
+        Compute KL-consistency between current model predictions and
+        source predictions (stored beforehand in idx_to_pred).
+
+        Args:
+            logits: [B, K] logits of the current model
+            indices: global indices of the current batch samples
+            idx_to_pred: dict {index: class predicted by the source model (argmax)}
+
+        Returns:
+            Mean KL value for this batch
+        """
+        p = F.softmax(logits, dim=-1)   # [B, K] current probabilities
+        conf = p.max(dim=1).values      # confidence of current predictions
+
+        kl_vals = []
+        for i in range(len(indices)):
+            idx = int(indices[i])
+            if idx in idx_to_pred and conf[i] >= self.tau:
+                # Source predicted label (hard argmax)
+                y_src = idx_to_pred[idx]
+                # Cross-entropy = KL divergence to one-hot source label
+                ce = -torch.log(p[i, y_src] + 1e-8)
+                kl_vals.append(ce)
+
+        if len(kl_vals) > 0:
+            kl = torch.stack(kl_vals).mean()
+        else:
+            kl = torch.tensor(0.0, device=self.device)
+
+        # Update sliding window history
+        self.hist.append(kl.item())
+        if len(self.hist) > self.window:
+            self.hist = self.hist[-self.window:]
+
+        return kl.item()
+
+    def _normalize(self):
+        """
+        Normalize the latest KL value within the range of the sliding window.
+        Result is between [0,1].
+        """
+        vals = self.hist
+        if len(vals) == 0:
+            return 0.0
+        v_t = vals[-1]
+        vmin, vmax = min(vals), max(vals)
+        return (v_t - vmin) / ((vmax - vmin) + self.eps)
+
+    def compute_Jt(self):
+        """
+        Compute the normalized score J_t for KL (0 = best, 1 = worst).
+        This acts like an "unsupervised validation loss".
+        """
+        J = self._normalize()
+        self.J_hist.append(J)
+        return J
+
+    def should_stop(self, delta=5e-3, r=3):
+        """
+        Early stopping criterion based on J_t stability.
+
+        Args:
+            delta: minimum decrease required to consider an improvement
+            r: number of consecutive epochs to monitor
+
+        Returns:
+            True if training should stop, False otherwise
+        """
+        if len(self.J_hist) < r+1:
+            return False
+        recent = self.J_hist[-(r+1):]
+        # Stop if J_t has not decreased by at least delta in the last r epochs
+        return (recent[-1] > (recent[0] - delta))
 
 class Trainer(Basic):
 
@@ -196,6 +298,9 @@ class Trainer(Basic):
         self.chg_staining = args.chg_staining
         self.path_staining = args.path_staining
         self.dist_staining = args.dist_staining
+
+
+        self.store_loss = []
 
         if args.entropy_models:
             self.entropy_models = args.entropy_models
@@ -401,6 +506,9 @@ class Trainer(Basic):
 
 
         if self.args.sf_uda:
+
+            self.metrics = KLConsistencyMetrics(device="cuda")
+
             #self._sf_uda_before_epoch_process()
 
             if self.args.esfda:
@@ -1899,6 +2007,8 @@ class Trainer(Basic):
                 total_loss += loss.detach().squeeze() * images.size(0)
             num_images += images.size(0)
 
+            self.store_loss.append((loss.detach().squeeze() * images.size(0)).item())
+
             if loss.requires_grad:
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
@@ -2156,7 +2266,7 @@ class Trainer(Basic):
         torch.cuda.empty_cache()
         return classification_acc.item(), images_entropy, pixel_entropy
     
-    def _compute_accuracy_f1(self, loader):
+    def _compute_accuracy_f1(self, loader, compute_kl = True):
         torch.cuda.empty_cache()
 
         num_correct = 0
@@ -2175,7 +2285,14 @@ class Trainer(Basic):
         y_pred = []
         y_true = []
 
-        for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+        # --- KL metrics ---
+        kl_vals = []
+
+        # --- Marginal entropy accumulators ---
+        sum_probs = torch.zeros(self.args.num_classes, device=self.args.c_cudaid)
+        num_samples = 0
+
+        for i, (images, targets, _, index, _, _, _, _) in enumerate(loader):
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)
 
@@ -2188,6 +2305,21 @@ class Trainer(Basic):
                 images_probs = torch.softmax(cl_logits, dim=1)
                 images_entropy = self.compute_entropy(images_probs)
                 images_total_entropy += images_entropy.sum().item()
+
+                # accumulate for marginal entropy
+                sum_probs += images_probs.sum(dim=0)
+                num_samples += images_probs.size(0)
+
+                # --- KL-consistency if enabled ---
+                if compute_kl:
+                    #conf = images_probs.max(dim=1).values
+                    for b in range(images.size(0)):
+                        #idx = int(indices[b])
+                        idx = index[b]  # Convert to Python int
+                        if idx in self.idx_to_pred:
+                            y_src = self.idx_to_pred[idx]
+                            ce = -torch.log(images_probs[b, y_src] + 1e-8)
+                            kl_vals.append(ce.item())
 
                 # pixel_logits = self.model.cams
                 # pixel_probs = torch.softmax(pixel_logits, dim=1)
@@ -2226,6 +2358,17 @@ class Trainer(Basic):
         precision = precision_score(y_true, y_pred, average='binary')
         recall = recall_score(y_true, y_pred, average='binary')
 
+        # --- KL consistency (mean over all images) ---
+        mean_kl = sum(kl_vals) / len(kl_vals) if len(kl_vals) > 0 else 0.0
+        self.metrics.hist.append(mean_kl)
+
+        # --- Marginal entropy ---
+        pbar = sum_probs / num_samples
+        Hm = -(pbar * (pbar + 1e-8).log()).sum().item()
+        Htilde = max(0.0, math.log(self.args.num_classes) - Hm)
+
+        self.metrics.hm_hist.append(Hm)
+        self.metrics.htilde_hist.append(Htilde)
 
         torch.cuda.empty_cache()
         return classification_acc.item(), classification_acc_normal, classification_acc_cancer, images_entropy, f1, precision, recall
@@ -2278,7 +2421,7 @@ class Trainer(Basic):
     def compute_acc_on_target(self, epoch, split=constants.TRAINSET):
         self.model.eval()
         with torch.no_grad():
-            target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[constants.TRAINSET])
+            target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[constants.TRAINSET], compute_kl = True)
             self.target_train_acc_cl.append(target_train_acc)
             self.target_train_f1.append(f1)
             self.target_train_precision.append(precision)
@@ -2314,10 +2457,10 @@ class Trainer(Basic):
                     print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {target_train_acc:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
 
 
-    def compute_acc_on_target_came(self, epoch, split=constants.TRAINSET):
+    def compute_acc_on_target_came(self, epoch, compute_kl= False, split=constants.TRAINSET):
         self.model.eval()
         with torch.no_grad():
-            target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[constants.TRAINSET])
+            target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[split], compute_kl = True)
             self.target_train_acc_cl.append(target_train_acc)
             self.target_train_f1.append(f1)
             self.target_train_precision.append(precision)
@@ -2516,7 +2659,46 @@ class Trainer(Basic):
         with open(pickle_path, 'wb') as f:
             pkl.dump(curves_data, f)
 
+    def save_metrics(self, filename="metrics_history.pickle"):
+        """
+        Save metrics histories (KL, Hm, Htilde) to a pickle file.
+        
+        Args:
+            metrics: your metrics object (with .hist, .hm, .h_tilde attributes)
+            filename: output pickle file name
+        """
+        data_to_save = {
+            "kl": self.metrics.hist,
+            "hm": self.metrics.hm_hist,
+            "h_tilde": self.metrics.htilde_hist
+        }
 
+        pickle_path = os.path.join(self.args.outd,filename)
+
+        with open(pickle_path, "wb") as f:
+            pkl.dump(data_to_save, f)
+
+        print(f"Metrics saved to {filename}")
+
+
+    def save_loss(self, filename="loss_history.pickle"):
+        """
+        Save loss history to a pickle file.
+        
+        Args:
+            loss: your metrics object (with .hist, .hm, .h_tilde attributes)
+            filename: output pickle file name
+        """
+        data_to_save = {
+            "loss": self.store_loss
+        }
+
+        pickle_path = os.path.join(self.args.outd,filename)
+
+        with open(pickle_path, "wb") as f:
+            pkl.dump(data_to_save, f)
+
+        print(f"Loss saved to {filename}")
     
 
     def plot_source_target_acc_curves(self, task, cmpt_epoch):
