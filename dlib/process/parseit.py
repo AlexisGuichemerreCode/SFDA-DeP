@@ -1143,14 +1143,14 @@ def get_args(args: dict, eval: bool = False):
         args['target_domain_data_paths'] = config.configure_data_paths(args, dsname_target_domain)
         if dsname_target_domain == constants.CAMELYON512:
             args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'],
-                                     f"fold-{0}")
+                                     f"fold-{7}")
             args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, constants.GLAS,
                                      f"fold-{args['fold']}")
         else:
             assert dsname_target_domain == constants.GLAS
             args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'], f"fold-{args['fold']}")
             args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, constants.CAMELYON512,
-                                     f"fold-{0}")
+                                     f"fold-{7}")
         
         args['mask_root_target'] = join(args['mask_root_target'], args['target_domain_ds_to_compute_stats'])
 
