@@ -434,7 +434,7 @@ class UdaMaxMinLoss(ElementaryLoss):
 
     def _assert_dataset_name(self, dataset_name: str):
         assert isinstance(dataset_name, str)
-        assert dataset_name in [constants.GLAS, constants.CAMELYON512]
+        assert dataset_name in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
 
     def kl_uniform_loss(self, logits):
         assert logits.ndim == 2
@@ -490,7 +490,7 @@ class UdaMaxMinLoss(ElementaryLoss):
             total_l = total_l + self.lambda_neg * self.kl_uniform_loss(
                 logits=logits_neg) * 0.0
 
-        if self.dataset_name == constants.CAMELYON512:
+        if self.dataset_name in [constants.CAMELYON512, constants.CAMELYON17_512]:
             # pos
             ind_metas = (pseudo_glabel == 1).nonzero().view(-1)
             if ind_metas.numel() > 0:

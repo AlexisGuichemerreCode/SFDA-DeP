@@ -346,6 +346,7 @@ OpenImages = 'OpenImages'
 GLAS = 'GLAS'  # GLAS 15
 ICIAR = 'ICIAR'  # ICIAR-2018-BACH-Challenge
 CAMELYON512 = 'CAMELYON512'  # Camelyon16 512 patch.
+CAMELYON17_512 = 'CAMELYON17_512'  # Camelyon17 512 patch
 BREAKHIS = 'BREAKHIS'
 
 FORMAT_DEBUG = 'DEBUG_{}'
@@ -355,8 +356,8 @@ if DEBUG:
     OpenImages = FORMAT_DEBUG.format(OpenImages)
 
 
-datasets = [CUB, ILSVRC, OpenImages, GLAS, BREAKHIS, CAMELYON512, ICIAR]
-SUPPORTED_DS = [GLAS, BREAKHIS, CAMELYON512, ICIAR]
+datasets = [CUB, ILSVRC, OpenImages, GLAS, BREAKHIS, CAMELYON512,CAMELYON17_512, ICIAR]
+SUPPORTED_DS = [GLAS, BREAKHIS, CAMELYON512,CAMELYON17_512, ICIAR]
 
 # Magnification for breakhis dataset
 MAG40X = '40X'
@@ -374,6 +375,7 @@ NBR_CHUNKS_TR_ILSVRC = {
 LOCALIZATION_AVAIL = {
     GLAS: True,
     CAMELYON512: True,
+    CAMELYON17_512: True,
     BREAKHIS: False,
     ICIAR: False
 }
@@ -387,6 +389,7 @@ NUMBER_CLASSES = {
     OpenImages: 100,
     GLAS: 2,
     CAMELYON512: 2,
+    CAMELYON17_512: 2,
     ICIAR: 4,
     BREAKHIS: 2
 }
@@ -406,6 +409,7 @@ COLOUR_BEST_CP = {
 EVAL_CHECKPOINT = {
     GLAS: BEST_LOC,
     CAMELYON512: BEST_LOC,
+    CAMELYON17_512: BEST_LOC,
     BREAKHIS: BEST_CL,
     ICIAR: BEST_CL
 }
@@ -548,12 +552,14 @@ PAIR_MIXED_C = 'mixed_class'
 # datasets with negative samples:
 DS_HAS_NEG_SAM = {
     CAMELYON512: True,
+    CAMELYON17_512: True,
     GLAS: False
 }
 
 
 DS_NEG_CL = {
     CAMELYON512: 0,
+    CAMELYON17_512: 0,
     GLAS: 0
 }
 

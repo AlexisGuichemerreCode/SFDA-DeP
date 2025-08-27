@@ -291,7 +291,7 @@ def get_tag(args: object, checkpoint_type: str = None) -> str:
         checkpoint_type = args.eval_checkpoint_type
 
     if args.task == constants.SEG:
-        assert args.dataset in [constants.GLAS, constants.CAMELYON512]
+        assert args.dataset in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
         tag = "{}-{}-{}-{}-{}-{}-cp_{}".format(
             args.dataset,
             args.fold,
@@ -301,7 +301,7 @@ def get_tag(args: object, checkpoint_type: str = None) -> str:
             args.spatial_pooling,
             checkpoint_type)
     elif args.task == constants.NEGEV:
-        assert args.dataset in [constants.GLAS, constants.CAMELYON512]
+        assert args.dataset in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
         tag = "{}-{}-{}-{}-{}-{}-cp_{}".format(
             args.dataset,
             args.fold,

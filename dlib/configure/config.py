@@ -26,7 +26,7 @@ def configure_data_paths(args, dsname=None):
         train = val = test = join(args['data_root'], dsname)
         data_paths = mch(train=train, val=val, test=test)
     elif dsname in [constants.GLAS, constants.CAMELYON512,
-                    constants.BREAKHIS, constants.ICIAR]:
+                    constants.CAMELYON17_512, constants.BREAKHIS, constants.ICIAR]:
 
         _splits = [constants.TRAINSET, constants.PXVALIDSET,
                    constants.CLVALIDSET, constants.TESTSET]
@@ -45,7 +45,7 @@ def configure_std_cams_folder(dsname):
     if dsname in [constants.CUB, constants.ILSVRC, constants.OpenImages]:
         folders = mch(train='', val='', test='')
     elif dsname in [constants.GLAS, constants.CAMELYON512,
-                    constants.BREAKHIS, constants.ICIAR]:
+                    constants.CAMELYON17_512, constants.BREAKHIS, constants.ICIAR]:
 
         _splits = [constants.TRAINSET, constants.PXVALIDSET,
                    constants.CLVALIDSET, constants.TESTSET]
@@ -848,6 +848,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
 
         'esfda_notflip_labels': False,  # do not flip labels of the images
         'CENotFlipLoss_lambda': 0.1,  # lambda of this term. >= 0.
+        'esfda_flip_labels_weight': False,  # not flip labels of the images with weight
 
         # ======================================================================
         #                     END - ENERGY DISTRIBUTION ESTIMATION

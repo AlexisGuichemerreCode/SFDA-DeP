@@ -115,6 +115,7 @@ class Basic(object):
         constants.OpenImages: constants.NUMBER_CLASSES[constants.OpenImages],
         constants.GLAS: constants.NUMBER_CLASSES[constants.GLAS],
         constants.CAMELYON512: constants.NUMBER_CLASSES[constants.CAMELYON512],
+        constants.CAMELYON17_512: constants.NUMBER_CLASSES[constants.CAMELYON17_512],
         constants.ICIAR: constants.NUMBER_CLASSES[constants.ICIAR],
         constants.BREAKHIS: constants.NUMBER_CLASSES[constants.BREAKHIS]
     }
@@ -524,7 +525,7 @@ class Trainer(Basic):
                         )
 
                     if self.args.select_entropy:
-                        self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_entropy(
+                        self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all = self.select_flippable_indices_entropy(
                             model=self.model,
                             loader=self.loaders,
                             select_imgs_ratio=self.args.esfda_select_imgs_ratio,
@@ -1179,7 +1180,8 @@ class Trainer(Basic):
                         masks,
                         views,
                         cal_mask=None,
-                        y_pred_batch=None):
+                        y_pred_batch=None,
+                        mask_entropy = None):
         
         args = self.args
         y_global = targets
@@ -1198,6 +1200,12 @@ class Trainer(Basic):
                         key_arg["cal_mask"] = cal_mask
                     if y_pred_batch is not None:
                         key_arg["y_pred_batch"] = y_pred_batch
+
+                    if self.args.esfda_flip_labels_weight:
+                        if mask_entropy is not None:
+                            key_arg["mask_entropy"] = mask_entropy
+                        else:
+                            key_arg["mask_entropy"] = None
 
                     output = self.model(images)
                     cl_logits = output
@@ -1799,9 +1807,13 @@ class Trainer(Basic):
                                         random_select_ratio=1.0, reverse_imgs = True):
         model.eval()
         entropy_list = []  # (index, entropy) for cancer-predicted images
+        entropy_all = {}          # store entropy for ALL images
+
         loader = loader['train']
 
         idx_to_pred = {}
+
+
 
         for batch_idx, (images, targets, p_glabel, index,
                         raw_imgs, std_cams, masks, views) in tqdm(
@@ -1821,6 +1833,8 @@ class Trainer(Basic):
                 ent = entropy[i].item()
 
                 idx_to_pred[idx] = pred
+                entropy_all[idx] = ent
+
 
                 if pred == 1:  # Only select from predicted cancer
                     entropy_list.append((idx, ent))
@@ -1842,7 +1856,7 @@ class Trainer(Basic):
         selected_flippable = set(idx for idx, _ in selected_indices)
         reinforce_indices = set()
 
-        return selected_flippable, reinforce_indices, idx_to_pred
+        return selected_flippable, reinforce_indices, idx_to_pred, entropy_all
     
 
     def train(self, split: str, epoch: int) -> dict:
@@ -1884,16 +1898,24 @@ class Trainer(Basic):
 
             if self.args.esfda and self.args.esfda_select_imgs:
                 supervised_labels = torch.full_like(p_glabel, -255)   #p_glabel
+                entropy_batch = []
+
+
                 for i in range(images.size(0)):
                     img_idx = index[i]
                     if img_idx in self.flipped_indices:
                         supervised_labels[i] = 0  
                     # elif img_idx in self.reinforce_indices:
-                    #     supervised_labels[i] = 1  
+                    #     supervised_labels[i] = 1 
+                    # 
+                    if img_idx in self.entropy_all:
+                        entropy_batch.append(self.entropy_all[img_idx])
+                    else:
+                        entropy_batch.append(0.0) 
                 p_glabel = supervised_labels
                 mask_list = [img_name not in self.flipped_indices for img_name in index]
                 y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
-
+                mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
             
             self.random()
             self.model.train()
@@ -1980,7 +2002,8 @@ class Trainer(Basic):
                                                         masks,
                                                         views,
                                                         cal_mask = mask_list,
-                                                        y_pred_batch = y_pred_batch
+                                                        y_pred_batch = y_pred_batch,
+                                                        mask_entropy = mask_entropy
                                                         )
 
 
@@ -2979,7 +3002,7 @@ class Trainer(Basic):
 
         avg = self.args.multi_iou_eval
         avg |= self.args.dataset in [constants.OpenImages, constants.GLAS,
-                                     constants.CAMELYON512]
+                                     constants.CAMELYON512, constants.CAMELYON17_512]
         if avg:
             loc_score = np.average(cam_performance)
         else:

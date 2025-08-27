@@ -76,7 +76,7 @@ def get_negev_loss(args, masterloss):
     support_background = args.model['support_background']
     multi_label_flag = args.multi_label_flag
 
-    assert args.dataset in [constants.CAMELYON512, constants.GLAS]
+    assert args.dataset in [constants.CAMELYON512, constants.GLAS, constants.CAMELYON17_512]
 
     if not args.model['freeze_cl']:
         masterloss.add(losses.ClLoss(
@@ -476,7 +476,7 @@ def get_loss_target(args):
                     cuda_id=args.c_cudaid,
                     support_background=support_background,
                     multi_label_flag=multi_label_flag)
-                CENotFlipLoss.set_it(lambda_=args.CENotFlipLoss_lambda)
+                CENotFlipLoss.set_it(lambda_=args.CENotFlipLoss_lambda, esfda_flip_labels_weight = args.esfda_flip_labels_weight)
                 masterloss.add(CENotFlipLoss)
             
 
@@ -918,9 +918,9 @@ def get_loss_source(args):
             
             if args.dataset == constants.GLAS:
                 negative_samples = False
-            elif args.dataset == constants.CAMELYON512 and args.neg_samples_partial:
+            elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and args.neg_samples_partial:
                 negative_samples = False
-            elif args.dataset == constants.CAMELYON512:
+            elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512]:
                 negative_samples = True
             
             EnergyCE_loss.set_it(ece_lambda=args.ece_lambda, apply_negative_samples=negative_samples, negative_c=constants.DS_NEG_CL[args.dataset])
@@ -1442,7 +1442,7 @@ def get_model(args, eval=False, eval_path_weights=''):
         )
 
     elif args.task == constants.SEG:
-        assert args.dataset in [constants.GLAS, constants.CAMELYON512]
+        assert args.dataset in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
         assert args.seg_mode == constants.BINARY_MODE
         assert classes == 2
 

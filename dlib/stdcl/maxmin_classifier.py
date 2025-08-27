@@ -140,7 +140,7 @@ class MaxMinClassifier(STDClModel):
 
     def _assert_dataset_name(self, dataset_name: str):
         assert isinstance(dataset_name, str)
-        assert dataset_name in [constants.GLAS, constants.CAMELYON512]
+        assert dataset_name in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
 
     def forward(self, x):
         x_shape = x.shape
@@ -161,7 +161,7 @@ class MaxMinClassifier(STDClModel):
         features = self.encoder(x)
         cl_logits_loc = self.classification_head1(features[-1])
 
-        if self.dataset_name == constants.CAMELYON512:
+        if self.dataset_name in [constants.CAMELYON512, constants.CAMELYON17_512]:
             cam = self.mask_head(features[-1])  # b, 1, h', w'.
         elif self.dataset_name == constants.GLAS:
             cams = self.classification_head1.cams_attached

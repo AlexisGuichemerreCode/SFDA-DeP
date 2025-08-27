@@ -188,8 +188,9 @@ class CENotFlipLoss(ElementaryLoss):
         self.lambda_: float = 1.0
         self.loss = nn.CrossEntropyLoss(reduction="mean", label_smoothing=self.ce_label_smoothing).to(self._device)
         self.already_set = False
+        self.entropy_mode = "linear"
 
-    def set_it(self, lambda_: float, ce_label_smoothing: float = 0.0):
+    def set_it(self, lambda_: float, esfda_flip_labels_weight = False, ce_label_smoothing: float = 0.0):
         assert isinstance(ce_label_smoothing, float)
         assert 0 <= ce_label_smoothing <= 1.
         self.ce_label_smoothing = ce_label_smoothing
@@ -198,8 +199,25 @@ class CENotFlipLoss(ElementaryLoss):
         assert 0 <= lambda_ <= 1.
         self.lambda_ = lambda_
 
-        self.loss = nn.CrossEntropyLoss(reduction="mean", label_smoothing=self.ce_label_smoothing).to(self._device)
+        # self.loss = nn.CrossEntropyLoss(reduction="mean", label_smoothing=self.ce_label_smoothing).to(self._device)
+        # self.already_set = True
+
+        reduction = "none" if esfda_flip_labels_weight else "mean"
+
+        self.loss = nn.CrossEntropyLoss(reduction=reduction,label_smoothing=self.ce_label_smoothing).to(self._device)
+
+        self.esfda_flip_labels_weight = esfda_flip_labels_weight
+
         self.already_set = True
+
+    def _weight_for_entropy(self, entropy: torch.Tensor):
+
+        if self.entropy_mode == "linear":
+            return 1.0 - entropy
+        elif self.entropy_mode == "exp":
+            return 1.0 / torch.exp(entropy)
+        else:
+            raise ValueError(f"Unknown entropy_mode: {self.entropy_mode}")
 
     def forward(self,
                 epoch=0,
@@ -238,12 +256,28 @@ class CENotFlipLoss(ElementaryLoss):
             cl_logits = cl_logits[keep_mask]
             y_pred_batch_not_flip = y_pred_batch[keep_mask]
 
+        if self.esfda_flip_labels_weight:
+        # per-sample loss
+            per_sample_loss = self.loss(cl_logits, y_pred_batch_not_flip)  # (batch_size,)
+
+            #
+            mask_entropy = key_arg["mask_entropy"].to(keep_mask.device)  # aligner device
+            weights = 1.0 - mask_entropy
+            weights = weights[keep_mask]
+            if weights is not None:
+                weights = weights.to(cl_logits.device)
+                loss = torch.mean(weights * per_sample_loss) * self.lambda_
+            # else:
+            #     loss = per_sample_loss.mean() * self.lambda_
+        else:
+            loss = self.loss(cl_logits, y_pred_batch_not_flip) * self.lambda_
 
 
         if cl_logits.shape[0] == 0:
             return torch.tensor(0.0, device=cl_logits.device, requires_grad=True)
 
-        return self.loss(input=cl_logits, target=y_pred_batch_not_flip) * self.lambda_
+        return loss
+        #return self.loss(input=cl_logits, target=y_pred_batch_not_flip) * self.lambda_
 
 
 class CEFlipLoss(ElementaryLoss):
@@ -647,7 +681,7 @@ class MaxMinLoss(ElementaryLoss):
 
     def _assert_dataset_name(self, dataset_name: str):
         assert isinstance(dataset_name, str)
-        assert dataset_name in [constants.GLAS, constants.CAMELYON512]
+        assert dataset_name in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
 
     def kl_uniform_loss(self, logits):
         assert logits.ndim == 2
@@ -702,7 +736,7 @@ class MaxMinLoss(ElementaryLoss):
             total_l = total_l + self.lambda_neg * self.kl_uniform_loss(
                 logits=logits_neg) * 0.0
 
-        if self.dataset_name == constants.CAMELYON512:
+        if self.dataset_name in [constants.CAMELYON512, constants.CAMELYON17_512]:
             # pos
             ind_metas = (glabel == 1).nonzero().view(-1)
             if ind_metas.numel() > 0:
@@ -1116,7 +1150,7 @@ class JointConRanFieldNegev(ElementaryLoss):
         self._already_set = False
 
     def _assert_dataset_name(self, dataset_name: str):
-        assert dataset_name in [constants.GLAS, constants.CAMELYON512]
+        assert dataset_name in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
 
     def _assert_pair_mode(self, pair_mode: str):
         assert pair_mode in [constants.PAIR_SAME_C, constants.PAIR_MIXED_C,

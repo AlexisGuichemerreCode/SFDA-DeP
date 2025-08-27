@@ -134,7 +134,8 @@ class CAMComputer(object):
                           constants.CUB: BoxEvaluator,
                           constants.ILSVRC: BoxEvaluator,
                           constants.GLAS: MaskEvaluator,
-                          constants.CAMELYON512: MaskEvaluator
+                          constants.CAMELYON512: MaskEvaluator,
+                          constants.CAMELYON17_512: MaskEvaluator
                           }[dataset_name](metadata=metadata,
                                           dataset_name=dataset_name,
                                           split=split,
@@ -458,7 +459,7 @@ class CAMComputer(object):
 
     def assert_dataset_mask(self):
         assert self.dataset_name in [constants.OpenImages, constants.GLAS,
-                                     constants.CAMELYON512]
+                                     constants.CAMELYON512, constants.CAMELYON17_512]
 
     def assert_tau_list(self):
         iou_threshold_list = self.evaluator.iou_threshold_list
@@ -518,7 +519,7 @@ class CAMComputer(object):
         elif isinstance(self.evaluator, MaskEvaluator):
             if self.args.dataset == constants.OpenImages:
                 ids = self._get_ids_with_zero_ignore_mask()
-            elif self.args.dataset in [constants.GLAS, constants.CAMELYON512]:
+            elif self.args.dataset in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]:
                 ids = self._get_ids_bin_datasets(nbr)
             else:
                 raise NotImplementedError

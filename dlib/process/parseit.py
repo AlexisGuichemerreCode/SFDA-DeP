@@ -659,7 +659,8 @@ def get_args(args: dict, eval: bool = False):
 
     parser.add_argument('--esfda_notflip_labels', type=str2bool, default=None,)
     parser.add_argument('--CENotFlipLoss_lambda', type=float, default=None,)
-
+    parser.add_argument('--esfda_flip_labels_weight', type=str2bool, default=None,)
+    
     # losses SFUDA
     parser.add_argument('--ce_pseudo_lb', type=str2bool, default=None,
                         help='Cross-entropy over image class pseudo-labels.')
@@ -1489,7 +1490,7 @@ def get_args(args: dict, eval: bool = False):
 
     assert args.fold in list(range(5))
     if args.task == constants.SEG:
-        assert args.dataset in [constants.GLAS, constants.CAMELYON512]
+        assert args.dataset in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
 
     if args.method != constants.METHOD_PIXELCAM and args.method != constants.NEGEV:
         assert args.spatial_pooling == constants.METHOD_2_POOLINGHEAD[args.method]
@@ -1546,7 +1547,7 @@ def get_args(args: dict, eval: bool = False):
 
 
     if args.task == constants.SEG:
-        assert args.dataset in [constants.GLAS, constants.CAMELYON512]
+        assert args.dataset in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
         assert args.model['arch'] in [constants.UNET]
         assert args.eval_checkpoint_type == constants.BEST_LOC
         assert args.method == constants.METHOD_SEG
