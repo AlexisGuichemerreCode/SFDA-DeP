@@ -307,6 +307,11 @@ class Trainer(Basic):
             self.entropy_models = args.entropy_models
             self.m_entropy_models = args.m_entropy_models
 
+        if args.unlearning_models:
+            self.unlearning_models = args.unlearning_models
+            self.m_unlearning_models = args.m_unlearning_models
+            self.best_unlearning_models = {}
+
         if args.cl_train_models:
             self.cl_train_models = args.cl_train_models
 
@@ -514,6 +519,11 @@ class Trainer(Basic):
 
             if self.args.esfda:
                 if self.args.esfda_select_imgs:
+
+                    self.store_master_loss = []
+                    self.store_ce_flip_loss = []
+                    self.store_ce_not_flip_loss = []
+
                     # select images to shift label
 
                     if self.args.select_distance:
@@ -1916,6 +1926,7 @@ class Trainer(Basic):
                 mask_list = [img_name not in self.flipped_indices for img_name in index]
                 y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
                 mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
+
             
             self.random()
             self.model.train()
@@ -2315,14 +2326,61 @@ class Trainer(Basic):
         sum_probs = torch.zeros(self.args.num_classes, device=self.args.c_cudaid)
         num_samples = 0
 
-        for i, (images, targets, _, index, _, _, _, _) in enumerate(loader):
+        entropy_batch = []
+
+
+        master_loss = 0
+        ce_flip_loss = 0
+        ce_not_flip_loss = 0
+
+        for i, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views) in enumerate(loader):
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)
 
             _,_,x,y = images.size()
 
+            supervised_labels = torch.full_like(p_glabel, -255)
+
+            for i in range(images.size(0)):
+                img_idx = index[i]
+                if img_idx in self.flipped_indices:
+                    supervised_labels[i] = 0  
+                # elif img_idx in self.reinforce_indices:
+                #     supervised_labels[i] = 1 
+                # 
+                if img_idx in self.entropy_all:
+                    entropy_batch.append(self.entropy_all[img_idx])
+                else:
+                    entropy_batch.append(0.0) 
+            p_glabel = supervised_labels
+            mask_list = [img_name not in self.flipped_indices for img_name in index]
+            y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
+            mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
+            y_pred_batch = y_pred_batch.cuda(self.args.c_cudaid)
+
             with torch.no_grad():
                 cl_logits = self.cl_forward(images)
+
+
+                loss = self._one_step_train_unlearning(images,
+                                                        raw_imgs,
+                                                        targets,
+                                                        p_glabel,
+                                                        std_cams,
+                                                        masks,
+                                                        views,
+                                                        cal_mask = mask_list,
+                                                        y_pred_batch = y_pred_batch,
+                                                        mask_entropy = mask_entropy
+                                                        )
+
+                loss_dict = {name: val for name, val in zip(self.loss.n_holder, self.loss.l_holder)}
+
+                master_loss += loss_dict['master_loss'].item()
+                ce_flip_loss += loss_dict['ce_flip_loss'].item()
+                ce_not_flip_loss += loss_dict['ce_not_flip_loss'].item()
+
+
                 pred = cl_logits.argmax(dim=1)
 
                 images_probs = torch.softmax(cl_logits, dim=1)
@@ -2351,6 +2409,7 @@ class Trainer(Basic):
                 # # pixel_entropies = pixel_dist.entropy()
                 # pixel_total_entropy += pixel_entropy.sum().item()
                 
+
             num_correct += (pred == targets).sum().detach()
             num_images += images.size(0)
 
@@ -2370,6 +2429,9 @@ class Trainer(Basic):
                 else:
                     raise ValueError("Unknown class label")
 
+        self.store_master_loss.append(master_loss) 
+        self.store_ce_flip_loss.append(ce_flip_loss)
+        self.store_ce_not_flip_loss.append(ce_not_flip_loss)
 
         classification_acc = num_correct / float(num_images) * 100
         classification_acc_normal = num_correct_normal / float(num_images_normal) * 100 if num_images_normal > 0 else 0
@@ -2682,6 +2744,19 @@ class Trainer(Basic):
         with open(pickle_path, 'wb') as f:
             pkl.dump(curves_data, f)
 
+    def save_loss_esfda(self):
+         #Store data in a pickle
+        curves_data = {
+            'master_loss': self.store_master_loss,
+            'ce_flip_loss': self.store_ce_flip_loss,
+            'ce_not_flip_loss': self.store_ce_not_flip_loss,
+        }
+    
+
+        pickle_path = os.path.join(self.args.outd, 'results_loss_esfda_data.pickle')
+        with open(pickle_path, 'wb') as f:
+            pkl.dump(curves_data, f)
+
     def save_metrics(self, filename="metrics_history.pickle"):
         """
         Save metrics histories (KL, Hm, Htilde) to a pickle file.
@@ -2818,6 +2893,27 @@ class Trainer(Basic):
         with open(pickle_path, 'wb') as f:
             pkl.dump(curves_data, f)
 
+    def plot_losses(self):
+        plt.figure(figsize=(8,5))
+
+        # On suppose que chaque liste a une valeur par epoch
+        epochs = range(1, len(self.store_master_loss) + 1)
+
+        plt.plot(epochs, self.store_master_loss, label="Master Loss", linewidth=2)
+        plt.plot(epochs, self.store_ce_flip_loss, label="CE Flip Loss", linewidth=2)
+        plt.plot(epochs, self.store_ce_not_flip_loss, label="CE Not Flip Loss", linewidth=2)
+
+        plt.title("Loss curves during training")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.grid(True)
+
+        output_path = os.path.join(self.args.outd, 'curve_on_train_esfda.png')
+        plt.tight_layout()
+        plt.savefig(output_path)
+        print(f"Figure saved at {output_path}")
+        plt.close()
 
     def evaluate_entropy(self, epoch, split, checkpoint_type=None, fcam_argmax=False):
         torch.cuda.empty_cache()
@@ -3198,7 +3294,69 @@ class Trainer(Basic):
 
 
 
+    def save_unlearning_models(self):
 
+        sorted_models = sorted(
+            self.best_unlearning_models.items(), 
+            key=lambda x: x[1][0], 
+            reverse=True            
+        )
+            
+        unlearning_log_path = os.path.join(self.args.outd, "best_models_unlearning.txt")
+
+        # with open(unlearning_log_path, "w") as f:
+        #     f.write("Rank\tEpoch\tcl\n")
+        #     for rank, (epoch, (entropy, _model)) in enumerate(sorted_models, start=1):
+        #         f.write(f"{rank}\t{epoch}\t{entropy:.6f}\n")
+
+        
+        for rank, (epoch, (entropy, _model)) in enumerate(sorted_models, start=1):
+            checkpoint_type = f"B-UNLEARNING{rank}"
+            tag = get_tag(self.args, checkpoint_type=checkpoint_type)
+            path = os.path.join(self.args.outd, tag)
+
+            if not os.path.isdir(path):
+                os.makedirs(path)
+            if self.args.task == constants.STD_CL:
+                if self.args.method in [constants.METHOD_ACOL,
+                                        constants.METHOD_ADL,
+                                        constants.METHOD_SPG,
+                                        constants.METHOD_TSCAM,
+                                        constants.METHOD_SAT]:
+                    torch.save(_model.state_dict(),
+                            join(path, 'model.pt'))
+
+                elif self.args.method == constants.METHOD_MAXMIN:
+                    torch.save(_model.encoder.state_dict(),
+                            join(path, 'encoder.pt'))
+                    torch.save(_model.classification_head1.state_dict(),
+                            join(path, 'classification_head1.pt'))
+                    torch.save(_model.classification_head2.state_dict(),
+                            join(path, 'classification_head2.pt'))
+                    if _model.mask_head is not None:
+                        torch.save(_model.mask_head.state_dict(),
+                                join(path, 'mask_head.pt'))
+
+                elif self.args.method == constants.METHOD_PIXELCAM:
+                    if "deit" in self.args.model['encoder_name']:
+                        torch.save(_model.state_dict(),
+                            join(path, 'model.pt'))
+                    else:
+                        torch.save(_model.encoder.state_dict(),
+                                join(path, 'encoder.pt'))
+                        torch.save(_model.classification_head.state_dict(),
+                                join(path, 'classification_head.pt')),
+                        torch.save(_model.pixel_wise_classification_head.state_dict(),
+                                    join(path, 'pixel_wise_classification_head.pt'))
+                else:
+                    torch.save(_model.encoder.state_dict(),
+                            join(path, 'encoder.pt'))
+                    torch.save(_model.classification_head.state_dict(),
+                            join(path, 'classification_head.pt'))
+                
+            self._save_args(path=join(path, 'config_model.yaml'))
+            DLLogger.log(message="Stored Model [CP: {} \t EPOCH: {} \t TAG: {}]:"
+                                " {}".format(checkpoint_type, epoch, tag, path))
 
 
 
@@ -3428,33 +3586,49 @@ class Trainer(Basic):
                              " {}".format(checkpoint_type, epoch, tag, path))
         
 
-    def update_best_entropy_model(self, epoch, split):
+    def update_best_unlearning_model(self, epoch, m_unlearning_models):
         torch.cuda.empty_cache()
         self.model.eval()
-        accuracy = 0.0
-        if self.args.task != constants.SEG:
-            accuracy, entropy = self._compute_accuracy_and_entropy(loader=self.loaders[split])
-
         torch.cuda.empty_cache()
 
-        model_entropy = deepcopy(self.model).to(self.cpu_device).eval()
+        model_unlearning = deepcopy(self.model).to(self.cpu_device).eval()
         #model_state = model_entropy.state_dict()
 
-        if not hasattr(self, "best_entropy_models"):
+        if not hasattr(self, "best_unlearning_models"):
             self.best_entropy_models = {}  # {epoch: (entropy, state_dict)}
 
-        if len(self.best_entropy_models) < self.m_entropy_models:
-            self.best_entropy_models[epoch] = (entropy, model_entropy)
 
-        else:
-            min_epoch, (min_entropy, _) = min(self.best_entropy_models.items(), key=lambda x: x[1][0])
+        if epoch <= m_unlearning_models:
+            self.best_unlearning_models[epoch] = (epoch, model_unlearning)
+            print(f"[Unlearning Sep: ] Model at epoch {epoch} is saved.")
 
-            if entropy > min_entropy:
-                del self.best_entropy_models[min_epoch]
+        def update_best_entropy_model(self, epoch, split):
+            torch.cuda.empty_cache()
+            self.model.eval()
+            accuracy = 0.0
+            if self.args.task != constants.SEG:
+                accuracy, entropy = self._compute_accuracy_and_entropy(loader=self.loaders[split])
+
+            torch.cuda.empty_cache()
+
+            model_entropy = deepcopy(self.model).to(self.cpu_device).eval()
+            #model_state = model_entropy.state_dict()
+
+            if not hasattr(self, "best_entropy_models"):
+                self.best_entropy_models = {}  # {epoch: (entropy, state_dict)}
+
+            if len(self.best_entropy_models) < self.m_entropy_models:
                 self.best_entropy_models[epoch] = (entropy, model_entropy)
-                print(f"[Entropy Replace] Replaced model from epoch {min_epoch} (entropy {min_entropy:.4f}) with epoch {epoch} (entropy {entropy:.4f})")
+
             else:
-                print(f"[Entropy Skip] Model at epoch {epoch} with entropy {entropy:.4f} was not selected.")
+                min_epoch, (min_entropy, _) = min(self.best_entropy_models.items(), key=lambda x: x[1][0])
+
+                if entropy > min_entropy:
+                    del self.best_entropy_models[min_epoch]
+                    self.best_entropy_models[epoch] = (entropy, model_entropy)
+                    print(f"[Entropy Replace] Replaced model from epoch {min_epoch} (entropy {min_entropy:.4f}) with epoch {epoch} (entropy {entropy:.4f})")
+                else:
+                    print(f"[Entropy Skip] Model at epoch {epoch} with entropy {entropy:.4f} was not selected.")
 
 
     def update_best_cl_train_model(self, epoch, split):

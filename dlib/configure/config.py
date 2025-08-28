@@ -491,6 +491,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         "neg_samples_ng_end_ep": -1,  # epoch when to stop loss. -1: never stop.
         # NEGEV ----------------------------------------------------------------
 
+        
         ####for sat
         "sat_drop_rate": 0.0,  # float [0, 1] stochastic depth decay rule same value in SAT code
         "sat_drop_path_rate": 0.1,  # float [0, 1] drop path for stochastic depth same value in SAT code
@@ -498,6 +499,10 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
 
         "entropy_models": False,  # save or not multiples source models.
         "m_entropy_models": 5,  # number of models to save.
+
+
+        "unlearning_models": False,  # save or not multiples source models.
+        "m_unlearning_models": 10,  # number of models to save.
 
         "cl_train_models": False,  # save or not best cl train models.
 
@@ -839,6 +844,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
 
         'esfda_entropy_partial': False,  # use or not partial entropy
         'esfda_entropy_partial_lambda': 0.1,  # lambda of this term. >= 0.
+        'esfda_weight_entropy': None,  # weight entropy of each sample
 
         'esfda_distance_cancer': 10.0,
         'esfda_distance_normal': 4.0,

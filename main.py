@@ -75,6 +75,9 @@ def main():
         if args.entropy_models:
             trainer.update_best_entropy_model(epoch, split=constants.TRAINSET)
 
+        if args.unlearning_models:
+            trainer.update_best_unlearning_model(epoch, m_unlearning_models=args.m_unlearning_models)
+
 
         #if args.dataset == constants.GLAS and args.cl_train_models:
             #trainer.update_best_cl_train_model(epoch, split=constants.TRAINSET)
@@ -113,6 +116,8 @@ def main():
     if args.esfda:
         trainer.save_metrics(filename="metrics_history.pickle")
         trainer.save_loss(filename="loss_history.pickle")
+        trainer.save_loss_esfda()
+        trainer.plot_losses()
 
         
     if args.sf_uda:
@@ -121,6 +126,9 @@ def main():
 
     if args.entropy_models:
         trainer.save_best_entropy_models()
+    
+    if args.unlearning_models:
+        trainer.save_unlearning_models()
 
     if args.cl_train_models:
         trainer.save_best_cl_train_models()

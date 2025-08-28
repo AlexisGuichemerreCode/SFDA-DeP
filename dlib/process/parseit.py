@@ -503,6 +503,12 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--cl_train_models', type=str2bool, default=None, 
                         help='cl_train_models: Save cl train model.')
 
+    parser.add_argument('--unlearning_models', type=str2bool, default=None, 
+                        help='unlearning_models: Save multiple models based on unlearning.')
+    
+    parser.add_argument('--m_unlearning_models', type=int, default=None, 
+                        help='m_unlearning_models: number of models to save based on unlearning.')
+
 
     #PixelCAM
     parser.add_argument('--pixel_wise_classification', type=str2bool, default=None,
@@ -649,6 +655,7 @@ def get_args(args: dict, eval: bool = False):
 
     parser.add_argument('--esfda_entropy_partial', type=str2bool, default=None,)
     parser.add_argument('--esfda_entropy_partial_lambda', type=float, default=None,)
+    parser.add_argument('--esfda_weight_entropy',  type=str, default=None,)
 
     parser.add_argument('--esfda_distance_cancer', type=float, default=None,)
     parser.add_argument('--esfda_distance_normal', type=float, default=None,)
@@ -660,6 +667,9 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_notflip_labels', type=str2bool, default=None,)
     parser.add_argument('--CENotFlipLoss_lambda', type=float, default=None,)
     parser.add_argument('--esfda_flip_labels_weight', type=str2bool, default=None,)
+
+
+
     
     # losses SFUDA
     parser.add_argument('--ce_pseudo_lb', type=str2bool, default=None,

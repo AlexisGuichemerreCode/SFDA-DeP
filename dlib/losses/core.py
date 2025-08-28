@@ -188,9 +188,21 @@ class CENotFlipLoss(ElementaryLoss):
         self.lambda_: float = 1.0
         self.loss = nn.CrossEntropyLoss(reduction="mean", label_smoothing=self.ce_label_smoothing).to(self._device)
         self.already_set = False
-        self.entropy_mode = "linear"
+        
 
-    def set_it(self, lambda_: float, esfda_flip_labels_weight = False, ce_label_smoothing: float = 0.0):
+    def _weight_for_entropy(self, entropy: torch.Tensor):
+
+        if self.entropy_mode is None:
+            return entropy
+
+        if self.entropy_mode == "linear":
+            return 1.0 - entropy
+        elif self.entropy_mode == "exp":
+            return 1.0 / torch.exp(entropy)
+        else:
+            raise ValueError(f"Unknown entropy_mode: {self.entropy_mode}")
+
+    def set_it(self, lambda_: float, esfda_flip_labels_weight = False, ce_label_smoothing: float = 0.0, esfda_weight_entropy: str | None = None,):
         assert isinstance(ce_label_smoothing, float)
         assert 0 <= ce_label_smoothing <= 1.
         self.ce_label_smoothing = ce_label_smoothing
@@ -208,16 +220,11 @@ class CENotFlipLoss(ElementaryLoss):
 
         self.esfda_flip_labels_weight = esfda_flip_labels_weight
 
+        self.entropy_mode = esfda_weight_entropy
+
         self.already_set = True
 
-    def _weight_for_entropy(self, entropy: torch.Tensor):
 
-        if self.entropy_mode == "linear":
-            return 1.0 - entropy
-        elif self.entropy_mode == "exp":
-            return 1.0 / torch.exp(entropy)
-        else:
-            raise ValueError(f"Unknown entropy_mode: {self.entropy_mode}")
 
     def forward(self,
                 epoch=0,
@@ -261,16 +268,30 @@ class CENotFlipLoss(ElementaryLoss):
             per_sample_loss = self.loss(cl_logits, y_pred_batch_not_flip)  # (batch_size,)
 
             #
-            mask_entropy = key_arg["mask_entropy"].to(keep_mask.device)  # aligner device
-            weights = 1.0 - mask_entropy
-            weights = weights[keep_mask]
+            mask_entropy = key_arg["mask_entropy"].to(keep_mask.device)  
+        #     weights = 1.0 - mask_entropy
+        #     weights = weights[keep_mask]
+        #     if weights is not None:
+        #         weights = weights.to(cl_logits.device)
+        #         loss = torch.mean(weights * per_sample_loss) * self.lambda_
+        #     # else:
+        #     #     loss = per_sample_loss.mean() * self.lambda_
+        # else:
+        #     loss = self.loss(cl_logits, y_pred_batch_not_flip) * self.lambda_
+
+            mask_entropy = mask_entropy[keep_mask]
+
+            # Call entropy weighting function
+            weights = self._weight_for_entropy(mask_entropy)
+
             if weights is not None:
                 weights = weights.to(cl_logits.device)
                 loss = torch.mean(weights * per_sample_loss) * self.lambda_
-            # else:
-            #     loss = per_sample_loss.mean() * self.lambda_
+            else:
+                loss = per_sample_loss.mean() * self.lambda_
         else:
             loss = self.loss(cl_logits, y_pred_batch_not_flip) * self.lambda_
+
 
 
         if cl_logits.shape[0] == 0:
