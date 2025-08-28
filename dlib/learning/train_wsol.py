@@ -2326,7 +2326,7 @@ class Trainer(Basic):
         sum_probs = torch.zeros(self.args.num_classes, device=self.args.c_cudaid)
         num_samples = 0
 
-        entropy_batch = []
+        
 
 
         master_loss = 0
@@ -2340,6 +2340,7 @@ class Trainer(Basic):
             _,_,x,y = images.size()
 
             supervised_labels = torch.full_like(p_glabel, -255)
+            entropy_batch = []
 
             for i in range(images.size(0)):
                 img_idx = index[i]

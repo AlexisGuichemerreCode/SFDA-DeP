@@ -279,10 +279,10 @@ class CENotFlipLoss(ElementaryLoss):
         # else:
         #     loss = self.loss(cl_logits, y_pred_batch_not_flip) * self.lambda_
 
-            mask_entropy = mask_entropy[keep_mask]
+            filtered_entropy = mask_entropy[keep_mask]
 
             # Call entropy weighting function
-            weights = self._weight_for_entropy(mask_entropy)
+            weights = self._weight_for_entropy(filtered_entropy)
 
             if weights is not None:
                 weights = weights.to(cl_logits.device)
