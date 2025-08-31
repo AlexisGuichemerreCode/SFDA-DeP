@@ -509,6 +509,9 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--m_unlearning_models', type=int, default=None, 
                         help='m_unlearning_models: number of models to save based on unlearning.')
 
+    parser.add_argument('--cpt_cam_entropy', type=str2bool, default=None,
+                        help='cpt_cam_entropy: checkpoint to compute the entropy.')
+
 
     #PixelCAM
     parser.add_argument('--pixel_wise_classification', type=str2bool, default=None,

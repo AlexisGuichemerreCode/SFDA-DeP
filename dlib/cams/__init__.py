@@ -77,7 +77,7 @@ def build_seg_extractor(model, args):
 def build_std_cam_extractor(classifier, args):
 
     if args.method == constants.METHOD_PIXELCAM:
-        return PixelCAM(model=classifier, dataset=args.dataset)
+        return PixelCAM(model=classifier, dataset=args.dataset, cpt_cam_entropy=args.cpt_cam_entropy)
 
     p1 = [constants.GAP, constants.MAXPOOL, constants.WILDCATHEAD,
           constants.LSEPOOL, constants.PRM]

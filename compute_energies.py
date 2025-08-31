@@ -1940,6 +1940,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         args_dict['detach_pixel_classifier'] = False
         args_dict['batch_norm_pixel_classifier'] = False
         args_dict['one_layer_pixel_classifier'] = False
+        args_dict['cpt_cam_entropy'] = False
         args = Dict2Obj(args_dict)
         args.outd = tmp_outd
         args.distributed = False
@@ -2031,7 +2032,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     source_domain_data_paths = config.configure_data_paths(args_dict, source_dataset)
 
-    target_metadata_root = join('./folds/wsol-done-right-splits', target_dataset, f"fold-{args.fold}")
+    target_metadata_root = join('./folds/wsol-done-right-splits', target_dataset, f"fold-{4}")
     # args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
     target_domain_data_paths = config.configure_data_paths(args_dict, target_dataset)
 

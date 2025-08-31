@@ -503,6 +503,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
 
         "unlearning_models": False,  # save or not multiples source models.
         "m_unlearning_models": 10,  # number of models to save.
+        "cpt_cam_entropy": False,   # return entropy of cams or not.
 
         "cl_train_models": False,  # save or not best cl train models.
 

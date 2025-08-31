@@ -365,12 +365,13 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
         args_dict = yaml.load(fy, Loader=IgnoreKeyLoader)
         # args_dict = yaml.safe_load(fy)
         # args_dict['model']['freeze_encoder'] = False
-        args_dict['pixel_wise_classification'] = False
+        args_dict['pixel_wise_classification'] = True
         args_dict['multiple_layer_pixel_classifier'] = False
         args_dict['anchors_ortogonal'] = False
         args_dict['detach_pixel_classifier'] = False
         args_dict['batch_norm_pixel_classifier'] = False
         args_dict['one_layer_pixel_classifier'] = False
+        args_dict['cpt_cam_entropy'] = True
         #args_dict['model']['spatial_dropout'] = 0.0
         args = Dict2Obj(args_dict)
         args.outd = tmp_outd
@@ -395,9 +396,9 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
                             map_location=get_cpu_device())
         model.classification_head.load_state_dict(header_w, strict=True)
 
-        # pixel_header_w = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
-        #                     map_location=get_cpu_device())
-        # model.pixel_wise_classification_head.load_state_dict(pixel_header_w, strict=True)
+        pixel_header_w = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
+                             map_location=get_cpu_device())
+        model.pixel_wise_classification_head.load_state_dict(pixel_header_w, strict=True)
 
     DLLogger.log(fmsg("Model checkpoint Loaded from {}".format(path_cl)))
         

@@ -545,13 +545,15 @@ class PixelCAM:
     def __init__(
         self,
         model: Union[STDClassifier, UnetFCAM, UnetNEGEV, Unet],
-        dataset = str
+        dataset = str,
+        cpt_cam_entropy: bool = False,
     ) -> None:
 
         self.assert_model(model)
 
         self.model = model
         self.dataset = dataset
+        self.cpt_cam_entropy = cpt_cam_entropy
 
     @staticmethod
     def assert_model(model: Union[STDClassifier, UnetFCAM, Unet, SAT]) -> None:
@@ -586,14 +588,30 @@ class PixelCAM:
         # Compute CAM: (h, w)
         #predicted_class = scores.argmax(dim=1)
         #self.predicted_class = predicted_class
-        cam = self.compute_cams(class_idx=class_idx, argmax=argmax)
-        if reshape is not None:
-            assert len(reshape) == 2
-            cam = F.interpolate(cam.unsqueeze(0).unsqueeze(0),
-                                reshape,
-                                mode='bilinear',
-                                align_corners=False).squeeze(0).squeeze(0)
-        return cam
+        if not self.cpt_cam_entropy:
+            cam = self.compute_cams(class_idx=class_idx, argmax=argmax)
+            if reshape is not None:
+                assert len(reshape) == 2
+                cam = F.interpolate(cam.unsqueeze(0).unsqueeze(0),
+                                    reshape,
+                                    mode='bilinear',
+                                    align_corners=False).squeeze(0).squeeze(0)
+            return cam
+        else:
+            cam, entropy = self.compute_cams_entropy(class_idx=class_idx, argmax=argmax)
+            if reshape is not None:
+                assert len(reshape) == 2
+                cam = F.interpolate(cam.unsqueeze(0).unsqueeze(0),
+                                    reshape,
+                                    mode='bilinear',
+                                    align_corners=False).squeeze(0).squeeze(0)
+                entropy = F.interpolate(entropy.unsqueeze(0).unsqueeze(0),
+                                    reshape,
+                                    mode='bilinear',
+                                    align_corners=False).squeeze(0).squeeze(0)
+                                    
+            cam_entropy = torch.stack([cam, entropy], dim=0)
+            return cam_entropy
 
     def compute_cams(self, class_idx: int, argmax: bool = False, ) -> Tensor:
         """Compute the CAM for a specific output class
@@ -621,6 +639,40 @@ class PixelCAM:
             cam = torch.softmax(cams, dim=1)[:, 1, :, :].squeeze(0)  # (h, w)
 
         return cam
+
+    def compute_cams_entropy(self, class_idx: int, argmax: bool = False, ) -> Tensor:
+        """Compute the CAM for a specific output class and entropy
+
+        Args:
+            argmax (bool, optional): if true, we compute the argmax over the
+            segmentation cams to get a binary map where 1 is foreground and 0
+            is background. if false, we return the normalize cam at index 1.
+            the segmentation cams are normalized using softmax.
+
+        Returns:
+            torch.Tensor[M, N]: class activation map of hooked conv layer
+            torch.Tensor[M, N]: pixel-wise entropy map
+        """
+
+        cams = self.model.cams
+        cams = cams.float()
+
+        assert cams.ndim == 4
+        assert cams.shape[0] == 1
+        assert cams.shape[1] == 2
+
+        probs = torch.softmax(cams, dim=1).squeeze(0)  # (2, h, w)
+            
+        if argmax:
+            cam = torch.argmax(cams, dim=1).squeeze(0).float()  # (h, w)
+        else:
+            cam = torch.softmax(cams, dim=1)[:, 1, :, :].squeeze(0)  # (h, w)
+
+        # Pixel-wise entropy: -sum(p log p)
+        entropy = -(probs * torch.log(probs.clamp(min=1e-8))).sum(dim=0)  # [H, W]
+
+        return cam, entropy
+
 
     def extra_repr(self) -> str:
         return f""

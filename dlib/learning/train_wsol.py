@@ -3590,8 +3590,9 @@ class Trainer(Basic):
     def update_best_unlearning_model(self, epoch, m_unlearning_models):
         torch.cuda.empty_cache()
         self.model.eval()
-        torch.cuda.empty_cache()
+        #torch.cuda.empty_cache()
 
+        self.model.flush()
         model_unlearning = deepcopy(self.model).to(self.cpu_device).eval()
         #model_state = model_entropy.state_dict()
 
@@ -3603,33 +3604,37 @@ class Trainer(Basic):
             self.best_unlearning_models[epoch] = (epoch, model_unlearning)
             print(f"[Unlearning Sep: ] Model at epoch {epoch} is saved.")
 
-        def update_best_entropy_model(self, epoch, split):
-            torch.cuda.empty_cache()
-            self.model.eval()
-            accuracy = 0.0
-            if self.args.task != constants.SEG:
-                accuracy, entropy = self._compute_accuracy_and_entropy(loader=self.loaders[split])
+    def update_best_entropy_model(self, epoch, split):
+        torch.cuda.empty_cache()
+        self.model.eval()
+        accuracy = 0.0
+        if self.args.task != constants.SEG:
+            accuracy, entropy = self._compute_accuracy_and_entropy(loader=self.loaders[split])
 
-            torch.cuda.empty_cache()
+        #torch.cuda.empty_cache()
 
-            model_entropy = deepcopy(self.model).to(self.cpu_device).eval()
-            #model_state = model_entropy.state_dict()
+        if self.args.method != constants.METHOD_MAXMIN:
+            self.model.flush()
 
-            if not hasattr(self, "best_entropy_models"):
-                self.best_entropy_models = {}  # {epoch: (entropy, state_dict)}
+        self.model.flush()
+        model_entropy = deepcopy(self.model).to(self.cpu_device).eval()
+        #model_state = model_entropy.state_dict()
 
-            if len(self.best_entropy_models) < self.m_entropy_models:
+        if not hasattr(self, "best_entropy_models"):
+            self.best_entropy_models = {}  # {epoch: (entropy, state_dict)}
+
+        if len(self.best_entropy_models) < self.m_entropy_models:
+            self.best_entropy_models[epoch] = (entropy, model_entropy)
+
+        else:
+            min_epoch, (min_entropy, _) = min(self.best_entropy_models.items(), key=lambda x: x[1][0])
+
+            if entropy > min_entropy:
+                del self.best_entropy_models[min_epoch]
                 self.best_entropy_models[epoch] = (entropy, model_entropy)
-
+                print(f"[Entropy Replace] Replaced model from epoch {min_epoch} (entropy {min_entropy:.4f}) with epoch {epoch} (entropy {entropy:.4f})")
             else:
-                min_epoch, (min_entropy, _) = min(self.best_entropy_models.items(), key=lambda x: x[1][0])
-
-                if entropy > min_entropy:
-                    del self.best_entropy_models[min_epoch]
-                    self.best_entropy_models[epoch] = (entropy, model_entropy)
-                    print(f"[Entropy Replace] Replaced model from epoch {min_epoch} (entropy {min_entropy:.4f}) with epoch {epoch} (entropy {entropy:.4f})")
-                else:
-                    print(f"[Entropy Skip] Model at epoch {epoch} with entropy {entropy:.4f} was not selected.")
+                print(f"[Entropy Skip] Model at epoch {epoch} with entropy {entropy:.4f} was not selected.")
 
 
     def update_best_cl_train_model(self, epoch, split):
