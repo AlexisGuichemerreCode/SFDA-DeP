@@ -225,14 +225,16 @@ class Cdcl(object):
                  dist_type = 'cos',
                  support_background = False,
                  threshold = 1.0,
+                 convergence = 0.001
                  ):
         
 
         self.model = model_trg
         self.train_loader_trg = train_loader_trg
-        self.clustering = Clustering(0.001,'feats',1000)
+        self.clustering = Clustering(convergence,'feats',1000)
         self.support_background = support_background
         self.threshold = threshold
+        self.convergence = convergence
         #self.source_anchors = F.normalize(torch.randn(2, 2048), dim=1).cpu()
 
     def solve(self):

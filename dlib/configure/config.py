@@ -723,6 +723,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # https://arxiv.org/pdf/2106.05528.pdf.
         'cdcl': False,  # CDCL method. ON/OFF. May require large memory.
         'cdcl_threshold': 1.0,  # threshold for pseudo-labels.
+        'cdcl_cvg': 0.001,  # convergence value for clustering.
         # ======================================================================
         #                           END - CDCL
         # ======================================================================
@@ -822,6 +823,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # https://arxiv.org/abs/2002.08546.
         'sfde': False,  # SFDE method. ON/OFF.
         'sfde_threshold': 1.0, # lambda of this term. >= 0.
+        'sfde_cvg': 0.001,  # convergence value for clustering.
          # ======================================================================
         #                     END - DISTRIBUTION ESTIMATION
         # ======================================================================

@@ -90,9 +90,9 @@ class DeepMil(_BasicPooler):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self.assert_x(x)
 
-        ft = self.avg_pool(x)
-        ft = ft.reshape(ft.size(0), -1)
-        self.lin_ft = ft  # bsz, sz
+        #ft = self.avg_pool(x)
+        #ft = ft.reshape(ft.size(0), -1)
+        #self.lin_ft = ft  # bsz, sz
 
         attention_scores = self.attention(x)  # N x C x H x W
         shape = attention_scores.shape
@@ -104,6 +104,9 @@ class DeepMil(_BasicPooler):
         for i, m in enumerate(self.classification):
             scores.append(m(out[:, i]))
         logits = torch.cat(scores, 1)
+
+        preds = logits.argmax(dim=1)    # N
+        self.lin_ft = out[torch.arange(out.size(0)), preds]  # N × C
 
         return logits
 

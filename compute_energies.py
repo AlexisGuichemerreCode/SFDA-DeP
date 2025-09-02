@@ -1934,7 +1934,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         # args_dict['model']['freeze_encoder'] = False
         args_dict['model']['folder_pre_trained_cl'] = None
         #args_dict['pixel_wise_classification'] = False
-        #args_dict['pixel_wise_classification'] = False
+        args_dict['pixel_wise_classification'] = False
         args_dict['multiple_layer_pixel_classifier'] = False
         args_dict['anchors_ortogonal'] = False
         args_dict['detach_pixel_classifier'] = False
@@ -2032,7 +2032,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     source_domain_data_paths = config.configure_data_paths(args_dict, source_dataset)
 
-    target_metadata_root = join('./folds/wsol-done-right-splits', target_dataset, f"fold-{4}")
+    target_metadata_root = join('./folds/wsol-done-right-splits', target_dataset, f"fold-{args.fold}")
     # args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
     target_domain_data_paths = config.configure_data_paths(args_dict, target_dataset)
 
@@ -2189,6 +2189,9 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     ent = target_energy['entropy_px_all']  # shape [N_pixels]
     pred = target_energy['pred_px_all']    # 0=background,1=foreground
     true = target_energy['true_px_all']    # 0=background,1=foreground
+
+    plot_hist_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset, model = model)
+
 
     # 2. Sépare correct vs incorrect
     correct_mask   = (pred == true)

@@ -619,7 +619,8 @@ class Trainer(Basic):
                         n_cls=self.args.num_classes,
                         support_background = self.args.model['support_background'],
                         threshold= self.args.sfde_threshold,
-                        variance= self.args.cdd_variance
+                        variance= self.args.cdd_variance,
+                        convergence= self.args.sfde_cvg
                         )
 
         elif args.faust:
@@ -687,7 +688,8 @@ class Trainer(Basic):
                         task=self.args.task,
                         n_cls=self.args.num_classes,
                         support_background = self.args.model['support_background'],
-                        threshold= self.args.cdcl_threshold
+                        threshold= self.args.cdcl_threshold,
+                        convergence= self.args.cdcl_cvg
                         )
         
         elif args.pxsfde:

@@ -1,47 +1,28 @@
-DLLL 2025-08-30 18:11:28.167322 0:00:00.155929 
-=============================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: GRADCAMPP 	 ENCODER: RESNET101 	
-=============================================================================================
+DLLL 2025-09-02 02:18:00.649350 0:00:00.118701 
+===========================================================================================================
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: TSCAM 	 ENCODER: DEIT_TSCAM_TINY_PATCH16_224 	
+===========================================================================================================
 
-DLLL 2025-08-30 18:11:31.203009 0:00:03.191616 `u-resnet101. Task: STD_CL.` was created. Nbr.params: 42506307
-DLLL 2025-08-30 18:11:31.203162 0:00:03.191769 Arch: STDClassifier
+DLLL 2025-09-02 02:18:01.111395 0:00:00.580746 `u-deit_tscam_tiny_patch16_224. Task: STD_CL.` was created. Nbr.params: 5527874
+DLLL 2025-09-02 02:18:01.111490 0:00:00.580841 Arch: TSCAMClassifier
 task: STD_CL
-encoder_name: resnet101
+encoder_name: deit_tscam_tiny_patch16_224
 encoder_weights: imagenet
 classes: 2
 aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: True
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: False
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: False
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
+None
 scale_in: 1.0
 freeze_cl: False
 im_rec: False
 img_range: tanh 
 
-DLLL 2025-08-30 18:11:31.210733 0:00:03.199340 u-resnet101. Task: STD_CL. 
+DLLL 2025-09-02 02:18:01.114206 0:00:00.583557 u-deit_tscam_tiny_patch16_224. Task: STD_CL. 
  NBR-PARAMS: 
-	Encoder [resnet101]: 42500160. 
-	Classification head [WGAP]: 6147. 
-	Total: 42506307. 
+	Encoder [u-deit_tscam_tiny_patch16_224]: 5527874. 
+	Total: 5527874. 
 
-DLLL 2025-08-30 18:11:33.123021 0:00:05.111628 
+DLLL 2025-09-02 02:18:01.929816 0:00:01.399167 
 ========================================================================================================================
- MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/ICLR-DATASET/ID_SOURCE_4_GLAS_GRADCAMPP_RESNET101_250-TSK_STD_CL-DS_GLAS-FOLD_0-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_GRADCAMPP-SPOOLING_WGAP-ARCH_STDCLASSIFIER-ECD_RESNET101/GLAS-0-RESNET101-GRADCAMPP-WGAP-CP_BEST_CLASSIFICATION
+ MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/CVPRW_HISTOLOGY_PROJECT_2024/MODEL_BENCHMARK_SFUDA/SOURCE_MODELS/BLOC/GLAS/ID_SOURCE_TINY_3_GLAS_TSCAM_350-TSK_STD_CL-DS_GLAS-FOLD_0-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_TSCAM-SPOOLING_GAP-ARCH_TSCAMCLASSIFIER-ECD_DEIT_TSCAM_TINY_PATCH16_224/GLAS-0-DEIT_TSCAM_TINY_PATCH16_224-TSCAM-GAP-CP_BEST_LOCALIZATION
 ========================================================================================================================
 

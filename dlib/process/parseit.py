@@ -631,11 +631,15 @@ def get_args(args: dict, eval: bool = False):
                         help='USE/NOT SFDE method for SFUDA.')
     parser.add_argument('--sfde_threshold', type=float, default=None,
                         help='Threshold, 0<T<=1.')
+    parser.add_argument('--sfde_cvg', type=float, default=None,
+                        help='convergence value for clustering.')
     # 5- CDCL
     parser.add_argument('--cdcl', type=str2bool, default=None,
                         help='USE/NOT CDCL method for SFUDA.')
     parser.add_argument('--cdcl_threshold', type=float, default=None,
                         help='Pourcentage of sample to keep for the method for each class.')
+    parser.add_argument('--cdcl_cvg', type=float, default=None,
+                        help='convergence value for clustering.')
 
     # 6- Pixel SFDA
     parser.add_argument('--pxsfde', type=str2bool, default=None,

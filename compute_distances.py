@@ -532,6 +532,7 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     'label_images': [],
     'img_ft': [],
     'entropy_imgs': [],
+    'margin_imgs': [],
     }
 
     model.eval()
@@ -552,11 +553,16 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
             probs_img = F.softmax(lgt_imgs, dim=1)
             preds = probs_img.argmax(dim=1) 
             entropy_img = -(probs_img * (probs_img + eps).log()).sum(dim=1)
+            sorted_probs, _ = probs_img.sort(dim=1, descending=True)
+            top1 = sorted_probs[:, 0]
+            top2 = sorted_probs[:, 1]
+            margin_img = top1 - top2
 
         energy_data['pred_images'].append(preds.detach().cpu())
         energy_data['label_images'].append(targets.detach().cpu())
         energy_data['img_ft'].append(features.detach().cpu())
         energy_data['entropy_imgs'].append(entropy_img.detach().cpu())
+        energy_data['margin_imgs'].append(margin_img.detach().cpu())
 
     # Concatenation
     energy_data['pred_images'] = torch.cat(energy_data['pred_images']).numpy()
@@ -564,6 +570,7 @@ def compute_energy_distributions(model, loader, cam_computer, dataset_name, ener
     energy_data['img_ft'] = torch.cat(energy_data['img_ft']).numpy()
 
     energy_data['entropy_imgs'] = torch.cat(energy_data['entropy_imgs']).cpu().numpy()
+    energy_data['margin_imgs'] = torch.cat(energy_data['margin_imgs']).cpu().numpy()
 
     return energy_data
 
@@ -711,6 +718,44 @@ def compute_distances_by_predicted_class_and_correctness(energy_data, model):
     }
 
     return results
+
+def compute_margin_by_predicted_class_and_correctness(energy_data, model):
+    """
+    Calcule le margin score pour chaque image,
+    et les regroupe par classe prédite (0 ou 1) et par justesse de la prédiction.
+
+    Args:
+        energy_data (dict): avec les clés 'pred_images', 'label_images', 'margin_imgs'
+
+    Returns:
+        dict contenant 4 groupes :
+        {
+            'class_0_correct': [...],
+            'class_0_incorrect': [...],
+            'class_1_correct': [...],
+            'class_1_incorrect': [...],
+        }
+    """
+    preds = energy_data['pred_images']
+    labels = energy_data['label_images']
+    margin_imgs = energy_data['margin_imgs']
+
+    if isinstance(preds, torch.Tensor):
+        preds = preds.numpy()
+    if isinstance(labels, torch.Tensor):
+        labels = labels.numpy()
+    if isinstance(margin_imgs, torch.Tensor):
+        margin_imgs = margin_imgs.cpu().numpy()
+
+    results = {
+        'class_0_correct': margin_imgs[(preds == 0) & (preds == labels)],
+        'class_0_incorrect': margin_imgs[(preds == 0) & (preds != labels)],
+        'class_1_correct': margin_imgs[(preds == 1) & (preds == labels)],
+        'class_1_incorrect': margin_imgs[(preds == 1) & (preds != labels)],
+    }
+
+    return results
+
 
 def compute_entropy_by_predicted_class_and_correctness(energy_data, model):
     """
@@ -2041,9 +2086,33 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     results_entropy = compute_entropy_by_predicted_class_and_correctness(target_energy, model)
     results = compute_distances_by_predicted_class_and_correctness(target_energy, model)
 
+    results_margin = compute_margin_by_predicted_class_and_correctness(target_energy, model)
 
     # Optionnel : plot
     import matplotlib.pyplot as plt
+
+    
+    # Classe prédite = 0
+    plt.figure(figsize=(6, 4))
+    plt.hist(results_margin['class_0_correct'], bins=50, alpha=0.7, label='Correctly Predicted')
+    plt.hist(results_margin['class_0_incorrect'], bins=50, alpha=0.7, label='Incorrectly Predicted')
+    plt.title("Distances to Opposite Anchor (Predicted Class: 0 - Normal)")
+    plt.xlabel("Distance to Opposite Anchor")
+    plt.ylabel("Number of Images")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "margin_class_0_cam_bcl_pixelcam.png"), dpi=300)
+
+    # Classe prédite = 1
+    plt.figure(figsize=(6, 4))
+    plt.hist(results_margin['class_1_correct'], bins=50, alpha=0.7, label='Correctly Predicted')
+    plt.hist(results_margin['class_1_incorrect'], bins=50, alpha=0.7, label='Incorrectly Predicted')
+    plt.title("Distances to Opposite Anchor (Predicted Class: 1 - Cancer)")
+    plt.xlabel("Distance to Opposite Anchor")
+    plt.ylabel("Number of Images")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "margin_class_1_cam_bcl_pixelcam.png"), dpi=300)
 
 
     # Classe prédite = 0
