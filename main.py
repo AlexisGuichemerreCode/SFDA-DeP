@@ -117,6 +117,8 @@ def main():
         trainer.save_metrics(filename="metrics_history.pickle")
         trainer.save_loss(filename="loss_history.pickle")
         trainer.save_loss_esfda()
+        #trainer.save_unlearning_acc(filename="unlearning_acc_history.pickle")
+        #trainer.plot_unlearning_acc()
         trainer.plot_losses()
 
         

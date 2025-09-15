@@ -495,6 +495,12 @@ MPI = 'mpi'
 LOCALIZATION_MTR = 'localization'
 CLASSIFICATION_MTR = 'classification'
 
+F1_MTR = 'F1'
+PRECISION_MTR = 'Precision'
+RECALL_MTR = 'Recall'
+
+
+
 # partial names of metrics
 MTR_PXAP = 'PXAP'
 MTR_TP = 'True positive'

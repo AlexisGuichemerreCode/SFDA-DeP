@@ -655,6 +655,11 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_select_imgs', type=str2bool, default=None,)
     parser.add_argument('--esfda_select_imgs_ratio', type=float, default=None,)
     parser.add_argument('--random_select_ratio', type=float, default=None,)
+
+    parser.add_argument('--balance_stable_to_flips', type=str2bool, default=None,)
+    parser.add_argument('--stable_match_strategy', type=str2bool, default=None,)
+
+    parser.add_argument('--entropy_probabilistic', type=str2bool, default=None,)
     
     parser.add_argument('--select_distance', type=str2bool, default=None,)
     parser.add_argument('--select_entropy', type=str2bool, default=None,)

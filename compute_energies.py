@@ -80,6 +80,13 @@ import cv2
 import json
 from glob import glob
 
+from sklearn.metrics import (
+    roc_curve, auc, precision_recall_curve,
+    confusion_matrix, precision_score, recall_score
+)
+
+
+
 
 def to_cuda(x):
     return x.cuda()
@@ -88,6 +95,166 @@ def to_onehot(label, num_classes):
     identity = to_cuda(torch.eye(num_classes))
     onehot = torch.index_select(identity, 0, label)
     return onehot
+
+
+def _to_numpy_list(x):
+    """Convertit une liste potentiellement composée de tensors/ndarrays -> liste de ndarrays CPU."""
+    out = []
+    for item in x:
+        try:
+            import torch
+            if isinstance(item, torch.Tensor):
+                item = item.detach().cpu().numpy()
+        except Exception:
+            pass
+        item = np.asarray(item)
+        out.append(item)
+    return out
+
+def _flatten_batches(arrs):
+    """
+    arrs: liste de ndarrays éventuellement de forme (B,K), (B,), (K,), ()...
+    Retourne:
+      - if K>1 -> np.ndarray shape (N,K)
+      - if K==1/scalar -> np.ndarray shape (N,)
+    """
+    flat = []
+    for a in arrs:
+        a = np.asarray(a)
+        if a.ndim == 0:
+            flat.append(a.reshape(1))
+        elif a.ndim == 1:
+            flat.append(a.reshape(-1, *(() if a.shape == () else a.shape[1:])))
+        elif a.ndim >= 2:
+            flat.append(a.reshape(a.shape[0], -1))  # (B,K'...) -> (B,Kflat)
+        else:
+            flat.append(a)
+    if len(flat) == 0:
+        return np.array([])
+    cat = np.concatenate(flat, axis=0)
+    return cat
+
+
+def evaluate_from_target_energy(target_energy: dict, out_dir: str, pos_label: int = 1, beta: float = 1.0):
+    """
+    Lit target_energy['probs_images'], ['label_images'] (et éventuellement ['pred_images']),
+    calcule y_true et y_score (proba classe pos_label), trace des courbes et retourne un résumé.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Récup
+    probs  = target_energy['probs_images']      # (67, 2)
+    labels = target_energy['label_images']      # (67,) ou (67,1)
+
+    # Torch -> NumPy si besoin
+    try:
+        import torch
+        if torch.is_tensor(probs):  probs  = probs.cpu().numpy()
+        if torch.is_tensor(labels): labels = labels.cpu().numpy()
+    except Exception:
+        pass
+
+    labels = labels.reshape(-1).astype(int)
+    y_score = probs[:, 1].astype(float)   # proba "cancer"
+    y_true = labels.astype(int)
+
+    # Sanity checks
+    assert probs.shape[0] == labels.shape[0]
+    assert probs.shape[1] == 2
+    assert np.allclose(probs.sum(axis=1), 1.0, atol=1e-6)
+
+    # ROC / PR
+    fpr, tpr, roc_thr = roc_curve(y_true, y_score, pos_label=pos_label)
+    roc_auc = auc(fpr, tpr)
+
+    prec, rec, thr = precision_recall_curve(labels, y_score, pos_label=1)
+    pr_auc = auc(rec, prec)
+
+    plt.figure(figsize=(6,5))
+    plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.4f}")
+    plt.plot([0,1],[0,1],'--')
+    plt.xlabel("FPR"); plt.ylabel("TPR (Recall)")
+    plt.title("ROC curve"); plt.legend(); plt.grid(True, alpha=0.3)
+    plt.tight_layout(); plt.savefig(os.path.join(out_dir, "roc_curve.png"), dpi=200); plt.close()
+
+    prec, rec, pr_thr = precision_recall_curve(y_true, y_score, pos_label=pos_label)
+    pr_auc = auc(rec, prec)
+
+    plt.figure(figsize=(6,5))
+    plt.plot(rec, prec, label=f"PR AUC = {pr_auc:.4f}")
+    plt.xlabel("Recall"); plt.ylabel("Precision")
+    plt.title("Precision–Recall curve"); plt.legend(); plt.grid(True, alpha=0.3)
+    plt.tight_layout(); plt.savefig(os.path.join(out_dir, "pr_curve.png"), dpi=200); plt.close()
+
+    # 4) Balayage des seuils
+    thr_grid = np.linspace(0.0, 1.0, 101)
+    prec_t, rec_t, fbeta_t = [], [], []
+    for thr in thr_grid:
+        y_hat = (y_score >= thr).astype(int)
+        p = precision_score(y_true, y_hat, zero_division=0)
+        r = recall_score(y_true, y_hat, zero_division=0)
+        if (beta*beta*p + r) > 0:
+            f_beta = (1+beta*beta) * p * r / (beta*beta * p + r)
+        else:
+            f_beta = 0.0
+        prec_t.append(p); rec_t.append(r); fbeta_t.append(f_beta)
+
+    prec_t = np.array(prec_t); rec_t = np.array(rec_t); fbeta_t = np.array(fbeta_t)
+    best_idx = int(np.argmax(fbeta_t))
+    best_thr = float(thr_grid[best_idx]); best_f = float(fbeta_t[best_idx])
+
+    plt.figure(figsize=(6,5))
+    plt.plot(thr_grid, fbeta_t); plt.axvline(best_thr, linestyle='--')
+    plt.title(f"F{beta:.1f} vs threshold (best={best_f:.4f} @ {best_thr:.3f})")
+    plt.xlabel("Threshold"); plt.ylabel(f"F{beta:.1f}")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout(); plt.savefig(os.path.join(out_dir, f"f{beta:.1f}_vs_threshold.png"), dpi=200); plt.close()
+
+    plt.figure(figsize=(6,5))
+    plt.plot(thr_grid, prec_t); plt.axvline(best_thr, linestyle='--')
+    plt.title("Precision vs threshold"); plt.xlabel("Threshold"); plt.ylabel("Precision")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout(); plt.savefig(os.path.join(out_dir, "precision_vs_threshold.png"), dpi=200); plt.close()
+
+    plt.figure(figsize=(6,5))
+    plt.plot(thr_grid, rec_t); plt.axvline(best_thr, linestyle='--')
+    plt.title("Recall vs threshold"); plt.xlabel("Threshold"); plt.ylabel("Recall")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout(); plt.savefig(os.path.join(out_dir, "recall_vs_threshold.png"), dpi=200); plt.close()
+
+    # 5) Youden J & matrice de conf au meilleur F_beta
+    J = tpr - fpr
+    if len(roc_thr) > 0:
+        j_idx = int(np.argmax(J)); j_thr = float(roc_thr[j_idx]); j_val = float(J[j_idx])
+    else:
+        j_thr, j_val = 0.5, 0.0
+
+    y_hat_best = (y_score >= best_thr).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_true, y_hat_best, labels=[0,1]).ravel()
+
+    conf_txt = os.path.join(out_dir, "confusion_counts.txt")
+    with open(conf_txt, "w") as f:
+        f.write(f"tn: {int(tn)}\n")
+        f.write(f"fp: {int(fp)}\n")
+        f.write(f"fn: {int(fn)}\n")
+        f.write(f"tp: {int(tp)}\n")
+
+
+    summary = {
+        "N": int(y_true.shape[0]),
+        "roc_auc": round(float(roc_auc), 6),
+        "pr_auc": round(float(pr_auc), 6),
+        "best_fbeta": round(best_f, 6),
+        "best_fbeta_threshold": round(best_thr, 6),
+        "youden_J": round(j_val, 6),
+        "youden_J_threshold": round(j_thr, 6),
+        "confusion_at_best_fbeta": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)},
+    }
+    with open(os.path.join(out_dir, "summary.json"), "w") as f:
+        json.dump(summary, f, indent=2)
+
+    return summary
+
 
 
 class DIST(object):
@@ -546,6 +713,121 @@ def compute_energy_distributions_cub(model, loader, dataset_name, energy_fn, spl
     # Concatenation
     energy_data['images'] = torch.cat(energy_data['images']).numpy()
     energy_data['pixels'] = torch.cat(energy_data['pixels']).view(-1).numpy()
+
+    return energy_data
+
+
+def compute_energy_distributions_images(
+    model,
+    loader,
+    dataset_name,          # conservé pour compat, pas utilisé ici
+    energy_fn,             # ex: lambda logits: -torch.logsumexp(logits, dim=1)
+    split,                 # "train" | "valid" | "test"
+    device,
+    args=None,
+    probs_mode: str = "full",   # "full" -> (N,K), "max" -> (N,)
+    return_numpy: bool = True,  # True -> np.ndarray en sortie
+):
+    """
+    Version image-only (pas de per-pixel).
+    Remplit:
+      - images: énergie par image (shape [N])
+      - per_class: dict label -> liste d'énergies (float)
+      - probs_images: (N,K) si probs_mode="full", sinon (N,) si "max"
+      - pred_images: (N,)
+      - label_images: (N,)
+      - entropy_imgs: (N,)
+      - min_logits_img / max_logits_img: (N,)
+      - img_ft: (N,D) si model.lin_ft dispo, sinon absent
+    """
+    model.eval()
+    dl = loader[split]
+    eps = 1e-8
+
+    energy_data = {
+        "images": [],
+        "per_class": defaultdict(list),
+        "probs_images": [],
+        "pred_images": [],
+        "label_images": [],
+        "entropy_imgs": [],
+        "min_logits_img": [],
+        "max_logits_img": [],
+        "img_ft": [],   # rempli uniquement si dispo
+    }
+
+    for batch_idx, batch in tqdm(enumerate(dl), total=len(dl), ncols=80):
+        # tolère différents formats de batch
+        if len(batch) >= 2:
+            images, targets = batch[0], batch[1]
+        else:
+            raise ValueError("Batch inattendu: attend au moins (images, targets, ...).")
+
+        images  = images.to(device)
+        targets = targets.to(device)
+
+        # --- Forward (image-level) ---
+        logits = model(images)                # [B,K]
+        probs  = torch.softmax(logits, dim=1) # [B,K]
+        preds  = probs.argmax(dim=1)          # [B]
+        H_img  = -(probs.clamp_min(1e-8) * probs.clamp_min(1e-8).log()).sum(dim=1)  # [B]
+
+        # Énergie par image (ex: -logsumexp) -> [B] attendu
+        energy_images = energy_fn(logits)     # idéalement [B]
+        if energy_images.ndim > 1:
+            # fallback si energy_fn renvoie autre chose: on réduit en moyenne
+            energy_images = energy_images.view(energy_images.size(0), -1).mean(dim=1)
+
+        max_vals_img, _ = logits.max(dim=1)   # [B]
+        min_vals_img, _ = logits.min(dim=1)   # [B]
+
+        # --- Collect ---
+        energy_data["images"].append(energy_images.detach().cpu())
+        if probs_mode == "full":
+            energy_data["probs_images"].append(probs.detach().cpu())
+        elif probs_mode == "max":
+            energy_data["probs_images"].append(probs.max(dim=1).values.detach().cpu())
+        else:
+            raise ValueError("probs_mode doit être 'full' ou 'max'.")
+
+        energy_data["pred_images"].append(preds.detach().cpu())
+        energy_data["label_images"].append(targets.detach().cpu())
+        energy_data["entropy_imgs"].append(H_img.detach().cpu())
+        energy_data["max_logits_img"].append(max_vals_img.detach().cpu())
+        energy_data["min_logits_img"].append(min_vals_img.detach().cpu())
+
+        # Features image si dispo (utile pour analyses ultérieures)
+        if hasattr(model, "lin_ft") and isinstance(model.lin_ft, torch.Tensor):
+            img_ft = model.lin_ft.flatten(start_dim=1)   # [B,D]
+            energy_data["img_ft"].append(img_ft.detach().cpu())
+
+        # Per-class (pour histogrammes par classe, etc.)
+        for e, y in zip(energy_images.detach().cpu(), targets.detach().cpu()):
+            energy_data["per_class"][int(y.item())].append(float(e.item()))
+
+    # --- Concat / numpy ---
+    def _cat_to_numpy(lst, dim=0):
+        t = torch.cat(lst, dim=dim)
+        return t.numpy() if return_numpy else t
+
+    energy_data["images"]        = _cat_to_numpy(energy_data["images"]).squeeze()
+    # probs_images: concat correctement selon mode
+    if len(energy_data["probs_images"]) > 0:
+        if probs_mode == "full":
+            energy_data["probs_images"] = _cat_to_numpy(energy_data["probs_images"], dim=0)  # (N,K)
+        else:
+            energy_data["probs_images"] = _cat_to_numpy(energy_data["probs_images"], dim=0)  # (N,)
+    energy_data["pred_images"]   = _cat_to_numpy(energy_data["pred_images"])
+    energy_data["label_images"]  = _cat_to_numpy(energy_data["label_images"])
+    energy_data["entropy_imgs"]  = _cat_to_numpy(energy_data["entropy_imgs"])
+    energy_data["max_logits_img"]= _cat_to_numpy(energy_data["max_logits_img"])
+    energy_data["min_logits_img"]= _cat_to_numpy(energy_data["min_logits_img"])
+
+    if len(energy_data["img_ft"]) > 0:
+        energy_data["img_ft"] = _cat_to_numpy(energy_data["img_ft"], dim=0)
+    else:
+        # si vide, on le retire pour éviter les surprises en aval
+        energy_data.pop("img_ft")
 
     return energy_data
 
@@ -2179,12 +2461,20 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     if target_dataset == constants.CUB:
         target_energy = compute_energy_distributions_cub(model, target_loaders, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
     else:
-        target_energy = compute_energy_distributions(model, target_loaders, target_cam_computer, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
+       #target_energy = compute_energy_distributions(model, target_loaders, target_cam_computer, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
+        target_energy = compute_energy_distributions_images(model, target_loaders, target_dataset, energy_fn, split, device, args=args,probs_mode="full",return_numpy=True)
 
     #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
     #plot_energy_histograms_by_class(source_energy, target_energy, out_dir, title_prefix="")
+
+    
+
+
     out_dir = "plots_energy_test"
     os.makedirs(out_dir, exist_ok=True)
+
+    summary = evaluate_from_target_energy(target_energy, out_dir, pos_label=1, beta=1.0)
+    print("[Threshold eval]", summary)
 
     ent = target_energy['entropy_px_all']  # shape [N_pixels]
     pred = target_energy['pred_px_all']    # 0=background,1=foreground

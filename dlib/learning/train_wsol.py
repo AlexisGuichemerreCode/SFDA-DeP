@@ -24,6 +24,7 @@ from torch import nn, Tensor
 from typing import Dict, Iterable, Callable
 
 from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.metrics import roc_auc_score, average_precision_score, roc_curve, precision_recall_curve
 
 
 root_dir = dirname(dirname(dirname(abspath(__file__))))
@@ -107,7 +108,8 @@ class Basic(object):
     _SPLITS = (constants.TRAINSET, constants.PXVALIDSET, constants.CLVALIDSET,
                constants.TESTSET)
     _EVAL_METRICS = ['loss', constants.CLASSIFICATION_MTR,
-                     constants.LOCALIZATION_MTR]
+                     constants.LOCALIZATION_MTR, constants.F1_MTR,
+                     constants.PRECISION_MTR, constants.RECALL_MTR]
 
     _NUM_CLASSES_MAPPING = {
         constants.CUB: constants.NUMBER_CLASSES[constants.CUB],
@@ -299,6 +301,8 @@ class Trainer(Basic):
         self.chg_staining = args.chg_staining
         self.path_staining = args.path_staining
         self.dist_staining = args.dist_staining
+
+        self.batch_idx = None
 
 
         self.store_loss = []
@@ -535,13 +539,20 @@ class Trainer(Basic):
                         )
 
                     if self.args.select_entropy:
-                        self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all = self.select_flippable_indices_entropy(
-                            model=self.model,
-                            loader=self.loaders,
-                            select_imgs_ratio=self.args.esfda_select_imgs_ratio,
-                            random_select_ratio=self.args.random_select_ratio,
-                            reverse_imgs=self.args.esfda_reverse_imgs
-                        )
+
+                        if self.args.entropy_probabilistic:
+                            self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.flippable_subset, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy_probabilistic(
+                                model=self.model,
+                                loader=self.loaders
+                            )
+                        else:
+                            self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.flippable_subset, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy(
+                                model=self.model,
+                                loader=self.loaders,
+                                select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+                                random_select_ratio=self.args.random_select_ratio,
+                                reverse_imgs=self.args.esfda_reverse_imgs
+                            )
 
                 else:
                     self.flipped_indices = self.select_flippable_indices(
@@ -1816,7 +1827,8 @@ class Trainer(Basic):
 
     @torch.no_grad()
     def select_flippable_indices_entropy(self, model, loader, select_imgs_ratio=0.1,
-                                        random_select_ratio=1.0, reverse_imgs = True):
+                                        random_select_ratio=1.0, reverse_imgs = True,    
+                                        stable_per_class=200,freeze_classes=(0, 1),sub_flippable_ratio=0.5):
         model.eval()
         entropy_list = []  # (index, entropy) for cancer-predicted images
         entropy_all = {}          # store entropy for ALL images
@@ -1824,7 +1836,7 @@ class Trainer(Basic):
         loader = loader['train']
 
         idx_to_pred = {}
-
+        by_class_all = {0: [], 1: []}
 
 
         for batch_idx, (images, targets, p_glabel, index,
@@ -1851,6 +1863,10 @@ class Trainer(Basic):
                 if pred == 1:  # Only select from predicted cancer
                     entropy_list.append((idx, ent))
 
+                if pred in by_class_all:
+                    by_class_all[pred].append((idx, ent))
+
+
         # Sort by descending entropy (most uncertain first)
         if reverse_imgs:
             entropy_list.sort(key=lambda x: x[1], reverse=reverse_imgs)
@@ -1868,7 +1884,241 @@ class Trainer(Basic):
         selected_flippable = set(idx for idx, _ in selected_indices)
         reinforce_indices = set()
 
-        return selected_flippable, reinforce_indices, idx_to_pred, entropy_all
+        if len(selected_flippable) > 0 and 0.0 < sub_flippable_ratio < 1.0:
+            k_sub = max(1, int(len(selected_flippable) * sub_flippable_ratio))
+            flippable_subset = set(py_random.sample(list(selected_flippable), k_sub))
+        else:
+            flippable_subset = set(selected_flippable)  
+
+
+        stable_selected = []
+        stable_labels = []
+
+        for c in freeze_classes:
+            if c in by_class_all:
+                by_class_all[c].sort(key=lambda x: x[1])  # low entropy first
+
+        if self.args.balance_stable_to_flips:
+            # ---- Nouveau mode: nombre total de stables = nombre de flips utilisés ----
+            total_target = len(flippable_subset)  # -> matcher ce que tu utilises réellement
+            if total_target > 0 and len(freeze_classes) > 0:
+                # Construire un quota par classe
+                if self.args.stable_match_strategy:
+                    # proportionnel au #candidats disponibles
+                    total_candidates = sum(len(by_class_all.get(c, [])) for c in freeze_classes)
+                    if total_candidates == 0:
+                        targets_per_class = {c: 0 for c in freeze_classes}
+                    else:
+                        quotas = {c: (len(by_class_all.get(c, [])) / total_candidates) * total_target
+                                for c in freeze_classes}
+                        base = {c: int(quotas[c]) for c in freeze_classes}
+                        allocated = sum(base.values())
+                        remainder = total_target - allocated
+                        # Distribuer le reliquat selon la plus grosse fraction et la dispo
+                        fracs = sorted(
+                            ((c, quotas[c] - base[c]) for c in freeze_classes),
+                            key=lambda t: t[1], reverse=True
+                        )
+                        targets_per_class = base
+                        for c, _ in fracs:
+                            if remainder <= 0:
+                                break
+                            targets_per_class[c] += 1
+                            remainder -= 1
+                else:
+                    # "even": parts égales + reliquat vers classes les plus fournies
+                    base = total_target // len(freeze_classes)
+                    remainder = total_target % len(freeze_classes)
+                    # prioriser les classes avec plus de candidats
+                    avail_order = sorted(
+                        list(freeze_classes),
+                        key=lambda cc: len(by_class_all.get(cc, [])),
+                        reverse=True
+                    )
+                    targets_per_class = {c: base for c in freeze_classes}
+                    for c in avail_order:
+                        if remainder <= 0:
+                            break
+                        targets_per_class[c] += 1
+                        remainder -= 1
+
+                # Choisir les stables par classe (low-entropy d'abord)
+                for c in freeze_classes:
+                    pool = by_class_all.get(c, [])
+                    take = min(targets_per_class.get(c, 0), len(pool))
+                    chosen = pool[:take]
+                    stable_selected.extend([idx for (idx, _) in chosen])
+                    stable_labels.extend([c] * take)
+
+            # else: total_target == 0 -> pas de stables
+        else:
+            # ---- Mode original: quota fixe par classe ----
+            for c in freeze_classes:
+                pool = by_class_all.get(c, [])
+                take = min(stable_per_class, len(pool))
+                chosen = pool[:take]
+                stable_selected.extend([idx for (idx, _) in chosen])
+                stable_labels.extend([c] * take)
+
+        # for c in freeze_classes:
+        #     if c in by_class_all and len(by_class_all[c]) > 0:
+               
+        #         by_class_all[c].sort(key=lambda x: x[1])  # low entropy first
+        #         take = min(stable_per_class, len(by_class_all[c]))
+        #         chosen = by_class_all[c][:take]
+        #         stable_selected.extend([idx for (idx, _) in chosen])
+        #         stable_labels.extend([c] * take)
+
+        return selected_flippable, reinforce_indices, idx_to_pred, entropy_all, flippable_subset, stable_selected, stable_labels
+
+    @torch.no_grad()
+    def select_flippable_indices_entropy_probabilistic(
+        self,
+        model,
+        loader,
+        flip_on_pred_classes=(1,),   
+        freeze_classes=(0, 1),      
+        seed_per_epoch: bool = True,
+    ):
+
+        model.eval()
+        loader = loader['train']
+        selected_flippable = set()
+        reinforce_indices = set() 
+        idx_to_pred = {}
+        entropy_all = {}
+        stable_selected, stable_labels = [], []
+
+        all_idx, all_pred_top1, all_pred_top2, all_H = [], [], [], []
+
+
+        K = int(self.args.num_classes)
+        logK = math.log(max(2, K))
+
+
+        set_seed(seed=self.default_seed, verbose=False)
+
+        flip_set = None if flip_on_pred_classes is None else set(flip_on_pred_classes)
+        freeze_set = set(freeze_classes) if freeze_classes is not None else set()
+
+        for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views) in tqdm(
+            enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+
+            images = images.cuda(self.args.c_cudaid)
+            logits = model(images)
+            probs = F.softmax(logits, dim=1)
+
+            # top-2 classes & preds
+            K = probs.size(1)
+            if K >= 2:
+                top2_vals, top2_idx = probs.topk(k=2, dim=1)        # [B,2]
+                pred_top1 = top2_idx[:, 0]
+                pred_top2 = top2_idx[:, 1]
+            else:
+                pred_top1 = torch.zeros(probs.size(0), dtype=torch.long, device=probs.device)
+                pred_top2 = pred_top1.clone()
+
+            ent = -(probs.clamp_min(1e-8) * probs.clamp_min(1e-8).log()).sum(dim=1)  # [B]
+
+            
+            for b in range(images.size(0)):
+                idx  = index[b]
+                t1   = int(pred_top1[b].item())
+                t2   = int(pred_top2[b].item()) if K >= 2 else int(1 - t1)  # binaire: l'autre classe
+                Hval = float(ent[b].item())
+
+                idx_to_pred[idx] = t1              # prédiction top-1 (utile pour logging)
+                entropy_all[idx] = Hval
+
+                all_idx.append(idx)
+                all_pred_top1.append(t1)
+                all_pred_top2.append(t2)
+                all_H.append(Hval)
+
+                # idx = index[b]
+                # pred = int(preds[b].item())
+                # idx_to_pred[idx] = pred
+                # entropy_all[idx] = float(ent[b].item())
+
+                # flip_candidate = (flip_set is None) or (pred in flip_set)
+                # flip_now = bool(u[b].item() < p[b].item()) and flip_candidate
+
+                # if flip_now:
+                #     selected_flippable.add(idx)
+                # else:
+                #     if pred in freeze_set:
+                #         stable_selected.append(idx)
+                #         stable_labels.append(pred)
+
+        
+        #flippable_subset = set(selected_flippable)
+
+        # -------- 2) Min–max global sur H --------
+        H_t   = torch.tensor(all_H, dtype=torch.float32)
+        H_min = float(H_t.min().item())
+        H_max = float(H_t.max().item())
+        denom = H_max - H_min
+        eps   = 1e-8
+
+        # selected_flippable = set()
+        # reinforce_indices  = set()
+        # stable_selected, stable_labels = [], []
+
+        # Calcul p_i & tirage
+        p_t   = ((H_t - H_min) / (denom + eps)).clamp_(0.0, 1.0)    # [N]
+        draw_t = torch.bernoulli(p_t).to(torch.bool)                # [N] tirage 0/1
+
+        # -------- 4) Décision + construction des sorties --------
+        flip_set   = None if flip_on_pred_classes is None else set(flip_on_pred_classes)
+        freeze_set = set(freeze_classes) if freeze_classes is not None else set()
+
+        selected_flippable = set()
+        stable_selected, stable_labels = [], []
+
+        # Maps supplémentaires pour appliquer les labels ensuite
+        flip_labels_map = {}        # idx -> label (top-2) pour les flips
+        assigned_labels_map = {}    # idx -> label final (flip: top-2, stable: top-1)
+
+        for i in range(len(all_idx)):
+            idx   = all_idx[i]
+            t1    = all_pred_top1[i]
+            t2    = all_pred_top2[i]
+            draw1 = bool(draw_t[i].item())
+            # Flip autorisé pour cette classe ?
+            flip_allowed = (flip_set is None) or (t1 in flip_set)
+
+            if draw1 and flip_allowed:
+                # FLIP -> vers top-2
+                selected_flippable.add(idx)
+                flip_labels_map[idx] = t2
+                assigned_labels_map[idx] = t2
+            else:
+                # STABLE si la classe prédite est "freezable"
+                if t1 in freeze_set:
+                    stable_selected.append(idx)
+                    stable_labels.append(t1)
+                    assigned_labels_map[idx] = t1
+                # sinon: on ne l'assigne pas (restera -255 plus tard)
+
+        # Enregistre pour usage en aval (p.ex. dans _compute_accuracy_f1)
+        self.flip_labels_map = flip_labels_map               # idx -> top-2
+        self.assigned_labels_map = assigned_labels_map       # idx -> label final (flip ou stable)
+        # (utile pour debug si besoin)
+        self.idx_to_second = {i: s for i, s in zip(all_idx, all_pred_top2)}
+
+        # Pas de sous-échantillonnage en mode probabiliste
+        flippable_subset = set(selected_flippable)
+        reinforce_indices = set()  # conservé pour compatibilité
+
+        return (
+            selected_flippable,
+            reinforce_indices,
+            idx_to_pred,       # top-1
+            entropy_all,
+            flippable_subset,
+            stable_selected,
+            stable_labels,
+        )
     
 
     def train(self, split: str, epoch: int) -> dict:
@@ -1897,6 +2147,8 @@ class Trainer(Basic):
         for batch_idx, (images, targets, p_glabel, index,
                         raw_imgs, std_cams, masks, views) in tqdm(
                 enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+
+            self.batch_idx = batch_idx
             
 
             # if self.args.esfda and self.args.esfda_select_imgs:
@@ -1908,6 +2160,8 @@ class Trainer(Basic):
                 
                 #p_glabel = supervised_labels
 
+            
+
             if self.args.esfda and self.args.esfda_select_imgs:
                 supervised_labels = torch.full_like(p_glabel, -255)   #p_glabel
                 entropy_batch = []
@@ -1915,8 +2169,11 @@ class Trainer(Basic):
 
                 for i in range(images.size(0)):
                     img_idx = index[i]
-                    if img_idx in self.flipped_indices:
-                        supervised_labels[i] = 0  
+                    if img_idx in self.flippable_subset:
+                        supervised_labels[i] = int(self.assigned_labels_map[img_idx])
+
+                    # if img_idx in self.flipped_indices:
+                    #     supervised_labels[i] = 0  
                     # elif img_idx in self.reinforce_indices:
                     #     supervised_labels[i] = 1 
                     # 
@@ -2221,6 +2478,55 @@ class Trainer(Basic):
 
         torch.cuda.empty_cache()
         return classification_acc.item()
+
+    def _compute_accuracy_binary_metrics(self, loader):
+        torch.cuda.empty_cache()
+
+        num_correct = 0
+        num_images = 0
+
+        all_preds = []
+        all_targets = []
+        all_probs = []  
+
+        for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+            images = images.cuda(self.args.c_cudaid)
+            targets = targets.cuda(self.args.c_cudaid)
+
+            with torch.no_grad():
+                cl_logits = self.cl_forward(images)
+                pred = cl_logits.argmax(dim=1)
+
+                probs = torch.softmax(cl_logits, dim=1)[:, 1]
+
+
+            num_correct += (pred == targets).sum().detach()
+            num_images += images.size(0)
+
+
+            all_preds.extend(pred.cpu().numpy())
+            all_targets.extend(targets.cpu().numpy())
+            all_probs.extend(probs.cpu().numpy())
+
+        # Accuracy
+        classification_acc = num_correct / float(num_images) * 100
+
+
+        all_preds = np.array(all_preds)
+        all_targets = np.array(all_targets)
+        all_probs = np.array(all_probs)
+
+        # Precision / Recall / F1
+        precision = precision_score(all_targets, all_preds, average="binary")
+        recall = recall_score(all_targets, all_preds, average="binary")
+        f1 = f1_score(all_targets, all_preds, average="binary")
+
+        roc_auc = roc_auc_score(all_targets, all_probs)
+        pr_auc = average_precision_score(all_targets, all_probs)
+
+        torch.cuda.empty_cache()
+
+        return classification_acc.item(), pr_auc, roc_auc, f1
     
 
     def _compute_accuracy_and_entropy(self, loader):
@@ -2301,6 +2607,23 @@ class Trainer(Basic):
 
         torch.cuda.empty_cache()
         return classification_acc.item(), images_entropy, pixel_entropy
+
+    def _plot_entropy_hist_per_class(self, ent_correct, ent_incorrect, class_name, out_path, num_classes):
+        h_max = math.log(max(2, num_classes))
+        bins = np.linspace(0.0, h_max, 30)
+
+        plt.figure(figsize=(7, 4.5))
+        plt.hist(ent_correct, bins=bins, alpha=0.7, label="Correctly classified", density=True)
+        plt.hist(ent_incorrect, bins=bins, alpha=0.7, label="Misclassified", density=True)
+        plt.title(f"Histogram — {class_name}")
+        plt.xlabel("Entropy per image")
+        plt.ylabel("Density")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        plt.savefig(out_path, dpi=200)
+        plt.close()
     
     def _compute_accuracy_f1(self, loader, compute_kl = True):
         torch.cuda.empty_cache()
@@ -2318,6 +2641,10 @@ class Trainer(Basic):
         images_total_entropy = 0
         pixel_total_entropy = 0
 
+        # --- Entropy buckets for plotting (per class & correctness)
+        ent_correct_by_class = {0: [], 1: []}
+        ent_incorrect_by_class = {0: [], 1: []}
+
         y_pred = []
         y_true = []
 
@@ -2334,6 +2661,9 @@ class Trainer(Basic):
         master_loss = 0
         ce_flip_loss = 0
         ce_not_flip_loss = 0
+
+        correct_flip, total_flip = 0, 0
+        correct_stable, total_stable = 0, 0
 
         for i, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views) in enumerate(loader):
             images = images.cuda(self.args.c_cudaid)
@@ -2388,7 +2718,23 @@ class Trainer(Basic):
 
                 images_probs = torch.softmax(cl_logits, dim=1)
                 images_entropy = self.compute_entropy(images_probs)
+                
                 images_total_entropy += images_entropy.sum().item()
+
+                ent_per_img = -(images_probs.clamp(min=1e-8) * images_probs.clamp(min=1e-8).log()).sum(dim=1)
+
+                with torch.no_grad():
+                    for b in range(images.size(0)):
+                        true_cls = int(targets[b].item())
+                        corr = int(pred[b].item() == true_cls)
+                        h = float(ent_per_img[b].item())
+
+                        if true_cls in (0, 1):  # adapté à ton binaire normal/cancer
+                            if corr:
+                                ent_correct_by_class[true_cls].append(h)
+                            else:
+                                ent_incorrect_by_class[true_cls].append(h)
+
 
                 # accumulate for marginal entropy
                 sum_probs += images_probs.sum(dim=0)
@@ -2411,6 +2757,23 @@ class Trainer(Basic):
                 # # pixel_dist = torch.distributions.Categorical(pixel_probs)
                 # # pixel_entropies = pixel_dist.entropy()
                 # pixel_total_entropy += pixel_entropy.sum().item()
+
+            for b in range(images.size(0)):
+                idx_b = index[b]
+                pred_b = pred[b].item()
+
+                # Flip
+                if idx_b in self.flippable_subset:
+                    tgt_flip = 0
+                    correct_flip += int(pred_b == tgt_flip)
+                    total_flip += 1
+
+                # Stable
+                if idx_b in self.stable_selected:
+                    pos = self.stable_selected.index(idx_b)
+                    tgt_stable = int(self.stable_labels[pos])
+                    correct_stable += int(pred_b == tgt_stable)
+                    total_stable += 1
                 
 
             num_correct += (pred == targets).sum().detach()
@@ -2432,6 +2795,48 @@ class Trainer(Basic):
                 else:
                     raise ValueError("Unknown class label")
 
+
+        fig_outd = os.path.join(self.args.outd, "entropy_hist")
+        os.makedirs(fig_outd, exist_ok=True)
+
+        #fig_outd = os.path.join(self.args.outd, "entropy_hist")
+
+
+        if self.args.target_domain_ds_to_compute_stats == constants.GLAS:
+            # on trace par epoch (pas par batch)
+            CLASS_NORMAL_NAME = f"entropy_hist_normal_ep{self.epoch:03d}.png"
+            CLASS_CANCER_NAME = f"entropy_hist_cancer_ep{self.epoch:03d}.png"
+            out_normal = os.path.join(fig_outd, CLASS_NORMAL_NAME)
+            out_cancer = os.path.join(fig_outd, CLASS_CANCER_NAME)
+        else:
+            # CAMELYON : on trace tous les N batchs -> inclure batch_idx
+            # (suppose que tu appelles ici à l'intérieur de la boucle batch)
+            CLASS_NORMAL_NAME = f"entropy_hist_normal_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
+            CLASS_CANCER_NAME = f"entropy_hist_cancer_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
+            out_normal = os.path.join(fig_outd, CLASS_NORMAL_NAME)
+            out_cancer = os.path.join(fig_outd, CLASS_CANCER_NAME)
+
+
+
+        # Classe 0 : Normal
+        self._plot_entropy_hist_per_class(
+            ent_correct_by_class[0],
+            ent_incorrect_by_class[0],
+            class_name="Normal (label=0)",
+            out_path=out_normal,
+            num_classes=self.args.num_classes
+        )
+
+        # Classe 1 : Cancer
+        self._plot_entropy_hist_per_class(
+            ent_correct_by_class[1],
+            ent_incorrect_by_class[1],
+            class_name="Cancer (label=1)",
+            out_path=out_cancer,
+            num_classes=self.args.num_classes
+        )
+
+
         self.store_master_loss.append(master_loss) 
         self.store_ce_flip_loss.append(ce_flip_loss)
         self.store_ce_not_flip_loss.append(ce_not_flip_loss)
@@ -2446,17 +2851,29 @@ class Trainer(Basic):
         precision = precision_score(y_true, y_pred, average='binary')
         recall = recall_score(y_true, y_pred, average='binary')
 
-        # --- KL consistency (mean over all images) ---
+        #KL consistency (mean over all images)
         mean_kl = sum(kl_vals) / len(kl_vals) if len(kl_vals) > 0 else 0.0
         self.metrics.hist.append(mean_kl)
 
-        # --- Marginal entropy ---
+        #Marginal entropy
         pbar = sum_probs / num_samples
         Hm = -(pbar * (pbar + 1e-8).log()).sum().item()
         Htilde = max(0.0, math.log(self.args.num_classes) - Hm)
 
         self.metrics.hm_hist.append(Hm)
         self.metrics.htilde_hist.append(Htilde)
+
+        #Store accuracy unlearned and not unlearned ---
+        acc_flip = correct_flip / total_flip if total_flip > 0 else 0.0
+        acc_stable = correct_stable / total_stable if total_stable > 0 else 0.0
+
+        if not hasattr(self, "history_acc_flip"):
+            self.history_acc_flip = []
+        if not hasattr(self, "history_acc_stable"):
+            self.history_acc_stable = []
+
+        self.history_acc_flip.append(acc_flip)
+        self.history_acc_stable.append(acc_stable)
 
         torch.cuda.empty_cache()
         return classification_acc.item(), classification_acc_normal, classification_acc_cancer, images_entropy, f1, precision, recall
@@ -2760,6 +3177,22 @@ class Trainer(Basic):
         with open(pickle_path, 'wb') as f:
             pkl.dump(curves_data, f)
 
+    def save_unlearning_acc(self, filename="unlearning_acc_history.pickle"):
+        """
+        Sauvegarde l'historique des accuracies flip et stable dans un pickle.
+        """
+        data_to_save = {
+            "history_acc_flip": getattr(self, "history_acc_flip", []),
+            "history_acc_stable": getattr(self, "history_acc_stable", [])
+        }
+
+        pickle_path = os.path.join(self.args.outd, filename)
+
+        with open(pickle_path, "wb") as f:
+            pkl.dump(data_to_save, f)
+
+        print(f"Unlearning accuracies saved to {pickle_path}")
+
     def save_metrics(self, filename="metrics_history.pickle"):
         """
         Save metrics histories (KL, Hm, Htilde) to a pickle file.
@@ -2895,6 +3328,31 @@ class Trainer(Basic):
         pickle_path = os.path.join(self.args.outd, f'{file_prefix}_results_target_data.pickle')
         with open(pickle_path, 'wb') as f:
             pkl.dump(curves_data, f)
+
+    def plot_unlearning_acc(self):
+        """
+        Plot accuracies (flip & stable) au cours des batches pendant l'unlearning.
+        """
+        plt.figure(figsize=(8, 5))
+
+        # On suppose que self.acc_flip et self.acc_stable sont remplis batch par batch
+        batches = range(1, len(self.history_acc_flip) + 1)
+
+        plt.plot(batches, self.history_acc_flip, label="Accuracy Flip", linewidth=2, color="red")
+        plt.plot(batches, self.history_acc_stable, label="Accuracy Stable", linewidth=2, color="blue")
+
+        plt.title("Unlearning Accuracies per Batch")
+        plt.xlabel("Batch")
+        plt.ylabel("Accuracy")
+        plt.ylim(0, 1)  # accuracies en [0,1]
+        plt.legend()
+        plt.grid(True)
+
+        output_path = os.path.join(self.args.outd, 'unlearning_acc_curves.png')
+        plt.tight_layout()
+        plt.savefig(output_path)
+        print(f"Figure saved at {output_path}")
+        plt.close()
 
     def plot_losses(self):
         plt.figure(figsize=(8,5))
@@ -3040,11 +3498,20 @@ class Trainer(Basic):
 
         # cl.
         accuracy = 0.0
+        precision, recall, f1 = 0.0, 0.0, 0.0
         if self.args.task != constants.SEG:
-            accuracy = self._compute_accuracy(loader=self.loaders[splitcl])
+            #accuracy = self._compute_accuracy(loader=self.loaders[splitcl])
+            accuracy,precision, recall, f1 = self._compute_accuracy_binary_metrics(loader=self.loaders[splitcl])
 
         self.performance_meters[
             splitcl][constants.CLASSIFICATION_MTR].update(accuracy)
+
+        self.performance_meters[
+            splitcl][constants.PRECISION_MTR].update(precision)
+        self.performance_meters[
+            splitcl][constants.RECALL_MTR].update(recall)
+        self.performance_meters[
+            splitcl][constants.F1_MTR].update(f1)
 
         # loc.
         if not self.args.localization_avail:

@@ -841,6 +841,11 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'esfda_select_imgs_ratio':  0.1,  # ratio of images to select
         'random_select_ratio':  0.1,  # ratio of images to select
 
+        'balance_stable_to_flips' : False,  # balance the number of stable and flips
+        'stable_match_strategy': False,  # match the number of stable and flips
+
+        'entropy_probabilistic': False,
+
         'select_distance': False, # select images based on distance
         'select_entropy': False, # select images based on entropy
         'esfda_reverse_imgs': True, # select images based on entropy
