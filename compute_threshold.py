@@ -31,7 +31,19 @@ import matplotlib.pyplot as plt
 from skimage.transform import resize
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from scipy.stats import wasserstein_distance, entropy, ks_2samp
+from scipy.spatial.distance import cdist
+from scipy import linalg
+from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_score, davies_bouldin_score
+from sklearn.metrics import confusion_matrix
+
+
+
+
+
+
 import seaborn as sns
 
 
@@ -84,6 +96,9 @@ from sklearn.metrics import (
     roc_curve, auc, precision_recall_curve,
     confusion_matrix, precision_score, recall_score
 )
+
+from sklearn.metrics import roc_auc_score, average_precision_score
+
 
 
 
@@ -833,238 +848,57 @@ def compute_energy_distributions_images(
 
 
 
-def compute_energy_distributions(model, loader, cam_computer, dataset_name, energy_fn, split, device,args=None, metadata_root=None, cam_performance = False):
+def compute_energy_distributions(model, loader, cam_computer, dataset_name, energy_fn, split, device, args=None, metadata_root=None):
 
-    energy_data = {
-    'images': [],
-    'pixels': [],
-    'per_class': defaultdict(list),
-    'foreground': [],
-    'background': [],
-    'probs_images': [],
-    'pred_images': [],
-    'label_images': [],
-    'cam_performance': [],
-    'min_logits_img': [],
-    'max_logits_img': [],
-    'min_logits_pxs': [],
-    'max_logits_pxs': [],
-    'lin_ft': [],
-    'img_ft': [],
-    'entropy_imgs': [],
-    'entropy_px': [],
-    'metrics_px_bg': [],
-    'metrics_px_fg': [],
-    'n_fg': [],
-    'n_bg': [],
-    'pct_fg': [],
-    'entropy_px_all': [],    # pour stocker l'entropie de chaque pixel
-    'pred_px_all': [],       # pour stocker la prédiction (0/1) de chaque pixel
-    'true_px_all': [],       # pour stocker le label vrai (0/1) de chaque pixel
-    'pixel_tp': [],          # nombre de vrais positifs par batch/image
-    'pixel_fp': [],          # nombre de faux positifs
-    'pixel_tn': [],          # vrais négatifs
-    'pixel_fn': [],          # faux négatifs
-    }
+    cam_perfs = []
 
     model.eval()
     eps = 1e-8
 
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
-        enumerate(loader[split]), ncols=constants.NCOLS,
-        total=len(loader[split])):
+        enumerate(loader[split]), ncols=constants.NCOLS, total=len(loader[split])
+    ):
 
         images = images.to(device)
         targets = targets.to(device)
         image_size = images.shape[2:]
 
-        # Per-image
-        with torch.no_grad():
-            lgt_imgs = model(images)
-            px_lin_ft = model.encoder_last_features
-            lgt_pxs = model.pixel_wise_classification_head(px_lin_ft)[0]
+       
+        for image, target, image_id in zip(images, targets, index):
 
-            probs_img = F.softmax(lgt_imgs, dim=1)
-            preds = probs_img.argmax(dim=1) 
-            entropy_img = -(probs_img * (probs_img + eps).log()).sum(dim=1)
+            dataset_source = os.path.basename(args.mask_root)
+            if dataset_source == dataset_name:
+                mask_root_data = args.mask_root
+            else:
+                mask_root_data = os.path.join(os.path.dirname(args.mask_root), dataset_name)
 
-            probs_px = torch.softmax(lgt_pxs, dim=1)   
-            entropy_px = -(probs_px * probs_px.log()).sum(dim=1)
-            mean_H_img = entropy_px.mean(dim=(1, 2))
-
-            pred_px  = probs_px.argmax(1)                          # [B, H, W] 0=normal,1=cancer
-            mask_c   = (pred_px == 1)
-            mask_n   = (pred_px == 0)
-
-            area_img = mask_c.shape[1] * mask_c.shape[2]
-            n_fg = mask_c.sum(dim=(1, 2))                  # [B]  (tensor int64)
-
-            # 3. Compter les pixels prédits "normal" (background)
-            n_bg = mask_n.sum(dim=(1, 2))                  # [B]
-
-            # 4. (option) convertir en pourcentage
-            pct_fg = n_fg.float() / area_img              # [B]  entre 0 – 1
-            pct_bg = n_bg.float() / area_img
-
-            energy_data["n_fg"].append(n_fg.cpu())        # liste de tensors [B]
-            energy_data["n_bg"].append(n_bg.cpu())
-            energy_data["pct_fg"].append(pct_fg.cpu())
-
-            eps = 1e-6
-            H_c = (entropy_px * mask_c).sum((1,2)) / (mask_c.sum((1,2)).float() + eps)  # [B]
-            H_n = (entropy_px * mask_n).sum((1,2)) / (mask_n.sum((1,2)).float() + eps) 
-
-            energy_data['metrics_px_bg'].append(H_n.detach().cpu())
-            energy_data['metrics_px_fg'].append(H_c.detach().cpu())
-
-            energy_data['entropy_px'].append(mean_H_img.detach().cpu())
-
-            energy_data['lin_ft'].append(px_lin_ft.flatten(start_dim=1).detach().cpu())
-            energy_data['img_ft'].append(model.lin_ft.flatten(start_dim=1).detach().cpu())
-
-
-            energy_data['probs_images'].append(probs_img.max(dim=1).values.detach().cpu())
-            energy_data['label_images'].append(targets.detach().cpu())
-            energy_data['pred_images'].append(preds.detach().cpu())
-            energy_data['entropy_imgs'].append(entropy_img.detach().cpu())
-
-            energy_images = energy_fn(lgt_imgs)
-            energy_pixels = energy_fn(lgt_pxs)
-
-            max_vals_img, _ = lgt_imgs.max(dim=1) 
-            min_vals_img, _ = lgt_imgs.min(dim=1)
-
-            max_vals_pxs, _ = lgt_pxs.max(dim=1) 
-            min_vals_pxs, _ = lgt_pxs.min(dim=1)
-
-            energy_data['images'].append(energy_images.cpu())
-            energy_data['pixels'].append(energy_pixels.flatten(start_dim=1).cpu())
-
-            energy_data['max_logits_img'].append(max_vals_img.cpu())
-            energy_data['min_logits_img'].append(min_vals_img.cpu())
-
-            energy_data['max_logits_pxs'].append(max_vals_pxs.flatten(start_dim=1).cpu())
-            energy_data['min_logits_pxs'].append(min_vals_pxs.flatten(start_dim=1).cpu())
-
-            #energy_data['entropy_px_all'].append(entropy_px.detach().cpu())
-            #energy_data['pred_px_all'].append(pred_px.detach().cpu())
-
-
-            for energy, label in zip(energy_images.cpu(), targets.cpu()):
-                energy_data['per_class'][int(label)].append(energy.item())
-
-
-        # Per-pixel foreground / background 
-        for i, (label, image_id) in enumerate(zip(targets, index)):
-            _, _, h, w = px_lin_ft.shape
-            gt_bin = get_resized_gt_mask(
-                cam_computer.evaluator.mask_paths[image_id],
-                cam_computer.evaluator.ignore_paths[image_id],
-                dataset_name,
-                label.item(),
-                size=(h, w),
-                device=device
+            cam_computer = CAMComputer(
+                args=deepcopy(args),
+                model=model,
+                loader=loader[split],
+                metadata_root=os.path.join(metadata_root, split),
+                mask_root=mask_root_data,
+                iou_threshold_list=args.iou_threshold_list,
+                dataset_name=dataset_name,
+                split=split,
+                cam_curve_interval=args.cam_curve_interval,
+                multi_contour_eval=args.multi_contour_eval,
+                out_folder=args.outd,
             )
 
-            single_ent = entropy_px[i]                     # [H, W]
-            single_pred= pred_px[i]                        # [H, W]
+            if dataset_name == constants.CAMELYON512 or dataset_name == constants.CAMELYON17_512:
+                if target == 1:
+                    cam_perf = cam_computer.compute_and_evaluate_cams_one_image(
+                        image=image, target=target, image_id=image_id, image_size=image_size
+                    )
+                    cam_perfs.append(cam_perf)
+            else:
+                cam_perf = cam_computer.compute_and_evaluate_cams_one_image(
+                    image=image, target=target, image_id=image_id, image_size=image_size
+                )
+                cam_perfs.append(cam_perf)
 
-            flat_ent  = torch.flatten(single_ent).cpu()    # Tensor 1-D
-            flat_pred = torch.flatten(single_pred).cpu()
-            flat_true = torch.flatten(gt_bin).cpu().int()
-
-            energy_data['entropy_px_all'].append(flat_ent)
-            energy_data['pred_px_all'].append(flat_pred)
-            energy_data['true_px_all'].append(flat_true)  
-
-            #energy_data['true_px_all'].append(flat_true)
-
-            #energy_map = energy_pixels[i]  # (H, W)
-            #energy_data['foreground'].append(energy_map[gt_bin].detach().cpu())
-            #energy_data['background'].append(energy_map[~gt_bin].detach().cpu())
-
-
-        
-
-    #     if cam_performance :
-    #     #Compute PXAP per image
-    #         for image, target, image_id in zip(images, targets, index):
-                
-    #             dataset_source = os.path.basename(args.mask_root)
-
-    #             if dataset_source == dataset_name:
-    #                 mask_root_data = args.mask_root
-    #             else:
-    #                 mask_root_data = os.path.join(os.path.dirname(args.mask_root), dataset_name)
-
-    #             new_mask_root = os.path.join(os.path.dirname(args.mask_root), dataset_name)
-    #             cam_computer = CAMComputer(
-    #                         args=deepcopy(args),
-    #                         model=model,
-    #                         loader=loader[split],
-    #                         metadata_root=os.path.join(metadata_root, split),
-    #                         mask_root=mask_root_data,
-    #                         iou_threshold_list=args.iou_threshold_list,
-    #                         dataset_name=dataset_name,
-    #                         split= split,
-    #                         cam_curve_interval=args.cam_curve_interval,
-    #                         multi_contour_eval=args.multi_contour_eval,
-    #                         out_folder=args.outd,
-    #                     )
-                
-    #             if dataset_name == constants.CAMELYON512:
-    #                 if target == 1:
-    #                     #image_id_formatted = [image_id]
-    #                     cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image=image, target=target, image_id=image_id, image_size=image_size)
-    #                     energy_data['cam_performance'].append(cam_performance)
-    #                 else:
-    #                     energy_data['cam_performance'].append(0)
-    #             else:
-    #                 cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image=image, target=target, image_id=image_id, image_size=image_size)
-    #                 energy_data['cam_performance'].append(cam_performance)
-
-    # energy_data['cam_performance'] = np.array(energy_data['cam_performance'])
-
-    #energy_data['cam_performance'].append(cam_performance)
-    #print("cam_performance", cam_performance)
-
-    ent_list = energy_data['entropy_px_all']
-    pr_list  = energy_data['pred_px_all']
-    tr_list  = energy_data['true_px_all']
-
-    # for i, t in enumerate(ent_list):
-    #     print(i, t.dim(), t.shape)  # doit indiquer dim=1 shape=[H*W]
-
-    # Concatenation
-    energy_data['images'] = torch.cat(energy_data['images']).numpy()
-    energy_data['pixels'] = torch.cat(energy_data['pixels']).view(-1).numpy()
-    #energy_data['foreground'] = torch.cat(energy_data['foreground']).numpy()
-    #energy_data['background'] = torch.cat(energy_data['background']).numpy()
-    energy_data['probs_images'] = torch.cat(energy_data['probs_images']).numpy()
-    energy_data['label_images'] = torch.cat(energy_data['label_images']).numpy()
-    energy_data['pred_images'] = torch.cat(energy_data['pred_images']).numpy()
-    energy_data['max_logits_img'] = torch.cat(energy_data['max_logits_img']).view(-1).numpy()
-    energy_data['min_logits_img'] = torch.cat(energy_data['min_logits_img']).view(-1).numpy()
-    energy_data['max_logits_pxs'] = torch.cat(energy_data['max_logits_pxs']).view(-1).numpy()
-    energy_data['min_logits_pxs'] = torch.cat(energy_data['min_logits_pxs']).view(-1).numpy()
-    energy_data['lin_ft'] = torch.cat(energy_data['lin_ft'], dim=0).cpu().numpy()
-    energy_data['img_ft'] = torch.cat(energy_data['img_ft'], dim=0).cpu().numpy()
-    energy_data['entropy_imgs'] = torch.cat(energy_data['entropy_imgs']).cpu().numpy()
-    energy_data['entropy_px'] = torch.cat(energy_data['entropy_px']).cpu().numpy()
-    energy_data['metrics_px_bg'] = torch.cat(energy_data['metrics_px_bg']).cpu().numpy()
-    energy_data['metrics_px_fg'] = torch.cat(energy_data['metrics_px_fg']).cpu().numpy()
-    energy_data["n_fg"]   = torch.cat(energy_data["n_fg"]).numpy()      # [N]
-    energy_data["n_bg"]   = torch.cat(energy_data["n_bg"]).numpy()
-    energy_data["pct_fg"] = torch.cat(energy_data["pct_fg"]).numpy()
-
-    # for i, t in enumerate(energy['entropy_px_all']):
-    #     print(i, t.shape)
-
-    energy_data['entropy_px_all'] = torch.cat(ent_list, dim=0).numpy()
-    energy_data['pred_px_all']    = torch.cat(pr_list,  dim=0).numpy()
-    energy_data['true_px_all']    = torch.cat(tr_list,  dim=0).numpy()
-
-    return energy_data
+    return np.array(cam_perfs)
 
 
 def plot_energy_for_source_images(source_vals, out_dir, title, xlim=None, label_src="Source", label_tgt="Target", source_dataset=None, target_dataset = None, source_model_name = None, target_model_name = None, external_pixel_classifier=None):
@@ -2009,47 +1843,455 @@ def energy_fn(logits):
     return energy_map  # (H, W)
 
     
-def _compute_accuracy(args, model, loader):
-    num_correct = 0
-    num_images = 0
+# def _compute_accuracy(args, model, loader):
+#     num_correct = 0
+#     num_images = 0
 
-    num_correct_normal = 0
-    num_images_normal = 0
+#     num_correct_normal = 0
+#     num_images_normal = 0
 
-    num_correct_cancer = 0
-    num_images_cancer = 0
+#     num_correct_cancer = 0
+#     num_images_cancer = 0
 
+#     for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+#         images = images.cuda()
+#         targets = targets.cuda()
+#         with torch.no_grad():
+#             cl_logits = cl_forward(args, model, images)
+#             pred = cl_logits.argmax(dim=1)
+
+#         num_correct += (pred == targets).sum().item()
+#         num_images += images.size(0)
+
+#         # Compute accuracy for each class
+#         for j in range(len(targets)):
+#             if targets[j] == 0:
+#                 num_images_normal += 1
+#                 if pred[j] == targets[j]:
+#                     num_correct_normal += 1
+#             elif targets[j] == 1:
+#                 num_images_cancer += 1
+#                 if pred[j] == targets[j]:
+#                     num_correct_cancer += 1
+#             else:
+#                 raise ValueError("Unknown class label")
+            
+#     # Compute accuracy for each class
+#     classification_acc_normal = num_correct_normal / float(num_images_normal) * 100 if num_images_normal > 0 else 0
+#     classification_acc_cancer = num_correct_cancer / float(num_images_cancer) * 100 if num_images_cancer > 0 else 0
+
+
+#     classification_acc = num_correct / float(num_images) * 100
+    
+#     return classification_acc, classification_acc_normal, classification_acc_cancer
+
+
+def compute_rates(y_true, y_pred):
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    TPR = tp / (tp + fn + 1e-8)
+    FPR = fp / (fp + tn + 1e-8)
+    TNR = tn / (tn + fp + 1e-8)
+    FNR = fn / (fn + tp + 1e-8)
+    return {
+        "TPR": TPR * 100,
+        "FPR": FPR * 100,
+        "TNR": TNR * 100,
+        "FNR": FNR * 100
+    }
+
+
+
+
+def _compute_accuracy(args, model, loader, num_thresholds=100):
+    model.eval()
+
+    all_probs = []
+    all_targets = []
+
+    # --- Forward pass ---
     for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
         images = images.cuda()
         targets = targets.cuda()
-        with torch.no_grad():
-            cl_logits = cl_forward(args, model, images)
-            pred = cl_logits.argmax(dim=1)
 
-        num_correct += (pred == targets).sum().item()
-        num_images += images.size(0)
+        cl_logits = cl_forward(args, model, images)
+        probs = torch.softmax(cl_logits, dim=1)[:, 1]  # proba classe 1 (cancer)
 
-        # Compute accuracy for each class
-        for j in range(len(targets)):
-            if targets[j] == 0:
-                num_images_normal += 1
-                if pred[j] == targets[j]:
-                    num_correct_normal += 1
-            elif targets[j] == 1:
-                num_images_cancer += 1
-                if pred[j] == targets[j]:
-                    num_correct_cancer += 1
-            else:
-                raise ValueError("Unknown class label")
-            
-    # Compute accuracy for each class
-    classification_acc_normal = num_correct_normal / float(num_images_normal) * 100 if num_images_normal > 0 else 0
-    classification_acc_cancer = num_correct_cancer / float(num_images_cancer) * 100 if num_images_cancer > 0 else 0
+        all_probs.append(probs.detach().cpu())
+        all_targets.append(targets.detach().cpu())
 
+    all_probs = torch.cat(all_probs).numpy()
+    all_targets = torch.cat(all_targets).numpy()
 
-    classification_acc = num_correct / float(num_images) * 100
+    # --- AUC metrics (seuil-indépendant) ---
+    auc_roc = roc_auc_score(all_targets, all_probs)
+    auc_pr  = average_precision_score(all_targets, all_probs)
+
+    # --- Recherche du meilleur seuil pour équilibrer ---
+    thresholds = np.linspace(0, 1, num_thresholds)
+    ratios = []
+
+    for t in thresholds:
+        preds = (all_probs >= t).astype(int)
+        ratio = preds.mean()  # proportion de "cancer"
+        ratios.append(ratio)
+
+    best_idx = np.argmin(np.abs(np.array(ratios) - 0.5))
+    best_threshold = thresholds[best_idx]
+    best_ratio = ratios[best_idx]
+
+    # --- 1) Seuil standard = 0.5 ---
+    preds_default = (all_probs >= 0.5).astype(int)
+    acc_default   = accuracy_score(all_targets, preds_default) * 100
+    prec_default  = precision_score(all_targets, preds_default, zero_division=0) * 100
+    rec_default   = recall_score(all_targets, preds_default, zero_division=0) * 100
+    f1_default    = f1_score(all_targets, preds_default, zero_division=0) * 100
+
+    # --- 2) Seuil calibré ---
+    preds_cal = (all_probs >= best_threshold).astype(int)
+    acc_cal   = accuracy_score(all_targets, preds_cal) * 100
+    prec_cal  = precision_score(all_targets, preds_cal, zero_division=0) * 100
+    rec_cal   = recall_score(all_targets, preds_cal, zero_division=0) * 100
+    f1_cal    = f1_score(all_targets, preds_cal, zero_division=0) * 100
+
+    rates_default = compute_rates(all_targets, preds_default)
+    rates_cal     = compute_rates(all_targets, preds_cal)
+
+    results = {
+        "Default_0.5": {
+            "Accuracy": acc_default,
+            "Precision": prec_default,
+            "Recall": rec_default,
+            "F1": f1_default
+        },
+        f"Calibrated_{best_threshold:.3f}": {
+            "Accuracy": acc_cal,
+            "Precision": prec_cal,
+            "Recall": rec_cal,
+            "F1": f1_cal,
+            **rates_cal
+        },
+        "Threshold_independent": {
+            "AUC_ROC": auc_roc * 100,
+            "AUC_PR": auc_pr * 100
+        }
+    }
+    return results
+
+def _extract_features(args, model, loader):
+    model.eval()
+    all_feats, all_targets = [], []
     
-    return classification_acc, classification_acc_normal, classification_acc_cancer
+    for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+        images = images.cuda()
+        targets = targets.cuda()
+        cl_logits = model(images)
+        
+        feats = model.lin_ft  # <-- adapte selon ton modèle
+        feats = feats.view(feats.size(0), -1)         # flatten [B, C, H, W] -> [B, D]
+
+        all_feats.append(feats.detach().cpu())
+        all_targets.append(targets.detach().cpu())
+
+    all_feats = torch.cat(all_feats, dim=0).numpy()
+    all_targets = torch.cat(all_targets, dim=0).numpy()
+
+    return all_feats, all_targets
+
+def gaussian_kernel(x, y, sigma=1.0):
+    """
+    Gaussian (RBF) kernel entre deux matrices x et y
+    x: (N, D), y: (M, D)
+    """
+    xx = np.sum(x**2, axis=1)[:, np.newaxis]
+    yy = np.sum(y**2, axis=1)[np.newaxis, :]
+    dist = xx + yy - 2 * np.dot(x, y.T)
+    return np.exp(-dist / (2 * sigma**2))
+
+def compute_mmd(features_src, features_tgt, sigma=1.0):
+    """
+    Calcule MMD^2 entre features_src et features_tgt avec noyau gaussien
+    """
+    Kxx = gaussian_kernel(features_src, features_src, sigma)
+    Kyy = gaussian_kernel(features_tgt, features_tgt, sigma)
+    Kxy = gaussian_kernel(features_src, features_tgt, sigma)
+    
+    m = features_src.shape[0]
+    n = features_tgt.shape[0]
+    
+    mmd2 = (Kxx.sum() - np.trace(Kxx)) / (m * (m - 1)) \
+         + (Kyy.sum() - np.trace(Kyy)) / (n * (n - 1)) \
+         - 2 * Kxy.mean()
+    return np.sqrt(mmd2)
+
+# ---------- Utils ----------
+def _cov(X):
+    Xc = X - X.mean(axis=0, keepdims=True)
+    denom = max(1, (Xc.shape[0]-1))
+    return (Xc.T @ Xc) / denom
+
+def _standardize_pair(X, Y, mode=None, eps=1e-12):
+    if mode is None:
+        return X, Y
+    XY = np.vstack([X, Y])
+    if mode == 'zscore':
+        mu = XY.mean(0, keepdims=True)
+        sd = XY.std(0, keepdims=True) + eps
+        return (X - mu)/sd, (Y - mu)/sd
+    if mode == 'minmax':
+        mn = XY.min(0, keepdims=True)
+        mx = XY.max(0, keepdims=True)
+        scale = (mx - mn); scale[scale < eps] = 1.0
+        return (X - mn)/scale, (Y - mn)/scale
+    raise ValueError("standardize must be None | 'zscore' | 'minmax'")
+
+# ---------- JSD (1D, moyenné) ----------
+def js_divergence_1d_avg(X, Y, bins=50, eps=1e-10, to_bits=True):
+    D = X.shape[1]
+    vals = []
+    for d in range(D):
+        x, y = X[:, d], Y[:, d]
+        lo, hi = min(x.min(), y.min()), max(x.max(), y.max())
+        if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
+            continue
+        p, _ = np.histogram(x, bins=bins, range=(lo, hi), density=True)
+        q, _ = np.histogram(y, bins=bins, range=(lo, hi), density=True)
+        p = (p + eps) / (p.sum() + eps*len(p))
+        q = (q + eps) / (q.sum() + eps*len(q))
+        m = 0.5 * (p + q)
+        js = 0.5 * entropy(p, m) + 0.5 * entropy(q, m)  # nats
+        if to_bits:
+            js /= np.log(2.0)  # borné par 1
+        vals.append(js)
+    return float(np.mean(vals)) if vals else float('nan')
+
+# ---------- CMD (moments centraux 1..K) ----------
+def cmd_distance(X, Y, K=5, eps=1e-12):
+    XY = np.vstack([X, Y])
+    mn, mx = XY.min(0), XY.max(0)
+    scale = (mx - mn); scale[scale < eps] = 1.0
+    Xn = 2*(X - mn)/scale - 1
+    Yn = 2*(Y - mn)/scale - 1
+    mu_x, mu_y = Xn.mean(0), Yn.mean(0)
+    s = np.linalg.norm(mu_x - mu_y)  # 1er ordre
+    for k in range(2, K+1):
+        cx = np.mean((Xn - mu_x)**k, axis=0)
+        cy = np.mean((Yn - mu_y)**k, axis=0)
+        s += np.linalg.norm(cx - cy)
+    return float(s)
+
+# ---------- CORAL (covariance distance) ----------
+def coral_distance(X, Y, eps=1e-6, normalize=True):
+    Cs = _cov(X) + eps*np.eye(X.shape[1])
+    Ct = _cov(Y) + eps*np.eye(Y.shape[1])
+    diff = Cs - Ct
+    num = np.sqrt((diff * diff).sum())
+    if not normalize:
+        return float(num)
+    den = np.sqrt((Cs*Cs).sum()) + np.sqrt((Ct*Ct).sum()) + 1e-12
+    return float(num / den)  # ~[0,1)
+
+# ---------- FID (Fréchet) ----------
+def fid_distance(X, Y, eps=1e-6):
+    mu_x, mu_y = X.mean(0), Y.mean(0)
+    Cx, Cy = _cov(X) + eps*np.eye(X.shape[1]), _cov(Y) + eps*np.eye(Y.shape[1])
+    covmean, _ = linalg.sqrtm(Cx.dot(Cy), disp=False)
+    if np.iscomplexobj(covmean):
+        covmean = covmean.real
+    return float(np.sum((mu_x - mu_y)**2) + np.trace(Cx + Cy - 2*covmean))
+
+# ---------- Sliced Wasserstein (multi-projections) ----------
+def sliced_wasserstein(X, Y, n_proj=128, seed=0):
+    rng = np.random.default_rng(seed)
+    D = X.shape[1]
+    sw = 0.0
+    for _ in range(n_proj):
+        u = rng.normal(size=D)
+        u /= (np.linalg.norm(u) + 1e-12)
+        sw += wasserstein_distance(X @ u, Y @ u)
+    return float(sw / n_proj)
+
+# ---------- Energy distance ----------
+def energy_distance(X, Y, sample_max=3000, seed=0):
+    rng = np.random.default_rng(seed)
+    if X.shape[0] > sample_max:
+        X = X[rng.choice(len(X), sample_max, replace=False)]
+    if Y.shape[0] > sample_max:
+        Y = Y[rng.choice(len(Y), sample_max, replace=False)]
+    d_st = cdist(X, Y, metric="euclidean").mean()
+    d_ss = cdist(X, X, metric="euclidean")
+    d_tt = cdist(Y, Y, metric="euclidean")
+    m_s = d_ss[np.triu_indices_from(d_ss, k=1)].mean()
+    m_t = d_tt[np.triu_indices_from(d_tt, k=1)].mean()
+    ed2 = 2*d_st - m_s - m_t
+    return float(np.sqrt(max(ed2, 0.0)))
+
+# ---------- MK-MMD (multi-kernel RBF) ----------
+def _rbf_sum(X, Y, sigmas):
+    XX = (X**2).sum(1)[:,None]
+    YY = (Y**2).sum(1)[None,:]
+    d2 = XX + YY - 2*X.dot(Y.T)
+    K = 0.0
+    for s in sigmas:
+        K += np.exp(-d2 / (2*(s**2)))
+    return K
+
+def mk_mmd(X, Y, sigmas=(0.5,1.0,2.0,4.0), sample_max=3000, seed=0):
+    rng = np.random.default_rng(seed)
+    if X.shape[0] > sample_max:
+        X = X[rng.choice(len(X), sample_max, replace=False)]
+    if Y.shape[0] > sample_max:
+        Y = Y[rng.choice(len(Y), sample_max, replace=False)]
+    Kxx = _rbf_sum(X, X, sigmas)
+    Kyy = _rbf_sum(Y, Y, sigmas)
+    Kxy = _rbf_sum(X, Y, sigmas)
+    np.fill_diagonal(Kxx, 0.0)
+    np.fill_diagonal(Kyy, 0.0)
+    m, n = len(X), len(Y)
+    mmd2 = Kxx.sum()/(m*(m-1)) + Kyy.sum()/(n*(n-1)) - 2*Kxy.mean()
+    return float(np.sqrt(max(mmd2, 0.0)))
+
+
+
+
+
+# def compute_representation_shift(features_src, features_tgt, bins=50, agg="mean", sigma=1.0):
+#     """
+#     Calcule Wasserstein, KL, KS entre deux ensembles de features.
+    
+#     features_src : np.array shape [N, D]
+#     features_tgt : np.array shape [M, D]
+#     bins         : nb de bins pour estimer les distributions (KL)
+#     agg          : "mean" ou "median" pour agréger les scores par dimension
+#     """
+#     wd_list, kl_list, ks_list = [], [], []
+
+#     for d in range(features_src.shape[1]):
+#         x, y = features_src[:, d], features_tgt[:, d]
+
+#         # --- Wasserstein ---
+#         wd = wasserstein_distance(x, y)
+#         wd_list.append(wd)
+
+#         # --- KL divergence ---
+#         p_src, _ = np.histogram(x, bins=bins, density=True)
+#         p_tgt, _ = np.histogram(y, bins=bins, density=True)
+
+#         p_src = p_src + 1e-10
+#         p_tgt = p_tgt + 1e-10
+#         p_src = p_src / p_src.sum()
+#         p_tgt = p_tgt / p_tgt.sum()
+
+#         kl = entropy(p_src, p_tgt)  # KL(P || Q)
+#         kl_list.append(kl)
+
+#         # --- Kolmogorov–Smirnov ---
+#         ks_stat, _ = ks_2samp(x, y)
+#         ks_list.append(ks_stat)
+
+#     # Agrégation
+#     if agg == "mean":
+#         wd_final = np.mean(wd_list)
+#         kl_final = np.mean(kl_list)
+#         ks_final = np.mean(ks_list)
+#     elif agg == "median":
+#         wd_final = np.median(wd_list)
+#         kl_final = np.median(kl_list)
+#         ks_final = np.median(ks_list)
+
+#     mmd_final = compute_mmd(features_src, features_tgt, sigma=sigma)
+
+#     return {
+#         "Wasserstein": wd_final,
+#         "KL": kl_final,
+#         "KS": ks_final,
+#         "MMD": mmd_final
+#     }
+
+
+# ---------- Fonction principale ----------
+def compute_representation_shift(
+    features_src, features_tgt,
+    bins=50, agg="mean", standardize= None,
+    sigma=1.0,                      # conservé pour compat descendante (si tu gardes ton ancien MMD)
+    mmd_sigmas=(0.5,1.0,2.0,4.0),   # MK-MMD
+    sw_n_proj=128, cmd_K=5, jsd_bits=True,
+    sample_max=3000, seed=0,
+    return_per_dim=False
+):
+    """
+    Calcule un panel de métriques de shift *post-hoc* sur des features:
+      - 1D moyennées: Wasserstein, KL, KS, JSD
+      - Multivariées: FID, CORAL, Sliced-Wasserstein, Energy Distance, MK-MMD, CMD
+
+    standardize: None | 'zscore' | 'minmax' (recommandé: 'zscore')
+    agg: 'mean' | 'median' pour les métriques 1D par dimension
+    """
+    X, Y = _standardize_pair(np.asarray(features_src), np.asarray(features_tgt), mode=standardize)
+
+    # --- 1D (par dimension) ---
+    wd_list, kl_list, ks_list, js_list = [], [], [], []
+    eps = 1e-10
+    D = X.shape[1]
+    for d in range(D):
+        x, y = X[:, d], Y[:, d]
+        # Wasserstein 1D
+        wd_list.append(wasserstein_distance(x, y))
+        # Histogrammes communs pour KL/JSD
+        lo, hi = min(x.min(), y.min()), max(x.max(), y.max())
+        if np.isfinite(lo) and np.isfinite(hi) and lo != hi:
+            p, _ = np.histogram(x, bins=bins, range=(lo, hi), density=True)
+            q, _ = np.histogram(y, bins=bins, range=(lo, hi), density=True)
+            p = (p + eps) / (p.sum() + eps*len(p))
+            q = (q + eps) / (q.sum() + eps*len(q))
+            kl_list.append(entropy(p, q))  # KL(P||Q)
+            m = 0.5*(p + q)
+            js = 0.5*entropy(p, m) + 0.5*entropy(q, m)
+            if jsd_bits: js /= np.log(2.0)
+            js_list.append(js)
+        else:
+            kl_list.append(0.0)
+            js_list.append(0.0)
+        # KS
+        ks_stat, _ = ks_2samp(x, y)
+        ks_list.append(ks_stat)
+
+    agg_fun = np.mean if agg == "mean" else np.median
+    wd_final = agg_fun(wd_list) if wd_list else float('nan')
+    kl_final = agg_fun(kl_list) if kl_list else float('nan')
+    ks_final = agg_fun(ks_list) if ks_list else float('nan')
+    jsd_final = agg_fun(js_list) if js_list else float('nan')
+
+    # --- Multivariées ---
+    fid_final   = fid_distance(X, Y)
+    coral_final = coral_distance(X, Y, normalize=True)
+    swd_final   = sliced_wasserstein(X, Y, n_proj=sw_n_proj, seed=seed)
+    ed_final    = energy_distance(X, Y, sample_max=sample_max, seed=seed)
+    mmd_final   = mk_mmd(X, Y, sigmas=mmd_sigmas, sample_max=sample_max, seed=seed)
+    cmd_final   = cmd_distance(X, Y, K=cmd_K)
+
+    out = {
+        "Wasserstein_1D": float(wd_final),
+        "KL_1D":          float(kl_final),
+        "KS_1D":          float(ks_final),
+        "JSD_1D":         float(jsd_final),
+        "CMD_K{}".format(cmd_K): float(cmd_final),
+        "CORAL_norm":     float(coral_final),
+        "FID":            float(fid_final),
+        "SWD_proj{}".format(sw_n_proj): float(swd_final),
+        "EnergyDist":     float(ed_final),
+        "MK-MMD":         float(mmd_final)
+    }
+    if return_per_dim:
+        out["per_dim"] = {
+            "Wasserstein_1D": wd_list,
+            "KL_1D": kl_list,
+            "KS_1D": ks_list,
+            "JSD_1D": js_list,
+        }
+    return out
+
+
+
 
 
 
@@ -2171,7 +2413,51 @@ IgnoreKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, 
 IgnoreKeyLoader.add_constructor('tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar', IgnoreKeyLoader.ignore_numpy_scalars)
 
 
-def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_draw_target, checkpoint_type, source_dataset,target_dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None):
+def class_separability_index(features, targets):
+    """
+    Compute class separability index J = tr(SB) / tr(SW)
+    for binary (or multi-class) case, following Duda et al. (2000).
+    features: np.ndarray [N, d]
+    targets: np.ndarray [N]
+    """
+    features = np.array(features)
+    targets = np.array(targets)
+    classes = np.unique(targets)
+
+    # Global mean
+    m = features.mean(axis=0)
+
+    # Within-class scatter SW
+    SW = np.zeros((features.shape[1], features.shape[1]))
+    SB = np.zeros_like(SW)
+
+    for c in classes:
+        Xc = features[targets == c]
+        mc = Xc.mean(axis=0)
+        # scatter intra-classe
+        SW += ((Xc - mc).T @ (Xc - mc))
+        # scatter inter-classe (pondéré par n_c)
+        nc = Xc.shape[0]
+        diff = (mc - m).reshape(-1,1)
+        SB += nc * (diff @ diff.T)
+
+    # Class separability index
+    J = np.trace(SB) / (np.trace(SW) + 1e-8)
+    return float(J)
+
+def separability_indices(features, targets):
+    res = {}
+    if len(np.unique(targets)) > 1 and len(targets) > 10:
+        res["J"] = class_separability_index(features, targets)
+        res["silhouette"] = float(silhouette_score(features, targets))
+        res["davies_bouldin"] = float(davies_bouldin_score(features, targets))
+    else:
+        res["J"], res["silhouette"], res["davies_bouldin"] = None, None, None
+    return res
+
+
+
+def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_draw_target, checkpoint_type, source_dataset,target_dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None, save_results= None):
 
 
     with open(join(exp_path, 'config_obj_final.yaml'), 'r') as fy:
@@ -2215,8 +2501,11 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         # args_dict = yaml.safe_load(fy)
         # args_dict['model']['freeze_encoder'] = False
         args_dict['model']['folder_pre_trained_cl'] = None
-        #args_dict['pixel_wise_classification'] = False
-        args_dict['pixel_wise_classification'] = True
+        if parsedargs.source_model_name != constants.METHOD_PIXELCAM:
+            args_dict['pixel_wise_classification'] = False
+        else:
+            args_dict['pixel_wise_classification'] = True
+        #args_dict['pixel_wise_classification'] = True
         args_dict['multiple_layer_pixel_classifier'] = False
         args_dict['anchors_ortogonal'] = False
         args_dict['detach_pixel_classifier'] = False
@@ -2314,7 +2603,11 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     source_domain_data_paths = config.configure_data_paths(args_dict, source_dataset)
 
-    target_metadata_root = join('./folds/wsol-done-right-splits', target_dataset, f"fold-{3}")
+    if parsedargs.target_dataset == constants.CAMELYON17_512:
+        fold_num = parsedargs.fold_cam17
+    else:
+        fold_num = args.fold
+    target_metadata_root = join('./folds/wsol-done-right-splits', target_dataset, f"fold-{fold_num}")
     # args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
     target_domain_data_paths = config.configure_data_paths(args_dict, target_dataset)
 
@@ -2387,12 +2680,18 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         eval_batch_size = 32#args.eval_batch_size,
     )
     
+        mask_root_data = os.path.join(
+        os.path.dirname(args.mask_root),  # -> /export/livia/home/vision/Aguichemerre/datasets
+        target_dataset               # -> CAMELYON17
+    )
+        
+
         target_cam_computer = CAMComputer(
                 args=deepcopy(args),
                 model=model,
                 loader=target_loaders[split],
                 metadata_root=os.path.join(target_metadata_root, split),
-                mask_root=args.mask_root,
+                mask_root=mask_root_data,
                 iou_threshold_list=args.iou_threshold_list,
                 dataset_name=target_dataset,
                 split= split,
@@ -2403,14 +2702,6 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
 
 
-    
-    #pixel_feature_errors(model,source_loaders,source_cam_computer, source_dataset, split, device)
-
-
-    #plot_weights_model(model, support_background = args.model['support_background'], out_dir='plots_weights', title_prefix="")
-    #source_energy_external_px_classifier = 
-
-    #source_energy = compute_energy_distributions(model, source_loaders, source_cam_computer, source_dataset, energy_fn, split, device, args=args, metadata_root=source_metadata_root, cam_performance = False)
     
     out_dir = "plots_energy_test"
     os.makedirs(out_dir, exist_ok=True)
@@ -2449,103 +2740,50 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     # )
 
     model.eval()
-    cl_global, cl_normal, cl_cancer = _compute_accuracy(args, model, target_loaders[split])
 
-    print(f"Classification accuracy on target dataset {target_dataset} is {cl_global:.2f}%")
-    print(f"Classification accuracy on target dataset {target_dataset} for normal class is {cl_normal:.2f}%")
-    print(f"Classification accuracy on target dataset {target_dataset} for cancer class is {cl_cancer:.2f}%")
+    features_src, targets_src = _extract_features(args,model, source_loaders[split])
+    features_tgt, targets_tgt = _extract_features(args,model, target_loaders[split])
+
+
+    Sep_source = separability_indices(features_src, targets_src)
+    Sep_target = separability_indices(features_tgt, targets_tgt)
+
+    shifts = compute_representation_shift(features_src, features_tgt, bins=50, sigma=1.0)
+    print(shifts)
+
+
+    results = _compute_accuracy(args, model, target_loaders[split])
+    print(results)
+
+    #print(f"Classification accuracy on target dataset {target_dataset} is {cl_global:.2f}%")
+    #print(f"Classification accuracy on target dataset {target_dataset} for normal class is {cl_normal:.2f}%")
+    #print(f"Classification accuracy on target dataset {target_dataset} for cancer class is {cl_cancer:.2f}%")
 
     #plot_energy_for_source_images(source_energy['pixels'], out_dir='plots_energy', title="Energy Distribution", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
 
+    cam_performance = target_cam_computer.compute_and_evaluate_cams()
 
-    if target_dataset == constants.CUB:
-        target_energy = compute_energy_distributions_cub(model, target_loaders, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
-    else:
-       #target_energy = compute_energy_distributions(model, target_loaders, target_cam_computer, target_dataset, energy_fn, split, device, args=args, metadata_root=target_metadata_root, cam_performance = False)
-        target_energy = compute_energy_distributions_images(model, target_loaders, target_dataset, energy_fn, split, device, args=args,probs_mode="full",return_numpy=True)
+    if save_results != None:
+        # Build dictionnary
+        metrics = {
+            "shifts": shifts,
+            "results": results,
+            "cam_performance": cam_performance,
+            "separability": {
+                "source": {"J": Sep_source},
+                "target": {"J": Sep_target}
+    }
+        }
 
-    #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
-    #plot_energy_histograms_by_class(source_energy, target_energy, out_dir, title_prefix="")
+        # Save in txt
+        metrics_file = os.path.join(save_results, "metrics.txt")
+        with open(metrics_file, "w") as f:
+            json.dump(metrics, f, indent=4)
 
-    
+        print(f"✅ Fichier de métriques sauvegardé : {metrics_file}")
 
+    print(cam_performance)
 
-    out_dir = "plots_energy_test"
-    os.makedirs(out_dir, exist_ok=True)
-
-    summary = evaluate_from_target_energy(target_energy, out_dir, pos_label=1, beta=1.0)
-    print("[Threshold eval]", summary)
-
-    ent = target_energy['entropy_px_all']  # shape [N_pixels]
-    pred = target_energy['pred_px_all']    # 0=background,1=foreground
-    true = target_energy['true_px_all']    # 0=background,1=foreground
-
-    plot_hist_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset, model = model)
-
-
-    # 2. Sépare correct vs incorrect
-    correct_mask   = (pred == true)
-    incorrect_mask = (pred != true)
-
-    correct_data   = ent[correct_mask]
-    incorrect_data = ent[incorrect_mask]
-
-    # 3. Choisis le nombre de bins et le chemin de sortie
-    n_bins  = 20
-    #out_dir = "./figures/"
-
-    # 3. Fonction helper pour filtrer et tracer
-    def plot_for_pred(pred_value):
-        mask_pred     = (pred == pred_value)
-        correct_mask  = mask_pred & (pred == true)
-        incorrect_mask= mask_pred & (pred != true)
-
-        correct_data   = ent[correct_mask]
-        incorrect_data = ent[incorrect_mask]
-
-        cls = "1" if pred_value==1 else "0"
-        plot_histogram_with_counts_and_percentages(
-            correct_data,
-            incorrect_data,
-            title=f"Entropie des pixels prédits = {cls}\n(correct vs incorrect)",
-            xlabel="Entropie pixel",
-            ylabel="Nombre de pixels",
-            out_path=f"{out_dir}hist_pred{cls}.png",
-            bin=n_bins
-        )
-        print(f"Histogramme préd={cls} → {out_dir}hist_pred{cls}.png")
-
-    plot_for_pred(1)
-    plot_for_pred(0)
-
-    #print(f"Histogramme enregistré dans : {out_png}")
-
-    #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
-
-
-    plot_hist_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset, model = model)
-
-    #plot_logits(source_energy['max_logits_img'], target_energy['max_logits_img'], out_dir, title="Logits Distribution for images", type = "images_max", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
-    
-    #plot_logits(source_energy['min_logits_img'], target_energy['min_logits_img'], out_dir, title="Logits Distribution for images", type = "images_min", xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
-    
-    #plot_logits(source_energy['max_logits_pxs'], target_energy['max_logits_pxs'], out_dir, title="Logits Distribution for pixels", type = "pixels_max",xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
-    #plot_logits(source_energy['min_logits_pxs'], target_energy['min_logits_pxs'], out_dir, title="Logits Distribution for pixels", type = "pixels_min",xlim=(-5, 5), label_src="Source", label_tgt="Target", source_dataset=source_dataset, target_dataset=target_dataset, source_model_name = source_model_name, target_model_name = target_model_name, external_pixel_classifier=external_pixel_classifier)
-
-
-    #plot_energy_based_on_target_image_acc(target_energy, out_dir, save_path="test", target_dataset=target_dataset)
-
-    plot_energy_histograms_by_class(source_energy['per_class'],target_energy['per_class'],out_dir=out_dir,title_prefix="Energy Distribution", source_dataset=source_dataset, target_dataset=target_dataset)
-    
-    # 2. Foreground pixels
-    plot_global_energy_histogram(source_energy['foreground'],target_energy['foreground'],out_dir,title="Pixel Energy Distribution (Foreground)", type = "foreground", source_dataset=source_dataset, target_dataset=target_dataset)
-
-    # 3. Background pixels
-    plot_global_energy_histogram(source_energy['background'],target_energy['background'],out_dir,title="Pixel Energy Distribution (Background)", type = "background", source_dataset=source_dataset, target_dataset=target_dataset)
-
-    # 4. All pixels
-    plot_global_energy_histogram(source_energy['pixels'],target_energy['pixels'],out_dir,title="Pixel Energy Distribution (All)",xlim=(-5, 5), type = "global", source_dataset=source_dataset, target_dataset=target_dataset)
-    
     return 0
     
 def fast_eval():
@@ -2569,6 +2807,12 @@ def fast_eval():
     parser.add_argument("--external_model", type=str, default=None, help="Path to the external bb+cl.")
     parser.add_argument("--source_model_name", type=str, default=None, help="Name of source model.")
     parser.add_argument("--target_model_name", type=str, default=None, help="Name of target model.")
+    parser.add_argument("--results_out", type=str, default="results",
+                    help="save information")
+    parser.add_argument("--fold_cam17", type=int, default=None,
+                    help="fold")
+    parser.add_argument("--fold_source", type=int, default=None,
+                    help="fold")
 
     parsedargs = parser.parse_args()
     
@@ -2590,12 +2834,83 @@ def fast_eval():
     ##########
 
     base_checkpoint_types = [parsedargs.checkpoint_type]
+
+    # # Construire le chemin hiérarchique
+    # if parsedargs.target_dataset == constants.CAMELYON17_512:
+    #     results_dir = os.path.join(
+    #         parsedargs.results_out,
+    #         parsedargs.split,        # dossier racine (ex. "results")
+    #         parsedargs.source_dataset,     # source dataset
+    #         parsedargs.source_model_name,  # nom du modèle source
+    #         parsedargs.target_dataset,
+    #         str(parsedargs.fold_cam17)
+    #     )
+    # else:
+    #     if parsedargs.source_dataset == constants.CAMELYON17_512:
+    #         results_dir = os.path.join(
+    #         parsedargs.results_out,        # dossier racine (ex. "results")
+    #         parsedargs.split,
+    #         parsedargs.source_dataset,
+    #         str(parsedargs.fold_source),
+    #         parsedargs.source_model_name,  # nom du modèle source
+    #         parsedargs.target_dataset
+    #         )
+    #     else:
+    #         results_dir = os.path.join(
+    #             parsedargs.results_out,        # dossier racine (ex. "results")
+    #             parsedargs.source_dataset,     # source dataset
+    #             parsedargs.source_model_name,  # nom du modèle source
+    #             parsedargs.target_dataset      # target dataset
+    #     )
+            
+    if parsedargs.source_dataset == constants.CAMELYON17_512:
+            if parsedargs.target_dataset == constants.CAMELYON17_512:
+                results_dir = os.path.join(
+                    parsedargs.results_out,
+                    parsedargs.split,        # dossier racine (ex. "results")
+                    parsedargs.source_dataset,     # source dataset
+                    str(parsedargs.fold_source),
+                    parsedargs.source_model_name,  # nom du modèle source
+                    parsedargs.target_dataset,
+                    str(parsedargs.fold_cam17)
+                )
+            else:
+                results_dir = os.path.join(
+                    parsedargs.results_out,        # dossier racine (ex. "results")
+                    parsedargs.split,
+                    parsedargs.source_dataset,
+                    str(parsedargs.fold_source),
+                    parsedargs.source_model_name,  # nom du modèle source
+                    parsedargs.target_dataset
+                    )
+    else:
+        if parsedargs.target_dataset == constants.CAMELYON17_512:
+                results_dir = os.path.join(
+                    parsedargs.results_out,
+                    parsedargs.split,        # dossier racine (ex. "results")
+                    parsedargs.source_dataset,
+                    parsedargs.source_model_name,  # nom du modèle source
+                    parsedargs.target_dataset,
+                    str(parsedargs.fold_cam17)
+                )
+        else:    
+            results_dir = os.path.join(
+                parsedargs.results_out,        # dossier racine (ex. "results")
+                parsedargs.split,
+                parsedargs.source_dataset,     # source dataset
+                parsedargs.source_model_name,  # nom du modèle source
+                parsedargs.target_dataset      # target dataset
+            )
+
+
+
+    os.makedirs(results_dir, exist_ok=True)
         
     for checkpoint_type_extended in base_checkpoint_types:
         checkpoint_type = checkpoint_type_extended
         
         split = parsedargs.split
-        assert split == constants.TESTSET or split == constants.CLVALIDSET or split == constants.TRAINSET
+        #assert split == constants.TESTSET or split == constants.CLVALIDSET or split == constants.TRAINSET
         
         _CODE_FUNCTION = 'fast_eval_{}'.format(split)
 
@@ -2614,7 +2929,7 @@ def fast_eval():
 
 
             #Get features at the pixel level
-            get_features(exp_path=exp_path, sf_uda_source_folder=parsedargs.path_pre_trained_source,image_ids_to_draw=parsedargs.image_ids_to_draw,image_ids_to_draw_target=parsedargs.image_ids_to_draw_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs)
+            get_features(exp_path=exp_path, sf_uda_source_folder=parsedargs.path_pre_trained_source,image_ids_to_draw=parsedargs.image_ids_to_draw,image_ids_to_draw_target=parsedargs.image_ids_to_draw_target, checkpoint_type=checkpoint_type, source_dataset=parsedargs.source_dataset,target_dataset=parsedargs.target_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs, save_results=results_dir)
 
 if __name__ == '__main__':
     fast_eval()

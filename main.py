@@ -62,6 +62,13 @@ def main():
     trainer.print_performances()
     trainer.report(epoch=0, split=constants.VALIDSET)
 
+    # if args.ds_to_compute_acc_trainset_source_target == constants.CAMELYON512:
+
+    #         if args.measure_loc:
+    #             trainer.compute_loc_on_target(0)
+
+    #         trainer.compute_acc_on_target(0)
+
     DLLogger.log(fmsg("Epoch 0 done."))
 
     for epoch in range(1, trainer.args.max_epochs + 1, 1):
@@ -117,8 +124,8 @@ def main():
         trainer.save_metrics(filename="metrics_history.pickle")
         trainer.save_loss(filename="loss_history.pickle")
         trainer.save_loss_esfda()
-        #trainer.save_unlearning_acc(filename="unlearning_acc_history.pickle")
-        #trainer.plot_unlearning_acc()
+        trainer.save_unlearning_acc(filename="unlearning_acc_history.pickle")
+        trainer.plot_unlearning_acc()
         trainer.plot_losses()
 
         

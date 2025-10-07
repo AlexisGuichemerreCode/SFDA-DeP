@@ -456,28 +456,41 @@ def get_loss_target(args):
             Cal_Loss.set_it(cal_lambda=args.cal_lambda)
             masterloss.add(Cal_Loss)
 
-        if args.esfda_entropy_partial:
-            # Partial_Entropy_Loss = losses.PartialEntropy(
-            #     cuda_id=args.c_cudaid,
-            #     support_background=support_background,
-            #     multi_label_flag=multi_label_flag)
-            # Partial_Entropy_Loss.set_it(esfda_entropy_partial_lambda=args.esfda_entropy_partial_lambda)
-            # masterloss.add(Partial_Entropy_Loss)
-            if args.esfda_flip_labels:
-                CEFlipLoss = losses.CEFlipLoss(
-                    cuda_id=args.c_cudaid,
-                    support_background=support_background,
-                    multi_label_flag=multi_label_flag)
-                CEFlipLoss.set_it(lambda_=args.CEFlipLoss_lambda)
-                masterloss.add(CEFlipLoss)
+        if args.esfda:
+            if args.esfda_entropy_partial:
+                # Partial_Entropy_Loss = losses.PartialEntropy(
+                #     cuda_id=args.c_cudaid,
+                #     support_background=support_background,
+                #     multi_label_flag=multi_label_flag)
+                # Partial_Entropy_Loss.set_it(esfda_entropy_partial_lambda=args.esfda_entropy_partial_lambda)
+                # masterloss.add(Partial_Entropy_Loss)
+                if args.esfda_flip_labels:
+                    CEFlipLoss = losses.CEFlipLoss(
+                        cuda_id=args.c_cudaid,
+                        support_background=support_background,
+                        multi_label_flag=multi_label_flag)
+                    CEFlipLoss.set_it(lambda_=args.CEFlipLoss_lambda)
+                    masterloss.add(CEFlipLoss)
 
-            if args.esfda_notflip_labels:
-                CENotFlipLoss = losses.CENotFlipLoss(
-                    cuda_id=args.c_cudaid,
-                    support_background=support_background,
-                    multi_label_flag=multi_label_flag)
-                CENotFlipLoss.set_it(lambda_=args.CENotFlipLoss_lambda, esfda_flip_labels_weight = args.esfda_flip_labels_weight, esfda_weight_entropy = args.esfda_weight_entropy)
-                masterloss.add(CENotFlipLoss)
+                if args.esfda_notflip_labels:
+                    CENotFlipLoss = losses.CENotFlipLoss(
+                        cuda_id=args.c_cudaid,
+                        support_background=support_background,
+                        multi_label_flag=multi_label_flag)
+                    CENotFlipLoss.set_it(lambda_=args.CENotFlipLoss_lambda, esfda_flip_labels_weight = args.esfda_flip_labels_weight, esfda_weight_entropy = args.esfda_weight_entropy)
+                    masterloss.add(CENotFlipLoss)
+            
+            if args.esfda_loc:
+                UnlearningFattention_loss = losses.SelfUnLearningFattention(
+                        cuda_id=args.c_cudaid,
+                        mode=args.esfda_loc_mode,
+                        lambda_=args.esfda_loc_lambda,
+                        support_background=support_background,
+                        multi_label_flag=multi_label_flag,
+                        dataset=args.dataset)
+                
+               
+                masterloss.add(UnlearningFattention_loss)
             
 
         # FAUST

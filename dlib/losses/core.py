@@ -37,7 +37,7 @@ __all__ = [
     'ConRanFieldFcams',
     'EntropyFcams',
     'MaxSizePositiveFcams',
-    #
+    'SelfUnLearningFattention',
     'SelfLearningNegev',
     'ConRanFieldNegev',
     'JointConRanFieldNegev',
@@ -255,29 +255,28 @@ class CENotFlipLoss(ElementaryLoss):
         y_pred_batch = key_arg["y_pred_batch"]
         assert y_pred_batch.shape[0] == cl_logits.shape[0], "Mismatch between logits and pseudo-labels"
 
-        if key_arg is not None and "cal_mask" in key_arg:
-            cal_mask = torch.tensor(key_arg["cal_mask"], dtype=torch.bool, device=cl_logits.device)
+        # if key_arg is not None and "cal_mask_retain" in key_arg:
+        #     cal_mask = torch.tensor(key_arg["cal_mask_retain"], dtype=torch.bool, device=cl_logits.device)
+        #     assert cal_mask.shape[0] == cl_logits.shape[0]
+
+        #     retain_mask = ~cal_mask
+        #     keep_mask = retain_mask
+        #     cl_logits = cl_logits[retain_mask]
+        #     y_pred_batch_not_flip = y_pred_batch[retain_mask]
+        if key_arg is not None and "cal_mask_retain" in key_arg:
+            cal_mask = torch.tensor(key_arg["cal_mask_retain"], dtype=torch.bool, device=cl_logits.device)
             assert cal_mask.shape[0] == cl_logits.shape[0], "Mask size mismatch"
 
             keep_mask = cal_mask
             cl_logits = cl_logits[keep_mask]
             y_pred_batch_not_flip = y_pred_batch[keep_mask]
-
+            
         if self.esfda_flip_labels_weight:
-        # per-sample loss
             per_sample_loss = self.loss(cl_logits, y_pred_batch_not_flip)  # (batch_size,)
 
-            #
+
             mask_entropy = key_arg["mask_entropy"].to(keep_mask.device)  
-        #     weights = 1.0 - mask_entropy
-        #     weights = weights[keep_mask]
-        #     if weights is not None:
-        #         weights = weights.to(cl_logits.device)
-        #         loss = torch.mean(weights * per_sample_loss) * self.lambda_
-        #     # else:
-        #     #     loss = per_sample_loss.mean() * self.lambda_
-        # else:
-        #     loss = self.loss(cl_logits, y_pred_batch_not_flip) * self.lambda_
+
 
             filtered_entropy = mask_entropy[keep_mask]
 
@@ -350,19 +349,31 @@ class CEFlipLoss(ElementaryLoss):
         y_pred_batch = key_arg["y_pred_batch"]
         assert y_pred_batch.shape[0] == cl_logits.shape[0], "Mismatch between logits and pseudo-labels"
 
-        if key_arg is not None and "cal_mask" in key_arg:
-            cal_mask = torch.tensor(key_arg["cal_mask"], dtype=torch.bool, device=cl_logits.device)
-            assert cal_mask.shape[0] == cl_logits.shape[0], "Mask size mismatch"
+        # if key_arg is not None and "cal_mask_forget" in key_arg:
+        #     cal_mask = torch.tensor(key_arg["cal_mask_forget"], dtype=torch.bool, device=cl_logits.device)
+        #     assert cal_mask.shape[0] == cl_logits.shape[0], "Mask size mismatch"
 
-            flip_mask = ~cal_mask
+        #     flip_mask = ~cal_mask
+        #     cl_logits = cl_logits[flip_mask]
+        #     y_pred_batch_to_flip = y_pred_batch[flip_mask]
+
+        if key_arg is not None and "cal_mask_forget" in key_arg:
+            # cal_mask = torch.tensor(key_arg["cal_mask"], dtype=torch.bool, device=cl_logits.device)
+            # assert cal_mask.shape[0] == cl_logits.shape[0], "Mask size mismatch"
+
+            # flip_mask = ~cal_mask
+            flip_mask = torch.tensor(key_arg["cal_mask_forget"], dtype=torch.bool, device=cl_logits.device)
+
             cl_logits = cl_logits[flip_mask]
             y_pred_batch_to_flip = y_pred_batch[flip_mask]
+            
             
 
         if cl_logits.shape[0] == 0:
             return torch.tensor(0.0, device=cl_logits.device, requires_grad=True)
 
-        flipped_label = 1 - y_pred_batch_to_flip
+        #flipped_label = 1 - y_pred_batch_to_flip
+        flipped_label = y_pred_batch_to_flip
         return self.loss(input=cl_logits, target=flipped_label) * self.lambda_
     
 
@@ -878,6 +889,74 @@ class SelfLearningFcams(ElementaryLoss):
         assert not self.multi_label_flag
 
         return self.loss(input=fcams, target=seeds) * self.lambda_
+
+
+class SelfUnLearningFattention(ElementaryLoss):
+    def __init__(self, mode = "mse", lambda_=1.0, **kwargs):
+        super(SelfUnLearningFattention, self).__init__(**kwargs)
+
+        self.lambda_ = lambda_
+        self.mode = mode
+        #self.loss_mse = nn.MSELoss(reduction="mean").to(self._device)
+
+
+        if mode == "mse":
+            self.loss = nn.MSELoss(reduction="mean").to(self._device)
+        elif mode == "cosine":
+            self.loss = nn.CosineSimilarity(dim=1).to(self._device)
+        else:
+            raise ValueError(f"[SelfUnLearningFattention] Unknown mode '{self.mode}'. Use 'mse' or 'cosine'.")
+
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,    # attention from source model
+                fcams=None,         # attention from unlearned model
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None):
+
+        super(SelfUnLearningFattention, self).forward(epoch=epoch)
+
+        if not self.is_on():
+            return self._zero
+
+        assert cams_inter is not None and fcams is not None, \
+            "[SelfLearningFcams] Both cams_inter (from source) and fcams (from unlearned) must be provided."
+        
+
+        if self.mode == "mse":
+            loss_val = self.loss(fcams, cams_inter)
+
+        elif self.mode == "cosine":
+            # Flatten les cartes [B, 1, H, W] -> [B, H*W]
+            cams_inter_flat = cams_inter.flatten(start_dim=1)
+            fcams_flat = fcams.flatten(start_dim=1)
+
+            # Normalisation L2
+            cams_inter_flat = F.normalize(cams_inter_flat, dim=1)
+            fcams_flat = F.normalize(fcams_flat, dim=1)
+
+            # Cosine similarity (self.loss = nn.CosineSimilarity)
+            cos_sim = self.loss(fcams_flat, cams_inter_flat)  # [B]
+            loss_val = 1 - cos_sim.mean()
+
+        else:
+            raise ValueError(f"[SelfUnLearningFattention] Invalid mode '{self.mode}'.")
+
+        return loss_val * self.lambda_
+
+        #return self.loss_mse(fcams, cams_inter) * self.lambda_
+
 
 
 class ConRanFieldFcams(ElementaryLoss):

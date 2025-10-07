@@ -563,6 +563,10 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--ds_to_compute_acc_trainset_source_target', type=str, default=None,
                         help='Compute the accuracy on the source and target '
                              'train set.')
+    
+    parser.add_argument('--fold_came_compute', type=int, default=None,
+                        help='Fold to use to measure metrics on camelyon.')
+    
     parser.add_argument('--cmpt_epoch', type=int, default=None,
                         help='Selected epoch to compute the accuracy on the source and target '
                              'train set.')
@@ -658,8 +662,13 @@ def get_args(args: dict, eval: bool = False):
 
     parser.add_argument('--balance_stable_to_flips', type=str2bool, default=None,)
     parser.add_argument('--stable_match_strategy', type=str2bool, default=None,)
+    parser.add_argument('--measure_loc', type=str2bool, default=None,)
+    
 
     parser.add_argument('--entropy_probabilistic', type=str2bool, default=None,)
+    parser.add_argument('--entropy_gt', type=str2bool, default=None,)
+    parser.add_argument('--entropy_random', type=str2bool, default=None,)
+    parser.add_argument('--entropy_threshold', type=float, default=None,)
     
     parser.add_argument('--select_distance', type=str2bool, default=None,)
     parser.add_argument('--select_entropy', type=str2bool, default=None,)
@@ -679,6 +688,13 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_notflip_labels', type=str2bool, default=None,)
     parser.add_argument('--CENotFlipLoss_lambda', type=float, default=None,)
     parser.add_argument('--esfda_flip_labels_weight', type=str2bool, default=None,)
+
+
+    parser.add_argument('--esfda_loc', type=str2bool, default=None)
+    parser.add_argument('--esfda_loc_lambda', type=float, default=None, 
+                        help='ECE: lambda value for loss .')
+    parser.add_argument('--esfda_loc_mode', type=str, default=None, 
+                        help='ECE: lambda value for loss .')
 
 
 
@@ -1166,14 +1182,14 @@ def get_args(args: dict, eval: bool = False):
         args['target_domain_data_paths'] = config.configure_data_paths(args, dsname_target_domain)
         if dsname_target_domain == constants.CAMELYON512:
             args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'],
-                                     f"fold-{7}")
+                                     f"fold-{args['fold_came_compute']}")
             args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, constants.GLAS,
                                      f"fold-{args['fold']}")
         else:
             assert dsname_target_domain == constants.GLAS
             args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'], f"fold-{args['fold']}")
             args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, constants.CAMELYON512,
-                                     f"fold-{7}")
+                                     f"fold-{args['fold_came_compute']}")
         
         args['mask_root_target'] = join(args['mask_root_target'], args['target_domain_ds_to_compute_stats'])
 

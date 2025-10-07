@@ -528,6 +528,10 @@ class Trainer(Basic):
                     self.store_ce_flip_loss = []
                     self.store_ce_not_flip_loss = []
 
+                    self.pred_distribution, self.overpred_class, self.underpred_class = self.compute_prediction_bias(model=self.model,
+                                loader=self.loaders, top_k=None
+                            )
+
                     # select images to shift label
 
                     if self.args.select_distance:
@@ -541,17 +545,28 @@ class Trainer(Basic):
                     if self.args.select_entropy:
 
                         if self.args.entropy_probabilistic:
-                            self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.flippable_subset, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy_probabilistic(
+                            self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy_probabilistic(
+                                model=self.model,
+                                loader=self.loaders
+                            )
+                        elif self.args.entropy_gt:
+                                self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_gt(
+                                    loader=self.loaders
+                                )
+
+                        elif self.args.entropy_random:
+                            self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_random(
                                 model=self.model,
                                 loader=self.loaders
                             )
                         else:
-                            self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.flippable_subset, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy(
+                            self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy(
                                 model=self.model,
                                 loader=self.loaders,
                                 select_imgs_ratio=self.args.esfda_select_imgs_ratio,
                                 random_select_ratio=self.args.random_select_ratio,
-                                reverse_imgs=self.args.esfda_reverse_imgs
+                                reverse_imgs=self.args.esfda_reverse_imgs,
+                                entropy_threshold=self.args.entropy_threshold
                             )
 
                 else:
@@ -1202,7 +1217,8 @@ class Trainer(Basic):
                         std_cams,
                         masks,
                         views,
-                        cal_mask=None,
+                        cal_mask_forget=None,
+                        cal_mask_retain=None,
                         y_pred_batch=None,
                         mask_entropy = None):
         
@@ -1219,8 +1235,12 @@ class Trainer(Basic):
         if args.sf_uda:
             if args.task == constants.STD_CL:
                     key_arg = {}
-                    if cal_mask is not None:
-                        key_arg["cal_mask"] = cal_mask
+                    # if cal_mask is not None:
+                    #     key_arg["cal_mask"] = cal_mask
+                    if cal_mask_forget is not None:
+                        key_arg["cal_mask_forget"] = cal_mask_forget
+                    if cal_mask_retain is not None:
+                        key_arg["cal_mask_retain"] = cal_mask_retain
                     if y_pred_batch is not None:
                         key_arg["y_pred_batch"] = y_pred_batch
 
@@ -1232,14 +1252,39 @@ class Trainer(Basic):
 
                     output = self.model(images)
                     cl_logits = output
+
+                    if not self.args.esfda_loc:
+                        cams_inter = None
+                        fattention = None
+
+                    if self.args.esfda_loc:
+                       interpolation_mode = 'bilinear'
+                       attention_map = self.model.encoder_last_features.mean(dim=1, keepdim=True)
+                       fattention = torch.sigmoid(attention_map)
+
+                       cams_inter_init = std_cams
+
+                       _, _, H, W = attention_map.shape
+
+                       cams_inter = F.interpolate(
+                            cams_inter_init,      
+                            size=(H, W),
+                            mode=interpolation_mode,
+                            align_corners=False
+                        )
+
+
+
                     loss = self.loss(epoch=self.epoch,
                                      model=self.model,
+                                     cams_inter=cams_inter, 
+                                     fcams=fattention,
                                      cl_logits=cl_logits,
                                      glabel=y_global,
                                      pseudo_glabel=y_pl_global,
                                      cutmix_holder=cutmix_holder,
                                      key_arg=key_arg
-                                     )
+                                    )
                     logits = cl_logits
 
             elif args.task == constants.F_CL:
@@ -1669,6 +1714,8 @@ class Trainer(Basic):
         if self.args.ds_to_compute_acc_trainset_source_target == constants.CAMELYON512 and self.epoch % self.args.cmpt_epoch == 0:
             #self.compute_acc_on_source_and_target(self.epoch)
             #self.compute_loc_on_source_and_target(self.epoch)
+            if self.args.measure_loc:
+                self.compute_loc_on_target(self.epoch)
 
             self.compute_acc_on_target(self.epoch)
             #self.compute_loc_on_target(self.epoch)
@@ -1736,6 +1783,44 @@ class Trainer(Basic):
         distances = F.pairwise_distance(features, opp_anchors, p=2)  # [B]
         
         return distances
+
+    @torch.no_grad()
+    def compute_prediction_bias(self, model, loader, top_k = None):
+
+        model.eval()
+        loader = loader['train']
+
+        class_counts = None
+        total_samples = 0
+
+        for batch_idx, (images, targets, p_glabel, index,
+                        raw_imgs, std_cams, masks, views) in tqdm(
+                            enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+
+            images = images.cuda(self.args.c_cudaid)
+            logits = model(images)
+            probs = F.softmax(logits, dim=1)
+            preds = probs.argmax(dim=1)
+            num_classes = probs.size(1)
+
+            if class_counts is None:
+                class_counts = torch.zeros(num_classes, device=images.device)
+
+            class_counts += torch.bincount(preds, minlength=num_classes).float()
+            total_samples += preds.numel()
+
+        # --- Distribution ---
+        pred_distribution = (class_counts / total_samples).cpu().numpy()
+
+        uniform = 1.0 / self.args.num_classes
+
+        overpred_classes = [(int(i), float(p)) for i, p in enumerate(pred_distribution) if p > uniform]
+        underpred_classes = [(int(i), float(p)) for i, p in enumerate(pred_distribution) if p < uniform]
+
+        overpred_classes.sort(key=lambda x: x[1], reverse=True)
+        underpred_classes.sort(key=lambda x: x[1])
+
+        return pred_distribution, overpred_classes, underpred_classes
 
     @torch.no_grad()
     def select_flippable_indices_distances_2(self, model, loader, esfda_distance_normal=4.0, esfda_distance_cancer=6.0, select_imgs_ratio=0.1):
@@ -1828,7 +1913,8 @@ class Trainer(Basic):
     @torch.no_grad()
     def select_flippable_indices_entropy(self, model, loader, select_imgs_ratio=0.1,
                                         random_select_ratio=1.0, reverse_imgs = True,    
-                                        stable_per_class=200,freeze_classes=(0, 1),sub_flippable_ratio=0.5):
+                                        stable_per_class=200,sub_flippable_ratio=1.0,
+                                     entropy_threshold=None):
         model.eval()
         entropy_list = []  # (index, entropy) for cancer-predicted images
         entropy_all = {}          # store entropy for ALL images
@@ -1837,7 +1923,16 @@ class Trainer(Basic):
 
         idx_to_pred = {}
         by_class_all = {0: [], 1: []}
+        idx_to_target = {}      #  store ground truth labels
+        assigned_labels_map = {}    # idx -> label final (flip: top-2, stable: top-1)
+        idx_to_top1 = {}
+        idx_to_top2 = {}
 
+        freeze_classes = [c for c, _ in self.overpred_class]
+
+
+        if len(freeze_classes) == 0:
+            freeze_classes = list(set(idx_to_pred.values()))
 
         for batch_idx, (images, targets, p_glabel, index,
                         raw_imgs, std_cams, masks, views) in tqdm(
@@ -1848,6 +1943,11 @@ class Trainer(Basic):
             probs = F.softmax(logits, dim=1)
             preds = probs.argmax(dim=1)
 
+            C = probs.size(1)
+            k = 2 if C >= 2 else 1
+            top2_vals, top2_idx = probs.topk(k=k, dim=1, largest=True, sorted=True)
+            
+
             # Entropy computation
             entropy = -torch.sum(probs * torch.log(probs + 1e-6), dim=1)
 
@@ -1855,12 +1955,23 @@ class Trainer(Basic):
                 idx = index[i]
                 pred = preds[i].item()
                 ent = entropy[i].item()
-
+                gt  = targets[i].item()
+                
                 idx_to_pred[idx] = pred
                 entropy_all[idx] = ent
+                idx_to_target[idx] = gt   # save GT
+
+                t1 = int(top2_idx[i, 0].item())
+                t2 = int(top2_idx[i, 1].item()) if C >= 2 else t1
+                idx_to_top1[idx] = t1
+                idx_to_top2[idx] = t2
 
 
-                if pred == 1:  # Only select from predicted cancer
+
+                # if pred == 1:  # Only select from predicted cancer
+                #     entropy_list.append((idx, ent))
+
+                if pred in freeze_classes:
                     entropy_list.append((idx, ent))
 
                 if pred in by_class_all:
@@ -1875,101 +1986,351 @@ class Trainer(Basic):
 
         py_random.seed(self.seed)
 
-        preselect_num = int(len(entropy_list) * select_imgs_ratio)
-        preselected_indices = entropy_list[:preselect_num]
+        # preselect_num = int(len(entropy_list) * select_imgs_ratio)
+        # preselected_indices = entropy_list[:preselect_num]
 
+        # final_select_num = max(1, int(len(preselected_indices) * random_select_ratio))
+        # selected_indices = py_random.sample(preselected_indices, final_select_num)
+
+        # selected_flippable = set(idx for idx, _ in selected_indices)
+        # reinforce_indices = set()
+
+        # --- Select with threshold or ratio Sélection par seuil absolu ou par ratio ---
+        if entropy_threshold is not None:
+            # Select all imgs above the threshold
+            preselected_indices = [(idx, ent) for idx, ent in entropy_list if ent >= entropy_threshold]
+            if len(preselected_indices) == 0:
+                print(f"[WARN] No imgs above the threshold {entropy_threshold}.")
+        else:
+            preselect_num = int(len(entropy_list) * select_imgs_ratio)
+            preselected_indices = entropy_list[:preselect_num]
+
+        # --- Sample randomly ---
         final_select_num = max(1, int(len(preselected_indices) * random_select_ratio))
-        selected_indices = py_random.sample(preselected_indices, final_select_num)
+        if final_select_num < len(preselected_indices):
+            selected_indices = py_random.sample(preselected_indices, final_select_num)
+        else:
+            selected_indices = preselected_indices
+
 
         selected_flippable = set(idx for idx, _ in selected_indices)
         reinforce_indices = set()
 
-        if len(selected_flippable) > 0 and 0.0 < sub_flippable_ratio < 1.0:
-            k_sub = max(1, int(len(selected_flippable) * sub_flippable_ratio))
-            flippable_subset = set(py_random.sample(list(selected_flippable), k_sub))
-        else:
-            flippable_subset = set(selected_flippable)  
+        assigned_labels_map = {}
 
+        for idx in idx_to_pred.keys():  
+            if idx in selected_flippable:
+                assigned_labels_map[idx] = idx_to_top2.get(idx, idx_to_top1[idx])
+            else:
+                assigned_labels_map[idx] = idx_to_top1[idx]
+
+        self.assigned_labels_map = assigned_labels_map
+
+        flippable_subset = set(selected_flippable)  
+
+        preserve_all = self.args.stable_match_strategy
 
         stable_selected = []
         stable_labels = []
 
-        for c in freeze_classes:
-            if c in by_class_all:
-                by_class_all[c].sort(key=lambda x: x[1])  # low entropy first
+        if not preserve_all:
+            # All idx
+            all_seen = list(idx_to_pred.keys())
+            # retain
+            nonflipped = [idx for idx in all_seen if idx not in flippable_subset]
 
-        if self.args.balance_stable_to_flips:
-            # ---- Nouveau mode: nombre total de stables = nombre de flips utilisés ----
-            total_target = len(flippable_subset)  # -> matcher ce que tu utilises réellement
+            # 
+            #if freeze_classes is not None and len(freeze_classes) > 0:
+            #    nonflipped = [idx for idx in nonflipped if idx_to_pred[idx] in set(freeze_classes)]
+
+            stable_selected = nonflipped
+            stable_labels = [idx_to_pred[idx] for idx in stable_selected]
+
+        else:
+            total_target = len(flippable_subset)   # nb of imgs to flip
             if total_target > 0 and len(freeze_classes) > 0:
-                # Construire un quota par classe
-                if self.args.stable_match_strategy:
-                    # proportionnel au #candidats disponibles
-                    total_candidates = sum(len(by_class_all.get(c, [])) for c in freeze_classes)
-                    if total_candidates == 0:
-                        targets_per_class = {c: 0 for c in freeze_classes}
-                    else:
-                        quotas = {c: (len(by_class_all.get(c, [])) / total_candidates) * total_target
-                                for c in freeze_classes}
-                        base = {c: int(quotas[c]) for c in freeze_classes}
-                        allocated = sum(base.values())
-                        remainder = total_target - allocated
-                        # Distribuer le reliquat selon la plus grosse fraction et la dispo
-                        fracs = sorted(
-                            ((c, quotas[c] - base[c]) for c in freeze_classes),
-                            key=lambda t: t[1], reverse=True
-                        )
-                        targets_per_class = base
-                        for c, _ in fracs:
-                            if remainder <= 0:
-                                break
-                            targets_per_class[c] += 1
-                            remainder -= 1
+                # Build quota per class
+                total_candidates = sum(len(by_class_all.get(c, [])) for c in freeze_classes)
+                if total_candidates == 0:
+                    targets_per_class = {c: 0 for c in freeze_classes}
                 else:
-                    # "even": parts égales + reliquat vers classes les plus fournies
-                    base = total_target // len(freeze_classes)
-                    remainder = total_target % len(freeze_classes)
-                    # prioriser les classes avec plus de candidats
-                    avail_order = sorted(
-                        list(freeze_classes),
-                        key=lambda cc: len(by_class_all.get(cc, [])),
-                        reverse=True
+                    quotas = {c: (len(by_class_all.get(c, [])) / total_candidates) * total_target
+                            for c in freeze_classes}
+                    base = {c: int(quotas[c]) for c in freeze_classes}
+                    allocated = sum(base.values())
+                    remainder = total_target - allocated
+
+                    # Distrib rest based on fraction
+                    fracs = sorted(
+                        ((c, quotas[c] - base[c]) for c in freeze_classes),
+                        key=lambda t: t[1], reverse=True
                     )
-                    targets_per_class = {c: base for c in freeze_classes}
-                    for c in avail_order:
+                    targets_per_class = base
+                    for c, _ in fracs:
                         if remainder <= 0:
                             break
                         targets_per_class[c] += 1
                         remainder -= 1
 
-                # Choisir les stables par classe (low-entropy d'abord)
+                # Select img to retain
                 for c in freeze_classes:
                     pool = by_class_all.get(c, [])
                     take = min(targets_per_class.get(c, 0), len(pool))
-                    chosen = pool[:take]
+                    chosen = pool[:take]   # Rank by entropy
                     stable_selected.extend([idx for (idx, _) in chosen])
                     stable_labels.extend([c] * take)
 
-            # else: total_target == 0 -> pas de stables
-        else:
-            # ---- Mode original: quota fixe par classe ----
-            for c in freeze_classes:
-                pool = by_class_all.get(c, [])
-                take = min(stable_per_class, len(pool))
-                chosen = pool[:take]
-                stable_selected.extend([idx for (idx, _) in chosen])
-                stable_labels.extend([c] * take)
 
-        # for c in freeze_classes:
-        #     if c in by_class_all and len(by_class_all[c]) > 0:
-               
-        #         by_class_all[c].sort(key=lambda x: x[1])  # low entropy first
-        #         take = min(stable_per_class, len(by_class_all[c]))
-        #         chosen = by_class_all[c][:take]
-        #         stable_selected.extend([idx for (idx, _) in chosen])
-        #         stable_labels.extend([c] * take)
+        flip_correct, flip_total = 0, 0
+        for idx in flippable_subset:
+            if idx in idx_to_target:
+                flip_total += 1
+                if idx_to_pred[idx] == idx_to_target[idx]:
+                    flip_correct += 1
+        flip_acc = flip_correct / flip_total if flip_total > 0 else 0.0
+
+        stable_correct, stable_total = 0, 0
+        for idx in stable_selected:
+            if idx in idx_to_target:
+                stable_total += 1
+                if idx_to_pred[idx] == idx_to_target[idx]:
+                    stable_correct += 1
+        stable_acc = stable_correct / stable_total if stable_total > 0 else 0.0
+
+        results = {
+            "retain": flip_acc,
+            "forget": stable_acc
+        }
+
+        output_path = os.path.join(self.args.outd, "results_unlearning_acc.txt")
+        output_pickle = os.path.join(self.args.outd, "results__unlearning_acc.pkl")
+
+        with open(output_path, "w") as f_txt:
+            f_txt.write(f"retain : {flip_acc:.4f}\n")
+            f_txt.write(f"forget  : {stable_acc:.4f}\n")
+
+
+        with open(output_pickle, "wb") as f_pkl:
+            pkl.dump(results, f_pkl)
+
 
         return selected_flippable, reinforce_indices, idx_to_pred, entropy_all, flippable_subset, stable_selected, stable_labels
+
+    @torch.no_grad()
+    def select_flippable_indices_gt(self, loader, n_per_class=3000):
+        """
+        """
+        loader = loader['train']
+
+        idx_to_target = {}
+        idx_to_pred   = {}    
+        entropy_all   = {}   
+
+        class_to_indices = {0: [], 1: []}
+
+        for batch_idx, (images, targets, p_glabel, index,
+                        raw_imgs, std_cams, masks, views) in enumerate(loader):
+
+            for i in range(images.size(0)):
+                idx = index[i]
+                gt  = targets[i].item()
+                idx_to_target[idx] = gt
+                idx_to_pred[idx]   = gt    
+                entropy_all[idx]   = 0.0  
+
+                if gt in class_to_indices:
+                    class_to_indices[gt].append(idx)
+
+        # --- Échantillonnage équilibré ---
+        selected_flippable = set()
+        stable_selected = []
+
+        for c in class_to_indices:
+            all_idx = class_to_indices[c]
+            if len(all_idx) > n_per_class:
+                chosen = py_random.sample(all_idx, n_per_class)
+            else:
+                chosen = all_idx
+
+            if c not in self.overpred_class:
+
+                selected_flippable.update(chosen)
+            else:
+
+                stable_selected.extend(chosen)
+
+        # --- Labels stables ---
+        stable_labels = [idx_to_target[idx] for idx in stable_selected]
+
+        # --- Subset flippable (identique à selected_flippable) ---
+        flippable_subset = set(selected_flippable)
+
+        # Reinforce vide ici (pas utilisé)
+        reinforce_indices = set()
+
+        # --- Construire assigned_labels_map ---
+        assigned_labels_map = {}
+        for idx, gt in idx_to_target.items():
+            assigned_labels_map[idx] = gt
+            # if idx in selected_flippable:
+            #     # flip: cancer -> normal (classe 0)
+            #     assigned_labels_map[idx] = 0
+            # else:
+            #     # stable: garder GT
+            #     assigned_labels_map[idx] = gt
+
+        # Sauvegarde dans la classe pour cohérence avec training loop
+        self.assigned_labels_map = assigned_labels_map
+
+        print(f"[INFO] Flippables: {len(selected_flippable)}, "
+            f"Stables: {len(stable_selected)}")
+
+        return selected_flippable, reinforce_indices, idx_to_pred, entropy_all, flippable_subset, stable_selected, stable_labels
+
+    @torch.no_grad()
+    def select_flippable_indices_random(
+        self,
+        model,
+        loader,
+        flip_ratio=0.1,               # ratio global d’images à flipper (utilisé si flip_count=None)
+        flip_count=None,              # nombre absolu d’images à flipper (prioritaire sur flip_ratio)
+        mode="pred_cancer",           # "pred_cancer" | "all" | "per_class"
+        freeze_classes=(1,),          # pour la sélection des stables
+        balance_stables=True          # <-- nouvel argument
+    ):
+        """
+        Ablation: sélection aléatoire des images à flipper.
+        Retourne: selected_flippable, reinforce_indices, idx_to_pred, entropy_all,
+                flippable_subset, stable_selected, stable_labels
+        Et met à jour self.assigned_labels_map pour le training loop.
+        """
+        model.eval()
+        loader = loader['train']
+
+        import random as py_random
+        py_random.seed(getattr(self, "seed", 0))
+
+        idx_to_pred   = {}
+        idx_to_target = {}
+        entropy_all   = {}
+
+        # Pools pour variantes
+        all_indices = []
+        by_pred_class = {}
+
+        # ---- 1) Pass modèle pour constituer les pools ----
+        for batch_idx, (images, targets, p_glabel, index,
+                        raw_imgs, std_cams, masks, views) in enumerate(loader):
+            images = images.cuda(self.args.c_cudaid)
+            logits = model(images)
+            probs  = F.softmax(logits, dim=1)
+            preds  = probs.argmax(dim=1)
+
+            # entropie (pas utilisée pour la sélection, mais on remplit pour cohérence)
+            entropy = -torch.sum(probs * torch.log(probs + 1e-6), dim=1)
+
+            for i in range(images.size(0)):
+                idx = index[i]
+                y   = preds[i].item()
+                gt  = targets[i].item()
+
+                idx_to_pred[idx]   = y
+                idx_to_target[idx] = gt
+                entropy_all[idx]   = float(entropy[i].item())
+
+                all_indices.append(idx)
+                by_pred_class.setdefault(y, []).append(idx)
+
+        N = len(all_indices)
+        if N == 0:
+            self.assigned_labels_map = {}
+            return set(), set(), idx_to_pred, entropy_all, set(), [], []
+
+        # ---- 2) Déterminer le pool de tirage et le budget de flip ----
+        if mode == "pred_cancer":
+            pool = by_pred_class.get(1, [])  # même pool que ta version entropie
+        elif mode == "all":
+            pool = list(all_indices)
+        elif mode == "per_class":
+            pool = None  # géré à part
+        else:
+            raise ValueError(f"Unknown mode={mode}")
+
+        if flip_count is None:
+            base = len(pool) if (mode != "per_class" and pool is not None) else N
+            flip_count = max(1, int(base * float(flip_ratio)))
+
+        # ---- 3) Tirage aléatoire des flips ----
+        selected_flippable = set()
+
+        if mode in ("pred_cancer", "all"):
+            if len(pool) > 0:
+                k = min(flip_count, len(pool))
+                selected_flippable = set(py_random.sample(pool, k))
+        else:
+            # "per_class": quotas par classe prédite
+            total_pool = sum(len(v) for v in by_pred_class.values())
+            if total_pool > 0:
+                quotas_float = {
+                    c: (len(by_pred_class[c]) / total_pool) * flip_count
+                    for c in by_pred_class
+                }
+                quotas_int = {c: int(quotas_float[c]) for c in by_pred_class}
+                allocated = sum(quotas_int.values())
+                remainder = flip_count - allocated
+                fracs = sorted(
+                    ((c, quotas_float[c] - quotas_int[c]) for c in by_pred_class),
+                    key=lambda t: t[1], reverse=True
+                )
+                for c, _ in fracs:
+                    if remainder <= 0:
+                        break
+                    quotas_int[c] += 1
+                    remainder -= 1
+                for c, q in quotas_int.items():
+                    pool_c = by_pred_class[c]
+                    if len(pool_c) > 0 and q > 0:
+                        q = min(q, len(pool_c))
+                        selected_flippable.update(py_random.sample(pool_c, q))
+
+        # ---- 4) Construire assigned_labels_map (flip = inverse simple 0<->1) ----
+        assigned_labels_map = {}
+        for idx in idx_to_pred.keys():
+            y = idx_to_pred[idx]
+            if idx in selected_flippable:
+                assigned_labels_map[idx] = 1 - y if y in (0, 1) else (0 if y != 0 else 1)
+            else:
+                assigned_labels_map[idx] = y
+
+        self.assigned_labels_map = assigned_labels_map
+
+        # ---- 5) Construire stables ----
+        all_seen = list(idx_to_pred.keys())
+        nonflipped = [idx for idx in all_seen if idx not in selected_flippable]
+
+        if freeze_classes is not None and len(freeze_classes) > 0:
+            nonflipped = [idx for idx in nonflipped if idx_to_pred[idx] in set(freeze_classes)]
+
+        if balance_stables:
+            # équilibrer : même nombre de stables que de flips
+            k_stables = min(len(nonflipped), len(selected_flippable))
+            stable_selected = py_random.sample(nonflipped, k_stables) if k_stables > 0 else []
+        else:
+            # garder tous les stables
+            stable_selected = nonflipped
+
+        stable_labels = [idx_to_pred[idx] for idx in stable_selected]
+
+        # ---- 6) Sorties ----
+        reinforce_indices = set()
+        flippable_subset  = set(selected_flippable)
+
+        print(f"[RANDOM] mode={mode} | flips={len(selected_flippable)} | "
+            f"stables={len(stable_selected)} (balanced={balance_stables})")
+
+        return selected_flippable, reinforce_indices, idx_to_pred, entropy_all, flippable_subset, stable_selected, stable_labels
+
+
 
     @torch.no_grad()
     def select_flippable_indices_entropy_probabilistic(
@@ -1977,7 +2338,7 @@ class Trainer(Basic):
         model,
         loader,
         flip_on_pred_classes=(1,),   
-        freeze_classes=(0, 1),      
+        freeze_classes=(0,1),      
         seed_per_epoch: bool = True,
     ):
 
@@ -1987,9 +2348,11 @@ class Trainer(Basic):
         reinforce_indices = set() 
         idx_to_pred = {}
         entropy_all = {}
+        idx_to_target = {}
+
         stable_selected, stable_labels = [], []
 
-        all_idx, all_pred_top1, all_pred_top2, all_H = [], [], [], []
+        all_idx, all_pred_top1, all_pred_top2, all_H, all_targets = [], [], [], [], []
 
 
         K = int(self.args.num_classes)
@@ -1998,8 +2361,10 @@ class Trainer(Basic):
 
         set_seed(seed=self.default_seed, verbose=False)
 
-        flip_set = None if flip_on_pred_classes is None else set(flip_on_pred_classes)
-        freeze_set = set(freeze_classes) if freeze_classes is not None else set()
+        #flip_set = None if flip_on_pred_classes is None else set(flip_on_pred_classes)
+        #freeze_set = set(freeze_classes) if freeze_classes is not None else set()
+        flip_set = [c for c, _ in self.overpred_class]
+        freeze_classes = [c for c, _ in self.overpred_class]
 
         for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views) in tqdm(
             enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
@@ -2024,34 +2389,20 @@ class Trainer(Basic):
             for b in range(images.size(0)):
                 idx  = index[b]
                 t1   = int(pred_top1[b].item())
-                t2   = int(pred_top2[b].item()) if K >= 2 else int(1 - t1)  # binaire: l'autre classe
+                t2   = int(pred_top2[b].item()) if K >= 2 else int(1 - t1)  
                 Hval = float(ent[b].item())
 
-                idx_to_pred[idx] = t1              # prédiction top-1 (utile pour logging)
+                idx_to_pred[idx] = t1              # prediction top-1 
                 entropy_all[idx] = Hval
-
+                gt  = targets[b].item()
+                idx_to_target[idx] = gt   # save GT
+                
                 all_idx.append(idx)
                 all_pred_top1.append(t1)
                 all_pred_top2.append(t2)
                 all_H.append(Hval)
+                all_targets.append(int(targets[b].item()))
 
-                # idx = index[b]
-                # pred = int(preds[b].item())
-                # idx_to_pred[idx] = pred
-                # entropy_all[idx] = float(ent[b].item())
-
-                # flip_candidate = (flip_set is None) or (pred in flip_set)
-                # flip_now = bool(u[b].item() < p[b].item()) and flip_candidate
-
-                # if flip_now:
-                #     selected_flippable.add(idx)
-                # else:
-                #     if pred in freeze_set:
-                #         stable_selected.append(idx)
-                #         stable_labels.append(pred)
-
-        
-        #flippable_subset = set(selected_flippable)
 
         # -------- 2) Min–max global sur H --------
         H_t   = torch.tensor(all_H, dtype=torch.float32)
@@ -2066,56 +2417,275 @@ class Trainer(Basic):
 
         # Calcul p_i & tirage
         p_t   = ((H_t - H_min) / (denom + eps)).clamp_(0.0, 1.0)    # [N]
+
+        p_np = p_t.detach().cpu().numpy() if hasattr(p_t, "detach") else np.array(p_t)
+
+        plt.figure(figsize=(16,12))
+        plt.hist(p_np, bins=40, range=(0,1), alpha=0.7, color="blue", edgecolor="black")
+        plt.xlabel("Normalized entropy probability $p_t$")
+        plt.ylabel("Frequency")
+        plt.title("Histogram of normalized entropy $p_t$")
+        plt.grid(True, linestyle="--", alpha=0.6)
+        plt.tight_layout()
+
+        out_path = os.path.join(self.args.outd, f"hist_predclass.png")
+        plt.savefig(out_path, dpi=300)
+        plt.close()
+
+       
+        p_by_class = {}  # {pred_label: {"correct": [], "incorrect": []}}
+
+        for i, idx in enumerate(all_idx):
+            true_label = all_targets[i]
+            pred_label = all_pred_top1[i]
+            Hval       = float(H_t[i].item())
+
+            # Normalisation H -> p
+            p_val = (Hval - H_min) / (denom + eps)
+            #p_val = max(0.0, min(1.0, p_val))  # clamp
+
+
+            if pred_label not in p_by_class:
+                p_by_class[pred_label] = {"correct": [], "incorrect": []}
+
+            if pred_label == true_label:
+                
+                p_by_class[pred_label]["correct"].append(p_val)
+            else:
+               
+                p_by_class[pred_label]["incorrect"].append(p_val)
+
+        # # Plot
+        # h_max = math.log(max(2, self.args.num_classes))
+        # bins = 40  # borne sup de l'entropie
+        # bin_edges = np.linspace(0.0, h_max, bins)
+
+
+        # for cls, splits in p_by_class.items():
+        #     ent_correct = np.array(splits["correct"])
+        #     ent_incorrect = np.array(splits["incorrect"])
+
+        #     # Comptage
+        #     counts_correct, _ = np.histogram(ent_correct, bins=bin_edges)
+        #     counts_incorrect, _ = np.histogram(ent_incorrect, bins=bin_edges)
+        #     total_counts = counts_correct + counts_incorrect
+
+        #     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+        #     # Plot
+        #     plt.figure(figsize=(16,12))
+        #     plt.bar(bin_centers, counts_correct, width=np.diff(bin_edges),
+        #             alpha=0.8, label="Correct", align="center", color="#4C9AFF")
+        #     plt.bar(bin_centers, counts_incorrect, width=np.diff(bin_edges),
+        #             bottom=counts_correct, alpha=0.8, label="Incorrect", align="center", color="#FF9933")
+
+        #     # Ajouter totaux + pourcentages
+        #     for total, correct, incorrect, x in zip(total_counts, counts_correct, counts_incorrect, bin_centers):
+        #         if total > 0:
+        #             plt.text(x, total + 0.5, f"{total}", rotation=90, ha="center", va="bottom", fontsize=7)
+        #             if correct > 0:
+        #                 plt.text(x, correct / 2, f"{100 * correct / total:.1f}%", 
+        #                         ha="center", va="center", fontsize=7, color="white")
+        #             if incorrect > 0:
+        #                 plt.text(x, correct + incorrect / 2, f"{100 * incorrect / total:.1f}%", 
+        #                         ha="center", va="center", fontsize=7, color="black")
+
+        #     plt.title(f"Entropy distribution — Predicted class {cls}")
+        #     plt.xlabel("Entropy per image")
+        #     plt.ylabel("Nb images")
+        #     plt.legend()
+        #     plt.grid(True, alpha=0.3)
+        #     plt.tight_layout()
+
+        #     out_path = os.path.join(self.args.outd, f"hist_entropy_predclass{cls}.png")
+        #     plt.savefig(out_path, dpi=300)
+        #     plt.close()
+        #     print(f"✅ Histogram saved : {out_path}")
+
+        for cls, splits in p_by_class.items():
+            plt.figure(figsize=(6,4))
+
+            if len(splits["correct"]) > 0:
+                plt.hist(
+                    splits["correct"],
+                    bins=30, alpha=0.6, color="blue",
+                    edgecolor="black", label="Correct"
+                )
+
+            if len(splits["incorrect"]) > 0:
+                plt.hist(
+                    splits["incorrect"],
+                    bins=30, alpha=0.6, color="red",
+                    edgecolor="black", label="Incorrect"
+                )
+
+            plt.xlabel("Normalized entropy probability p_i")
+            plt.ylabel("Frequency")
+            plt.title(f"Histogram p_t for predicted class {cls}")
+            plt.legend()
+            plt.grid(True, linestyle="--", alpha=0.6)
+            plt.tight_layout()
+
+            # Save
+            output_path = os.path.join(self.args.outd, f"hist_p_t_predclass{cls}.png")
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            plt.savefig(output_path, dpi=300)
+            plt.close()
+
+            print(f"✅ Histogram saved : {output_path}")
+
+
         draw_t = torch.bernoulli(p_t).to(torch.bool)                # [N] tirage 0/1
 
-        # -------- 4) Décision + construction des sorties --------
-        flip_set   = None if flip_on_pred_classes is None else set(flip_on_pred_classes)
-        freeze_set = set(freeze_classes) if freeze_classes is not None else set()
+        #flip_set   = None if flip_on_pred_classes is None else set(flip_on_pred_classes)
+        #freeze_set = set(freeze_classes) if freeze_classes is not None else set()
+
+        flip_set = [c for c, _ in self.overpred_class]
+        freeze_set = [c for c, _ in self.overpred_class]
 
         selected_flippable = set()
         stable_selected, stable_labels = [], []
 
-        # Maps supplémentaires pour appliquer les labels ensuite
-        flip_labels_map = {}        # idx -> label (top-2) pour les flips
+
+        flip_labels_map = {}        # idx -> label (top-2) 
         assigned_labels_map = {}    # idx -> label final (flip: top-2, stable: top-1)
+        entropy_flip = []
 
         for i in range(len(all_idx)):
             idx   = all_idx[i]
             t1    = all_pred_top1[i]
             t2    = all_pred_top2[i]
             draw1 = bool(draw_t[i].item())
-            # Flip autorisé pour cette classe ?
+            # Flip authorized for this class
             flip_allowed = (flip_set is None) or (t1 in flip_set)
 
             if draw1 and flip_allowed:
                 # FLIP -> vers top-2
+                entropy_flip.append(all_H[i])
                 selected_flippable.add(idx)
                 flip_labels_map[idx] = t2
                 assigned_labels_map[idx] = t2
             else:
-                # STABLE si la classe prédite est "freezable"
+                # STABLE
                 if t1 in freeze_set:
                     stable_selected.append(idx)
                     stable_labels.append(t1)
-                    assigned_labels_map[idx] = t1
-                # sinon: on ne l'assigne pas (restera -255 plus tard)
+
+                assigned_labels_map[idx] = t1
+
+        num_flips = len(selected_flippable)
+
+
+        #self.assigned_labels_map = assigned_labels_map
+
+        preserve_all = self.args.stable_match_strategy
+
+        if not preserve_all:
+            final_stable_selected = stable_selected
+            final_stable_labels   = stable_labels
+
+        else:
+            total_target = num_flips
+            by_class_all = {c: [] for c in freeze_set}
+            for idx, label in zip(stable_selected, stable_labels):
+                by_class_all[label].append(idx)
+
+            total_candidates = sum(len(by_class_all[c]) for c in freeze_set)
+            if total_candidates == 0:
+                targets_per_class = {c: 0 for c in freeze_set}
+            else:
+                quotas = {c: (len(by_class_all[c]) / total_candidates) * total_target
+                        for c in freeze_set}
+                base = {c: int(quotas[c]) for c in freeze_set}
+                allocated = sum(base.values())
+                remainder = total_target - allocated
+
+                fracs = sorted(
+                    ((c, quotas[c] - base[c]) for c in freeze_set),
+                    key=lambda t: t[1], reverse=True
+                )
+                targets_per_class = base
+                for c, _ in fracs:
+                    if remainder <= 0:
+                        break
+                    targets_per_class[c] += 1
+                    remainder -= 1
+
+            # Réduire stable_selected selon quotas
+            final_stable_selected, final_stable_labels = [], []
+            for c in freeze_set:
+                pool = by_class_all[c]
+                take = min(targets_per_class.get(c, 0), len(pool))
+                chosen = pool[:take]
+                final_stable_selected.extend(chosen)
+                final_stable_labels.extend([c] * take)
+
+        # --- Remplacer ---
+        stable_selected = final_stable_selected
+        stable_labels   = final_stable_labels
+
+        plt.figure()
+        bins = 60  
+        plt.hist(entropy_flip, bins=bins, alpha=0.6, label=f"flippable (n={len(entropy_flip)})")
+        plt.xlabel("Entropy (nats)")
+        plt.ylabel("Count")
+        plt.legend()
+        plt.title("Entropy distribution: flippable vs stable")
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.args.outd, "unlearning_entropy_hist.png"), dpi=200)
+        plt.close()
+
+        flippable_subset = set(selected_flippable)
+        all_selected = set(selected_flippable).union(set(stable_selected))
+
+        flip_correct, flip_total = 0, 0
+        for idx in flippable_subset:
+            if idx in idx_to_target:
+                flip_total += 1
+                if idx_to_pred[idx] == idx_to_target[idx]:
+                    flip_correct += 1
+        flip_acc = flip_correct / flip_total if flip_total > 0 else 0.0
+
+        stable_correct, stable_total = 0, 0
+        for idx in stable_selected:
+            if idx in idx_to_target:
+                stable_total += 1
+                if idx_to_pred[idx] == idx_to_target[idx]:
+                    stable_correct += 1
+        stable_acc = stable_correct / stable_total if stable_total > 0 else 0.0
+
+        results = {
+            "retain": flip_acc,
+            "forget": stable_acc
+        }
+
+        output_path = os.path.join(self.args.outd, "results_unlearning_acc.txt")
+        output_pickle = os.path.join(self.args.outd, "results__unlearning_acc.pkl")
+
+        with open(output_path, "w") as f_txt:
+            f_txt.write(f"retain : {flip_acc:.4f}\n")
+            f_txt.write(f"forget  : {stable_acc:.4f}\n")
+
+
+        with open(output_pickle, "wb") as f_pkl:
+            pkl.dump(results, f_pkl)
 
         # Enregistre pour usage en aval (p.ex. dans _compute_accuracy_f1)
         self.flip_labels_map = flip_labels_map               # idx -> top-2
         self.assigned_labels_map = assigned_labels_map       # idx -> label final (flip ou stable)
-        # (utile pour debug si besoin)
+        # 
         self.idx_to_second = {i: s for i, s in zip(all_idx, all_pred_top2)}
 
-        # Pas de sous-échantillonnage en mode probabiliste
-        flippable_subset = set(selected_flippable)
-        reinforce_indices = set()  # conservé pour compatibilité
+        # 
+        #flippable_subset = set(selected_flippable)
+        reinforce_indices = set()  
 
         return (
             selected_flippable,
             reinforce_indices,
             idx_to_pred,       # top-1
             entropy_all,
-            flippable_subset,
+            all_selected,
             stable_selected,
             stable_labels,
         )
@@ -2169,8 +2739,11 @@ class Trainer(Basic):
 
                 for i in range(images.size(0)):
                     img_idx = index[i]
-                    if img_idx in self.flippable_subset:
-                        supervised_labels[i] = int(self.assigned_labels_map[img_idx])
+                    if img_idx in self.all_selected:
+                        if self.args.entropy_probabilistic:
+                            supervised_labels[i] = int(self.assigned_labels_map[img_idx])
+                        else:
+                            supervised_labels[i]= int(self.assigned_labels_map[img_idx])
 
                     # if img_idx in self.flipped_indices:
                     #     supervised_labels[i] = 0  
@@ -2181,11 +2754,20 @@ class Trainer(Basic):
                         entropy_batch.append(self.entropy_all[img_idx])
                     else:
                         entropy_batch.append(0.0) 
+                #p_glabel = supervised_labels
+                # mask_list_forget = [img_name not in self.flipped_indices for img_name in index]
+                # #y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
+                # y_pred_batch = torch.tensor([self.assigned_labels_map[idx] for idx in index])
+                # mask_list_retain = [img_name not in self.stable_selected for img_name in index]
+                # mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
                 p_glabel = supervised_labels
                 mask_list = [img_name not in self.flipped_indices for img_name in index]
-                y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
+                #y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
+                y_pred_batch = torch.tensor([self.assigned_labels_map[idx] for idx in index])
                 mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
 
+                mask_list_retain = [img_name in self.stable_selected for img_name in index]
+                mask_list_forget = [img_name in self.flipped_indices for img_name in index]
             
             self.random()
             self.model.train()
@@ -2271,11 +2853,22 @@ class Trainer(Basic):
                                                         std_cams,
                                                         masks,
                                                         views,
-                                                        cal_mask = mask_list,
+                                                        cal_mask_forget = mask_list_forget,
+                                                        cal_mask_retain = mask_list_retain,
                                                         y_pred_batch = y_pred_batch,
                                                         mask_entropy = mask_entropy
                                                         )
-
+                    # logits, loss = self._one_step_train_unlearning(images,
+                    #                     raw_imgs,
+                    #                     targets,
+                    #                     p_glabel,
+                    #                     std_cams,
+                    #                     masks,
+                    #                     views,
+                    #                     cal_mask = mask_list,
+                    #                     y_pred_batch = y_pred_batch,
+                    #                     mask_entropy = mask_entropy
+                    #                     )
 
             else:
 
@@ -2314,6 +2907,8 @@ class Trainer(Basic):
                 # with torch.no_grad():
                 #     self.compute_acc_on_source_and_target(self.epoch)
                 #     self.compute_loc_on_source_and_target(self.epoch)
+                if self.args.measure_loc:
+                    self.compute_loc_on_target(self.epoch)
                 # self.model.train()
 
                 self.model.eval()
@@ -2608,21 +3203,78 @@ class Trainer(Basic):
         torch.cuda.empty_cache()
         return classification_acc.item(), images_entropy, pixel_entropy
 
-    def _plot_entropy_hist_per_class(self, ent_correct, ent_incorrect, class_name, out_path, num_classes):
-        h_max = math.log(max(2, num_classes))
-        bins = np.linspace(0.0, h_max, 30)
+    # def _plot_entropy_hist_per_class(self, ent_correct, ent_incorrect, class_name, out_path, num_classes):
+    #     h_max = math.log(max(2, num_classes))
+    #     bins = np.linspace(0.0, h_max, 30)
 
-        plt.figure(figsize=(7, 4.5))
-        plt.hist(ent_correct, bins=bins, alpha=0.7, label="Correctly classified", density=True)
-        plt.hist(ent_incorrect, bins=bins, alpha=0.7, label="Misclassified", density=True)
-        plt.title(f"Histogram — {class_name}")
+    #     plt.figure(figsize=(7, 4.5))
+    #     plt.hist(ent_correct, bins=bins, alpha=0.7, label="Correctly classified", density=True)
+    #     plt.hist(ent_incorrect, bins=bins, alpha=0.7, label="Misclassified", density=True)
+    #     plt.title(f"Histogram — {class_name}")
+    #     plt.xlabel("Entropy per image")
+    #     plt.ylabel("Density")
+    #     plt.legend()
+    #     plt.grid(True, alpha=0.3)
+    #     plt.tight_layout()
+    #     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    #     plt.savefig(out_path, dpi=200)
+    #     plt.close()
+
+    def _plot_entropy_hist_per_class(self, ent_correct, ent_incorrect, class_name, out_path, num_classes, bins=60, figsize=(16, 10)):
+        """
+        Histogramme empilé Correct vs Incorrect avec totaux et pourcentages.
+
+        Args:
+            ent_correct (list/array): entropies des images correctement classées
+            ent_incorrect (list/array): entropies des images mal classées
+            class_name (str): nom de la classe (pour le titre)
+            out_path (str): chemin du fichier de sortie
+            num_classes (int): nombre de classes
+            bins (int): nb de bins
+            figsize (tuple): taille de la figure
+        """
+        h_max = math.log(max(2, num_classes))
+        bin_edges = np.linspace(0.0, h_max, bins)
+
+        plt.figure(figsize=figsize)
+
+        # Comptage des bins
+        counts_correct, _ = np.histogram(ent_correct, bins=bin_edges)
+        counts_incorrect, _ = np.histogram(ent_incorrect, bins=bin_edges)
+
+        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        total_counts = counts_correct + counts_incorrect
+
+        # Barres empilées
+        plt.bar(bin_centers, counts_correct, width=np.diff(bin_edges), 
+                alpha=0.8, label="Correctly Predicted", align="center", color="#4C9AFF")
+        plt.bar(bin_centers, counts_incorrect, width=np.diff(bin_edges), 
+                bottom=counts_correct, alpha=0.8, label="Incorrectly Predicted", align="center", color="#FF9933")
+
+        # Ajouter totaux + pourcentages
+        for total, correct, incorrect, x in zip(total_counts, counts_correct, counts_incorrect, bin_centers):
+            if total > 0:
+                # Total (au-dessus de la barre)
+                plt.text(x, total + 0.5, f"{total}", rotation=90, ha="center", va="bottom", fontsize=8)
+
+                # % correct centré
+                if correct > 0:
+                    plt.text(x, correct / 2, f"{100 * correct / total:.1f}%", 
+                            ha="center", va="center", fontsize=8, color="white")
+                # % incorrect centré
+                if incorrect > 0:
+                    plt.text(x, correct + incorrect / 2, f"{100 * incorrect / total:.1f}%", 
+                            ha="center", va="center", fontsize=8, color="black")
+
+        plt.title(f"Entropy distribution — {class_name}")
         plt.xlabel("Entropy per image")
-        plt.ylabel("Density")
+        plt.ylabel("Nb images")
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
+
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        plt.savefig(out_path, dpi=200)
+        plt.savefig(out_path, dpi=300)
         plt.close()
     
     def _compute_accuracy_f1(self, loader, compute_kl = True):
@@ -2677,7 +3329,7 @@ class Trainer(Basic):
             for i in range(images.size(0)):
                 img_idx = index[i]
                 if img_idx in self.flipped_indices:
-                    supervised_labels[i] = 0  
+                    supervised_labels[i] = self.assigned_labels_map[img_idx] 
                 # elif img_idx in self.reinforce_indices:
                 #     supervised_labels[i] = 1 
                 # 
@@ -2685,33 +3337,57 @@ class Trainer(Basic):
                     entropy_batch.append(self.entropy_all[img_idx])
                 else:
                     entropy_batch.append(0.0) 
+                    
+            # p_glabel = supervised_labels
+            # mask_list_forget = [img_name not in self.flipped_indices for img_name in index]
+            # mask_list_retain = [img_name not in self.stable_selected for img_name in index]
+            # y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
+            # mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
+            # y_pred_batch = y_pred_batch.cuda(self.args.c_cudaid)
+
             p_glabel = supervised_labels
-            mask_list = [img_name not in self.flipped_indices for img_name in index]
-            y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
+            mask_list  = [img_name not in self.flipped_indices for img_name in index]
+            # mask_list_retain = [img_name not in self.stable_selected for img_name in index]
+            #y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
+            y_pred_batch = torch.tensor([self.assigned_labels_map[idx] for idx in index])
             mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
             y_pred_batch = y_pred_batch.cuda(self.args.c_cudaid)
+
 
             with torch.no_grad():
                 cl_logits = self.cl_forward(images)
 
 
-                loss = self._one_step_train_unlearning(images,
-                                                        raw_imgs,
-                                                        targets,
-                                                        p_glabel,
-                                                        std_cams,
-                                                        masks,
-                                                        views,
-                                                        cal_mask = mask_list,
-                                                        y_pred_batch = y_pred_batch,
-                                                        mask_entropy = mask_entropy
-                                                        )
+                # loss = self._one_step_train_unlearning(images,
+                #                                         raw_imgs,
+                #                                         targets,
+                #                                         p_glabel,
+                #                                         std_cams,
+                #                                         masks,
+                #                                         views,
+                #                                         cal_mask_forget = mask_list_forget,
+                #                                         cal_mask_retain = mask_list_retain,
+                #                                         y_pred_batch = y_pred_batch,
+                #                                         mask_entropy = mask_entropy
+                #                                         )
 
-                loss_dict = {name: val for name, val in zip(self.loss.n_holder, self.loss.l_holder)}
+                # loss = self._one_step_train_unlearning(images,
+                #                                         raw_imgs,
+                #                                         targets,
+                #                                         p_glabel,
+                #                                         std_cams,
+                #                                         masks,
+                #                                         views,
+                #                                         cal_mask = mask_list,
+                #                                         y_pred_batch = y_pred_batch,
+                #                                         mask_entropy = mask_entropy
+                #                                         )
 
-                master_loss += loss_dict['master_loss'].item()
-                ce_flip_loss += loss_dict['ce_flip_loss'].item()
-                ce_not_flip_loss += loss_dict['ce_not_flip_loss'].item()
+                # loss_dict = {name: val for name, val in zip(self.loss.n_holder, self.loss.l_holder)}
+
+                # master_loss += loss_dict['master_loss'].item()
+                # ce_flip_loss += loss_dict['ce_flip_loss'].item()
+                # ce_not_flip_loss += loss_dict['ce_not_flip_loss'].item()
 
 
                 pred = cl_logits.argmax(dim=1)
@@ -2726,14 +3402,15 @@ class Trainer(Basic):
                 with torch.no_grad():
                     for b in range(images.size(0)):
                         true_cls = int(targets[b].item())
+                        pred_cls = int(pred[b].item())
                         corr = int(pred[b].item() == true_cls)
                         h = float(ent_per_img[b].item())
 
                         if true_cls in (0, 1):  # adapté à ton binaire normal/cancer
                             if corr:
-                                ent_correct_by_class[true_cls].append(h)
+                                ent_correct_by_class[pred_cls].append(h)
                             else:
-                                ent_incorrect_by_class[true_cls].append(h)
+                                ent_incorrect_by_class[pred_cls].append(h)
 
 
                 # accumulate for marginal entropy
@@ -2763,15 +3440,16 @@ class Trainer(Basic):
                 pred_b = pred[b].item()
 
                 # Flip
-                if idx_b in self.flippable_subset:
-                    tgt_flip = 0
-                    correct_flip += int(pred_b == tgt_flip)
+                if idx_b in self.flipped_indices:
+                    init_cls = self.assigned_labels_map[idx_b]
+                    #tgt_flip = 0
+                    correct_flip += int(pred_b == init_cls)
                     total_flip += 1
 
                 # Stable
                 if idx_b in self.stable_selected:
-                    pos = self.stable_selected.index(idx_b)
-                    tgt_stable = int(self.stable_labels[pos])
+                    #pos = self.stable_selected.index(idx_b)
+                    tgt_stable = int(self.assigned_labels_map[idx_b])
                     correct_stable += int(pred_b == tgt_stable)
                     total_stable += 1
                 
@@ -3109,6 +3787,35 @@ class Trainer(Basic):
         self.target_test_miou.append(cam_computer_target_test.evaluator.perf_gist[constants.MTR_MIOU_05])
         self.source_test_miou.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_MIOU_05])
         self.source_train_miou.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_MIOU_05])
+
+    def compute_loc_on_target(self, epoch, split=constants.TESTSET):
+        self.model.eval()
+
+        cam_computer_source_train = CAMComputer(
+            args=deepcopy(self.args),
+            model=self.model,
+            loader=self.target_domain_loaders['train'],
+            metadata_root=os.path.join(self.args.metadata_root, 'train'),
+            mask_root=self.args.mask_root,
+            iou_threshold_list=self.args.iou_threshold_list,
+            dataset_name=self.args.dataset,
+            split='train',
+            cam_curve_interval=self.args.cam_curve_interval,
+            multi_contour_eval=self.args.multi_contour_eval,
+            out_folder=self.args.outd,
+            fcam_argmax=self.fcam_argmax,
+            best_valid_tau= None
+        )
+  
+        cam_performance_source_train = cam_computer_source_train.compute_and_evaluate_cams()
+
+        self.target_train_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
+
+        self.target_train_dice_bg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
+
+        self.target_train_dice_fg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
+
+        self.target_train_miou.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_MIOU_05])
 
 
     def save_curves(self, task, cmpt_epoch):

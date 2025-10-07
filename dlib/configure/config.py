@@ -669,6 +669,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
 
         'target_domain_ds_to_compute_stats': None, #Name of the target domain dataset to compute the stats
         'ds_to_compute_acc_trainset_source_target' : None, #Compute the accuracy on the source and target test set
+        'fold_came_compute': 7, #fold 7 to use by default to measure stats on target came
         'mask_root_target': get_root_wsol_dataset(),  # path to masks target.
         'cmpt_epoch': 1,  # int. epoch when to compute the stats.
         'cmpt_batch': 10,  # int. batch when to compute the stats.
@@ -840,11 +841,16 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'esfda_select_imgs': False,  # select images to shift label
         'esfda_select_imgs_ratio':  0.1,  # ratio of images to select
         'random_select_ratio':  0.1,  # ratio of images to select
+        'entropy_threshold': None, # minimum entropy to consider to forget for unlearning
 
         'balance_stable_to_flips' : False,  # balance the number of stable and flips
         'stable_match_strategy': False,  # match the number of stable and flips
 
         'entropy_probabilistic': False,
+        'entropy_gt': False,
+        'entropy_random': False,
+
+        
 
         'select_distance': False, # select images based on distance
         'select_entropy': False, # select images based on entropy
@@ -863,6 +869,13 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'esfda_notflip_labels': False,  # do not flip labels of the images
         'CENotFlipLoss_lambda': 0.1,  # lambda of this term. >= 0.
         'esfda_flip_labels_weight': False,  # not flip labels of the images with weight
+
+        "esfda_loc": False,  # use or not ECE.
+        "esfda_loc_lambda": 1.,  # lambda for ECE.
+        "esfda_loc_mode": 'mse',  # lambda for ECE.
+        
+
+        'measure_loc': False,
 
         # ======================================================================
         #                     END - ENERGY DISTRIBUTION ESTIMATION

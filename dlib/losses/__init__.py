@@ -22,6 +22,7 @@ from dlib.losses.core import MaxMinLoss
 from dlib.losses.core import SegLoss
 from dlib.losses.core import ImgReconstruction
 from dlib.losses.core import SelfLearningFcams
+from dlib.losses.core import SelfUnLearningFattention
 from dlib.losses.core import ConRanFieldFcams
 from dlib.losses.core import EntropyFcams
 from dlib.losses.core import MaxSizePositiveFcams
