@@ -5,6 +5,7 @@ from os.path import dirname, abspath, join
 from typing import Optional, Union, Tuple
 from copy import deepcopy
 import pickle as pkl
+import csv
 import math
 import datetime as dt
 import random as py_random
@@ -25,6 +26,7 @@ from typing import Dict, Iterable, Callable
 
 from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.metrics import roc_auc_score, average_precision_score, roc_curve, precision_recall_curve
+from sklearn.metrics import confusion_matrix
 
 
 root_dir = dirname(dirname(dirname(abspath(__file__))))
@@ -551,6 +553,7 @@ class Trainer(Basic):
                             )
                         elif self.args.entropy_gt:
                                 self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_gt(
+                                    model=self.model,
                                     loader=self.loaders
                                 )
 
@@ -1255,12 +1258,12 @@ class Trainer(Basic):
 
                     if not self.args.esfda_loc:
                         cams_inter = None
-                        fattention = None
+                        attention_map = None
 
                     if self.args.esfda_loc:
                        interpolation_mode = 'bilinear'
                        attention_map = self.model.encoder_last_features.mean(dim=1, keepdim=True)
-                       fattention = torch.sigmoid(attention_map)
+                       #fattention = torch.sigmoid(attention_map)
 
                        cams_inter_init = std_cams
 
@@ -1278,7 +1281,7 @@ class Trainer(Basic):
                     loss = self.loss(epoch=self.epoch,
                                      model=self.model,
                                      cams_inter=cams_inter, 
-                                     fcams=fattention,
+                                     fcams=attention_map,
                                      cl_logits=cl_logits,
                                      glabel=y_global,
                                      pseudo_glabel=y_pl_global,
@@ -2105,8 +2108,13 @@ class Trainer(Basic):
         output_path = os.path.join(self.args.outd, "results_unlearning_acc.txt")
         output_pickle = os.path.join(self.args.outd, "results__unlearning_acc.pkl")
 
+        nb_xforget = len(flippable_subset)
+        nb_xretain = len(stable_selected)
+
         with open(output_path, "w") as f_txt:
+            f_txt.write(f"Nb of retain : {nb_xretain:.4f}\n")
             f_txt.write(f"retain : {flip_acc:.4f}\n")
+            f_txt.write(f"Nb of forget : {nb_xforget:.4f}\n")
             f_txt.write(f"forget  : {stable_acc:.4f}\n")
 
 
@@ -2117,7 +2125,7 @@ class Trainer(Basic):
         return selected_flippable, reinforce_indices, idx_to_pred, entropy_all, flippable_subset, stable_selected, stable_labels
 
     @torch.no_grad()
-    def select_flippable_indices_gt(self, loader, n_per_class=3000):
+    def select_flippable_indices_gt(self,model, loader, n_per_class=2000):
         """
         """
         loader = loader['train']
@@ -2126,83 +2134,79 @@ class Trainer(Basic):
         idx_to_pred   = {}    
         entropy_all   = {}   
 
+        flippable_pool = []   # FP: pred overpred & gt=0
+        stable_pool    = []
+
         class_to_indices = {0: [], 1: []}
+
+        overpred_classes = [c for c, _ in self.overpred_class]
 
         for batch_idx, (images, targets, p_glabel, index,
                         raw_imgs, std_cams, masks, views) in enumerate(loader):
 
+
+            images = images.cuda(self.args.c_cudaid) 
+            logits = model(images) 
+            probs = F.softmax(logits, dim=1) 
+            preds = probs.argmax(dim=1)
+
             for i in range(images.size(0)):
                 idx = index[i]
                 gt  = targets[i].item()
+                pr  = int(preds[i].item())
                 idx_to_target[idx] = gt
-                idx_to_pred[idx]   = gt    
+                idx_to_pred[idx]   = pr    
                 entropy_all[idx]   = 0.0  
 
-                if gt in class_to_indices:
-                    class_to_indices[gt].append(idx)
+                if pr in overpred_classes:
+                    if gt == 0 and pr != gt:
+                        # flippable
+                        flippable_pool.append(idx)
+                    elif gt == 1 and pr == gt:
+                        # stable
+                        stable_pool.append(idx)
 
-        # --- Échantillonnage équilibré ---
-        selected_flippable = set()
-        stable_selected = []
+        k = min(len(flippable_pool), len(stable_pool), n_per_class)
 
-        for c in class_to_indices:
-            all_idx = class_to_indices[c]
-            if len(all_idx) > n_per_class:
-                chosen = py_random.sample(all_idx, n_per_class)
-            else:
-                chosen = all_idx
+        flippable_selected = set(py_random.sample(flippable_pool, k)) if len(flippable_pool) > k else set(flippable_pool)
+        stable_selected    = py_random.sample(stable_pool, k) if len(stable_pool) > k else list(stable_pool)
 
-            if c not in self.overpred_class:
-
-                selected_flippable.update(chosen)
-            else:
-
-                stable_selected.extend(chosen)
-
-        # --- Labels stables ---
+        # labels stables (pour retour)
         stable_labels = [idx_to_target[idx] for idx in stable_selected]
 
-        # --- Subset flippable (identique à selected_flippable) ---
-        flippable_subset = set(selected_flippable)
-
-        # Reinforce vide ici (pas utilisé)
-        reinforce_indices = set()
-
-        # --- Construire assigned_labels_map ---
+        # ---- build assigned_labels_map ----
         assigned_labels_map = {}
         for idx, gt in idx_to_target.items():
-            assigned_labels_map[idx] = gt
-            # if idx in selected_flippable:
-            #     # flip: cancer -> normal (classe 0)
-            #     assigned_labels_map[idx] = 0
-            # else:
-            #     # stable: garder GT
-            #     assigned_labels_map[idx] = gt
-
-        # Sauvegarde dans la classe pour cohérence avec training loop
+            if idx in flippable_selected:
+                # flip : cancer -> normal (class 0)
+                assigned_labels_map[idx] = gt
+            else:
+                assigned_labels_map[idx] = gt
         self.assigned_labels_map = assigned_labels_map
 
-        print(f"[INFO] Flippables: {len(selected_flippable)}, "
-            f"Stables: {len(stable_selected)}")
+        print(f"[INFO] Flippables (FP overpred): {len(flippable_selected)} | Stables (TP overpred): {len(stable_selected)} | k={k}")
 
-        return selected_flippable, reinforce_indices, idx_to_pred, entropy_all, flippable_subset, stable_selected, stable_labels
+        reinforce_indices = set()   
+        flippable_subset  = set(flippable_selected)
+
+        return flippable_selected, reinforce_indices, idx_to_pred, entropy_all, flippable_subset, stable_selected, stable_labels
 
     @torch.no_grad()
     def select_flippable_indices_random(
         self,
         model,
         loader,
-        flip_ratio=0.1,               # ratio global d’images à flipper (utilisé si flip_count=None)
-        flip_count=None,              # nombre absolu d’images à flipper (prioritaire sur flip_ratio)
+        flip_ratio=0.1,               # ratio of images to flip
+        flip_count=None,              # absolute number of imgs to flip
         mode="pred_cancer",           # "pred_cancer" | "all" | "per_class"
-        freeze_classes=(1,),          # pour la sélection des stables
-        balance_stables=True          # <-- nouvel argument
+        freeze_classes=(1,),          # for stable
+        balance_stables=True        
     ):
         """
-        Ablation: sélection aléatoire des images à flipper.
-        Retourne: selected_flippable, reinforce_indices, idx_to_pred, entropy_all,
+        Ablation: random selection of images to flip.
+        Returns: selected_flippable, reinforce_indices, idx_to_pred, entropy_all,
                 flippable_subset, stable_selected, stable_labels
-        Et met à jour self.assigned_labels_map pour le training loop.
+        Also updates self.assigned_labels_map for the training loop.
         """
         model.eval()
         loader = loader['train']
@@ -2214,11 +2218,11 @@ class Trainer(Basic):
         idx_to_target = {}
         entropy_all   = {}
 
-        # Pools pour variantes
+
         all_indices = []
         by_pred_class = {}
 
-        # ---- 1) Pass modèle pour constituer les pools ----
+        # ---- 1) Build pool ----
         for batch_idx, (images, targets, p_glabel, index,
                         raw_imgs, std_cams, masks, views) in enumerate(loader):
             images = images.cuda(self.args.c_cudaid)
@@ -2226,7 +2230,7 @@ class Trainer(Basic):
             probs  = F.softmax(logits, dim=1)
             preds  = probs.argmax(dim=1)
 
-            # entropie (pas utilisée pour la sélection, mais on remplit pour cohérence)
+            # entropy
             entropy = -torch.sum(probs * torch.log(probs + 1e-6), dim=1)
 
             for i in range(images.size(0)):
@@ -2246,13 +2250,12 @@ class Trainer(Basic):
             self.assigned_labels_map = {}
             return set(), set(), idx_to_pred, entropy_all, set(), [], []
 
-        # ---- 2) Déterminer le pool de tirage et le budget de flip ----
         if mode == "pred_cancer":
-            pool = by_pred_class.get(1, [])  # même pool que ta version entropie
+            pool = by_pred_class.get(1, [])  
         elif mode == "all":
             pool = list(all_indices)
         elif mode == "per_class":
-            pool = None  # géré à part
+            pool = None  
         else:
             raise ValueError(f"Unknown mode={mode}")
 
@@ -2260,7 +2263,7 @@ class Trainer(Basic):
             base = len(pool) if (mode != "per_class" and pool is not None) else N
             flip_count = max(1, int(base * float(flip_ratio)))
 
-        # ---- 3) Tirage aléatoire des flips ----
+        # ---- random selection to flip ----
         selected_flippable = set()
 
         if mode in ("pred_cancer", "all"):
@@ -2268,7 +2271,7 @@ class Trainer(Basic):
                 k = min(flip_count, len(pool))
                 selected_flippable = set(py_random.sample(pool, k))
         else:
-            # "per_class": quotas par classe prédite
+            # "per_class":  
             total_pool = sum(len(v) for v in by_pred_class.values())
             if total_pool > 0:
                 quotas_float = {
@@ -2293,7 +2296,7 @@ class Trainer(Basic):
                         q = min(q, len(pool_c))
                         selected_flippable.update(py_random.sample(pool_c, q))
 
-        # ---- 4) Construire assigned_labels_map (flip = inverse simple 0<->1) ----
+        # ---- 4) Build assigned_labels_map  ----
         assigned_labels_map = {}
         for idx in idx_to_pred.keys():
             y = idx_to_pred[idx]
@@ -2312,16 +2315,15 @@ class Trainer(Basic):
             nonflipped = [idx for idx in nonflipped if idx_to_pred[idx] in set(freeze_classes)]
 
         if balance_stables:
-            # équilibrer : même nombre de stables que de flips
+            # same number of stable to flip
             k_stables = min(len(nonflipped), len(selected_flippable))
             stable_selected = py_random.sample(nonflipped, k_stables) if k_stables > 0 else []
         else:
-            # garder tous les stables
+            # Save all stables
             stable_selected = nonflipped
 
         stable_labels = [idx_to_pred[idx] for idx in stable_selected]
 
-        # ---- 6) Sorties ----
         reinforce_indices = set()
         flippable_subset  = set(selected_flippable)
 
@@ -3489,6 +3491,8 @@ class Trainer(Basic):
         else:
             # CAMELYON : on trace tous les N batchs -> inclure batch_idx
             # (suppose que tu appelles ici à l'intérieur de la boucle batch)
+            if self.batch_idx == None:
+                self.batch_idx = 0
             CLASS_NORMAL_NAME = f"entropy_hist_normal_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
             CLASS_CANCER_NAME = f"entropy_hist_cancer_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
             out_normal = os.path.join(fig_outd, CLASS_NORMAL_NAME)
@@ -3525,9 +3529,46 @@ class Trainer(Basic):
 
         images_entropy = images_total_entropy / num_images
 
+        y_true_np = np.array(y_true)
+        y_pred_np = np.array(y_pred)
+
+        labels = np.unique(np.concatenate([y_true_np, y_pred_np]))
+
+        cm = confusion_matrix(y_true_np, y_pred_np, labels=labels)
+
+        # Handle binary and multi-class
+        if len(labels) == 2:
+            tn, fp, fn, tp = cm.ravel()
+        else:
+            tn = fp = fn = tp = np.nan  # for safety
+
         f1 = f1_score(y_true, y_pred, average='binary')
         precision = precision_score(y_true, y_pred, average='binary')
         recall = recall_score(y_true, y_pred, average='binary')
+
+        # === Build row for CSV ===
+        row = {
+            "epoch": self.epoch,
+            "accuracy": classification_acc.item(),
+            "f1": f1,
+            "precision": precision,
+            "recall": recall,
+            "TP": tp,
+            "FP": fp,
+            "TN": tn,
+            "FN": fn
+        }
+
+        cm_file = os.path.join(self.args.outd, "confusion_evolution.csv")
+
+        # === Append or create ===
+        file_exists = os.path.isfile(cm_file)
+
+        with open(cm_file, "a", newline="") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=row.keys())
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
 
         #KL consistency (mean over all images)
         mean_kl = sum(kl_vals) / len(kl_vals) if len(kl_vals) > 0 else 0.0

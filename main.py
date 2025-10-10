@@ -62,12 +62,11 @@ def main():
     trainer.print_performances()
     trainer.report(epoch=0, split=constants.VALIDSET)
 
-    # if args.ds_to_compute_acc_trainset_source_target == constants.CAMELYON512:
+    if args.ds_to_compute_acc_trainset_source_target in [constants.CAMELYON512, constants.GLAS]:
+            if args.measure_loc:
+                trainer.compute_loc_on_target(0)
 
-    #         if args.measure_loc:
-    #             trainer.compute_loc_on_target(0)
-
-    #         trainer.compute_acc_on_target(0)
+            trainer.compute_acc_on_target(0)
 
     DLLogger.log(fmsg("Epoch 0 done."))
 

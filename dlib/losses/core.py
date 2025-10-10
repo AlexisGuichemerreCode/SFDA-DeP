@@ -892,18 +892,20 @@ class SelfLearningFcams(ElementaryLoss):
 
 
 class SelfUnLearningFattention(ElementaryLoss):
-    def __init__(self, mode = "mse", lambda_=1.0, **kwargs):
+    def __init__(self, mode = "mse", lambda_=1.0, use_std=False, **kwargs):
         super(SelfUnLearningFattention, self).__init__(**kwargs)
 
         self.lambda_ = lambda_
         self.mode = mode
+        self.use_std = use_std  # A_STD_COSINE
+        eps = 1e-8
         #self.loss_mse = nn.MSELoss(reduction="mean").to(self._device)
 
 
-        if mode == "mse":
+        if mode == constants.A_MSE:
             self.loss = nn.MSELoss(reduction="mean").to(self._device)
-        elif mode == "cosine":
-            self.loss = nn.CosineSimilarity(dim=1).to(self._device)
+        elif mode == constants.A_COSINE:
+            self.loss = nn.CosineSimilarity(dim=1, eps=eps).to(self._device)
         else:
             raise ValueError(f"[SelfUnLearningFattention] Unknown mode '{self.mode}'. Use 'mse' or 'cosine'.")
 
@@ -934,21 +936,33 @@ class SelfUnLearningFattention(ElementaryLoss):
             "[SelfLearningFcams] Both cams_inter (from source) and fcams (from unlearned) must be provided."
         
 
+        if cams_inter.shape[-2:] != fcams.shape[-2:]:
+            fcams = F.interpolate(fcams, size=cams_inter.shape[-2:], mode="bilinear", align_corners=False)
+
+        # --- 1) MSE standard ---
         if self.mode == "mse":
             loss_val = self.loss(fcams, cams_inter)
 
+
+        # --- 2) Cosine Similarity ---
         elif self.mode == "cosine":
-            # Flatten les cartes [B, 1, H, W] -> [B, H*W]
-            cams_inter_flat = cams_inter.flatten(start_dim=1)
-            fcams_flat = fcams.flatten(start_dim=1)
+            b = fcams.shape[0]
 
-            # Normalisation L2
-            cams_inter_flat = F.normalize(cams_inter_flat, dim=1)
-            fcams_flat = F.normalize(fcams_flat, dim=1)
+            # Flatten attention [B, 1, H, W] -> [B, H*W]
+            fcams_flat = fcams.contiguous().view(b, -1)
+            cams_inter_flat = cams_inter.contiguous().view(b, -1)
 
-            # Cosine similarity (self.loss = nn.CosineSimilarity)
+            # Standardise mao (A_STD_COSINE)
+            if self.use_std:
+                mean = fcams_flat.mean(dim=-1, keepdim=True)
+                std = torch.std(fcams_flat, dim=-1, keepdim=True, correction=1) + 1e-4
+                fcams_flat = (fcams_flat - mean) / std
+
+            # Cosine Similarity
             cos_sim = self.loss(fcams_flat, cams_inter_flat)  # [B]
-            loss_val = 1 - cos_sim.mean()
+
+
+            loss_val = (1. - cos_sim).mean()
 
         else:
             raise ValueError(f"[SelfUnLearningFattention] Invalid mode '{self.mode}'.")
