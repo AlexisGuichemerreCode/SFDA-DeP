@@ -108,6 +108,10 @@ def main():
         #dar curves for source and target clas acc in trainer.source_acc and trainer.target_acc
         trainer.save_curves(task = "cl", cmpt_epoch = args.cmpt_epoch)
         trainer.plot_target_acc_curves(task = "cl", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "silhouette", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "DBI", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "CH", cmpt_epoch = args.cmpt_epoch)
+        trainer.plot_target_acc_curves(task = "J_index", cmpt_epoch = args.cmpt_epoch)
         trainer.plot_target_acc_curves(task = "loc", cmpt_epoch = args.cmpt_epoch)
         trainer.plot_target_acc_curves(task = "f1", cmpt_epoch = args.cmpt_epoch)
         trainer.plot_target_acc_curves(task = "precision", cmpt_epoch = args.cmpt_epoch)

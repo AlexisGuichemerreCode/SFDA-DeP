@@ -1,4 +1,5 @@
 #!/bin/bash
+# Run script: ./make_venv.sh NAME_OF_YOUR_VENV
 
 env=$1
 

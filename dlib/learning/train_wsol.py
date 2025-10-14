@@ -27,6 +27,7 @@ from typing import Dict, Iterable, Callable
 from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.metrics import roc_auc_score, average_precision_score, roc_curve, precision_recall_curve
 from sklearn.metrics import confusion_matrix
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
 
 
 root_dir = dirname(dirname(dirname(abspath(__file__))))
@@ -305,6 +306,11 @@ class Trainer(Basic):
         self.dist_staining = args.dist_staining
 
         self.batch_idx = None
+
+        self.silhouette = []
+        self.DBI = []
+        self.CH = []
+        self.J_index = []
 
 
         self.store_loss = []
@@ -3278,6 +3284,22 @@ class Trainer(Basic):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         plt.savefig(out_path, dpi=300)
         plt.close()
+
+    def compute_J_index(self, features, labels):
+        features = np.array(features)
+        labels = np.array(labels)
+        unique_labels = np.unique(labels)
+        mu_global = features.mean(axis=0)
+
+        inter = 0.0
+        intra = 0.0
+        for c in unique_labels:
+            mask = (labels == c)
+            feats_c = features[mask]
+            mu_c = feats_c.mean(axis=0)
+            inter += len(feats_c) * np.sum((mu_c - mu_global) ** 2)
+            intra += np.sum((feats_c - mu_c) ** 2)
+        return inter / intra if intra > 0 else 0.0
     
     def _compute_accuracy_f1(self, loader, compute_kl = True):
         torch.cuda.empty_cache()
@@ -3301,6 +3323,9 @@ class Trainer(Basic):
 
         y_pred = []
         y_true = []
+
+        features_list = []
+        labels_list = []
 
         # --- KL metrics ---
         kl_vals = []
@@ -3358,38 +3383,9 @@ class Trainer(Basic):
 
             with torch.no_grad():
                 cl_logits = self.cl_forward(images)
-
-
-                # loss = self._one_step_train_unlearning(images,
-                #                                         raw_imgs,
-                #                                         targets,
-                #                                         p_glabel,
-                #                                         std_cams,
-                #                                         masks,
-                #                                         views,
-                #                                         cal_mask_forget = mask_list_forget,
-                #                                         cal_mask_retain = mask_list_retain,
-                #                                         y_pred_batch = y_pred_batch,
-                #                                         mask_entropy = mask_entropy
-                #                                         )
-
-                # loss = self._one_step_train_unlearning(images,
-                #                                         raw_imgs,
-                #                                         targets,
-                #                                         p_glabel,
-                #                                         std_cams,
-                #                                         masks,
-                #                                         views,
-                #                                         cal_mask = mask_list,
-                #                                         y_pred_batch = y_pred_batch,
-                #                                         mask_entropy = mask_entropy
-                #                                         )
-
-                # loss_dict = {name: val for name, val in zip(self.loss.n_holder, self.loss.l_holder)}
-
-                # master_loss += loss_dict['master_loss'].item()
-                # ce_flip_loss += loss_dict['ce_flip_loss'].item()
-                # ce_not_flip_loss += loss_dict['ce_not_flip_loss'].item()
+                feats = self.model.lin_ft.detach().cpu().numpy()
+                features_list.append(feats)
+                labels_list.append(targets.cpu().numpy())
 
 
                 pred = cl_logits.argmax(dim=1)
@@ -3475,6 +3471,20 @@ class Trainer(Basic):
                 else:
                     raise ValueError("Unknown class label")
 
+        features_np = np.concatenate(features_list, axis=0)
+        labels_np = np.concatenate(labels_list, axis=0)
+
+
+        silhouette = silhouette_score(features_np, labels_np)
+        dbi = davies_bouldin_score(features_np, labels_np)
+        CH = calinski_harabasz_score(features_np, labels_np)
+        J_index = self.compute_J_index(features_np, labels_np)
+
+        self.silhouette.append(silhouette)
+        self.DBI.append(dbi)
+        self.CH.append(CH)
+        self.J_index.append(J_index)
+
 
         fig_outd = os.path.join(self.args.outd, "entropy_hist")
         os.makedirs(fig_outd, exist_ok=True)
@@ -3549,6 +3559,10 @@ class Trainer(Basic):
         # === Build row for CSV ===
         row = {
             "epoch": self.epoch,
+            "silhouette": silhouette,
+            "DBI": dbi,
+            "CH_J": CH,
+            "J_index": J_index, 
             "accuracy": classification_acc.item(),
             "f1": f1,
             "precision": precision,
@@ -3556,7 +3570,7 @@ class Trainer(Basic):
             "TP": tp,
             "FP": fp,
             "TN": tn,
-            "FN": fn
+            "FN": fn,
         }
 
         cm_file = os.path.join(self.args.outd, "confusion_evolution.csv")
@@ -3999,7 +4013,7 @@ class Trainer(Basic):
         plt.xlabel('Epoch')
         plt.ylabel(ylabel)
         plt.legend()
-        #set y axis labels only in integer with max value to len of source and target acc
+        #set y axis labels only in integer with max value to len of source and target acc.
         #epochs = np.arange(0, len(source_data) * cmpt_epoch + 1, cmpt_epoch)
         plt.xticks(np.arange(cmpt_epoch, len(source_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch))
         plt.tight_layout()
@@ -4023,6 +4037,22 @@ class Trainer(Basic):
         if task == "cl":
             target_data = self.target_train_acc_cl
             ylabel = 'Classification'
+
+        elif task == "silhouette":
+            target_data = self.silhouette
+            ylabel = 'Silhouette'
+        
+        elif task == "DBI":
+            target_data = self.DBI
+            ylabel = 'DBI'
+        
+        elif task == "CH":
+            target_data = self.CH
+            ylabel = 'CH'
+        
+        elif task == "J_index":
+            target_data = self.J_index
+            ylabel = 'J_index'
 
         elif task == "f1":
             target_data = self.target_train_f1
