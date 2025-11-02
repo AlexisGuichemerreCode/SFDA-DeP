@@ -611,8 +611,42 @@ def get_loss_target(args):
 
             nll_loss.set_it(nll_lambda=args.nll_lambda, mu=args.source_gmm_param['mu'], var=args.source_gmm_param['var'], pi=args.source_gmm_param['pi'])
             masterloss.add(nll_loss)
+
+        if args.ece_adapt:
+            EnergyCEAdapt_loss = losses.EnergyCEAdaptloss(
+                    cuda_id=args.c_cudaid,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag,
+                    dataset=args.dataset)
+            
+            if args.dataset == constants.GLAS:
+                negative_samples = False
+            elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and args.neg_samples_partial:
+                negative_samples = False
+            elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512]:
+                negative_samples = True
+            
+            EnergyCEAdapt_loss.set_it(ece_adapt_lambda=args.ece_adapt_lambda, apply_negative_samples=negative_samples, negative_c=constants.DS_NEG_CL[args.dataset])
+            masterloss.add(EnergyCEAdapt_loss)
             
             
+        if args.erl:
+            erl_loss = losses.UdaErl(
+                cuda_id=args.c_cudaid,
+                support_background=support_background,
+                multi_label_flag=multi_label_flag,
+            )
+            erl_loss.set_it(erl_beta = args.erl_beta, erl_lambda = args.erl_lambda)
+            masterloss.add(erl_loss)
+
+        if args.semalg:
+            semalg_loss = losses.RgvSemanticAlignmentLoss(
+                cuda_id=args.c_cudaid,
+                support_background=support_background,
+                multi_label_flag=multi_label_flag,
+            )
+            semalg_loss.set_it(beta = args.betaS, lambdaS = args.lambdaS)
+            masterloss.add(semalg_loss)
                 
 
 
@@ -1634,7 +1668,7 @@ def get_model(args, eval=False, eval_path_weights=''):
             # set only alpha as learnable param
             model = adadsa.adadsa_freeze_all_model_except_bn_a(model)
 
-        elif args.sdda or args.nrc:
+        elif args.sdda or args.nrc or args.rgv:
             model.train()  # adapt/nrc full model.
         else:  # todo
             raise NotImplementedError('add more SFUDA methods.')
@@ -1837,7 +1871,7 @@ def sf_uda_load_set_source_weights(model, args: object):
 
     # target model matches source model.
     assert _args_trg.model['encoder_name'] == args_src.model['encoder_name']
-    assert _args_trg.method == args_src.method
+    #assert _args_trg.method == args_src.method
     assert _args_trg.model['arch'] == args_src.model['arch']
     assert _args_trg.spatial_pooling == args_src.spatial_pooling
 
@@ -1872,7 +1906,7 @@ def sf_uda_load_set_source_weights(model, args: object):
             if args.method == constants.METHOD_PIXELCAM and   'deit' in args.model['encoder_name']:
                 weights = torch.load(join(path, 'model.pt'),
                                  map_location=get_cpu_device())
-                model.load_state_dict(weights, strict=True)
+                model.load_state_dict(weights, strict=False)
             else:
                 weights = torch.load(join(path, 'encoder.pt'),
                                     map_location=cpu_device)
@@ -1882,9 +1916,10 @@ def sf_uda_load_set_source_weights(model, args: object):
                                     map_location=cpu_device)
                 model.classification_head.load_state_dict(weights, strict=True)
                 if args.method == constants.METHOD_PIXELCAM:
-                    weights = torch.load(join(path, 'pixel_wise_classification_head.pt'),
-                                        map_location=cpu_device)
-                    model.pixel_wise_classification_head.load_state_dict(weights, strict=True)
+                    if _args_trg.method == args_src.method:
+                        weights = torch.load(join(path, 'pixel_wise_classification_head.pt'),
+                                            map_location=cpu_device)
+                        model.pixel_wise_classification_head.load_state_dict(weights, strict=True)
 
     elif args.task == constants.F_CL:
         weights = torch.load(join(path, 'encoder.pt'),

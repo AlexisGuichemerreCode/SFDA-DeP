@@ -34,6 +34,7 @@ from dlib.losses.core import MaxSizePositiveNegev
 from dlib.losses.core import NegativeSamplesNegev
 
 from dlib.losses.core import EnergyCEloss
+from dlib.losses.core import EnergyCEAdaptloss
 from dlib.losses.core import CalLoss
 from dlib.losses.core import CalPxLoss
 from dlib.losses.core import PartialEntropy
@@ -73,8 +74,11 @@ from dlib.losses.sf_uda_sdda import MaxMinUdaSddaTrgModelCeFakeImage
 
 from dlib.losses.sf_uda import UdaCdd
 from dlib.losses.sf_uda import UdaCdcl
+from dlib.losses.sf_uda import UdaErl
 
 from dlib.losses.sf_uda import UdaNLL
+
+from dlib.losses.sf_uda import RgvSemanticAlignmentLoss
 
 from dlib.losses.core import SatLoss
 

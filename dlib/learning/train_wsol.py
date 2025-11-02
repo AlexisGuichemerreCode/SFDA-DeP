@@ -35,6 +35,7 @@ sys.path.append(root_dir)
 
 from dlib.configure import constants
 from dlib.datasets.wsol_loader import get_data_loader
+from dlib.datasets.wsol_loader import get_eval_transforms_global
 
 from dlib.utils.reproducibility import set_seed
 import dlib.dllogger as DLLogger
@@ -58,6 +59,7 @@ from dlib.sf_uda import adadsa
 from dlib.sf_uda import Nrc
 from dlib.sf_uda import Sfde
 from dlib.sf_uda import Cdcl
+from dlib.sf_uda import Rgv
 
 from dlib import losses
 from dlib.process.instantiators import get_loss
@@ -343,11 +345,31 @@ class Trainer(Basic):
             std_cams_folder=self.args.std_cams_folder,
             sfuda_faust=self.args.faust,
             sfuda_n_rnd_views=self._get_faust_n_views(),
+            sfda_aug_transform=self.args.sfda_aug_transform
             #chg_staining = self.chg_staining,
             #path_staining = self.path_staining,
             #dist_staining = self.dist_staining
         )
 
+        self.loaders_notransform = get_data_loader(
+            data_roots=self.args.data_paths,
+            metadata_root=self.args.metadata_root,
+            batch_size=self.args.batch_size,
+            eval_batch_size=self.args.eval_batch_size,
+            workers=self.args.num_workers,
+            resize_size=self.args.resize_size,
+            crop_size=self.args.crop_size,
+            load_tr_masks=self.load_tr_masks,
+            mask_root=mask_root,
+            proxy_training_set=self.args.proxy_training_set,
+            num_val_sample_per_class=self.args.num_val_sample_per_class,
+            std_cams_folder=self.args.std_cams_folder,
+            sfuda_faust=self.args.faust,
+            sfuda_n_rnd_views=self._get_faust_n_views(),
+            #chg_staining = self.chg_staining,
+            #path_staining = self.path_staining,
+            #dist_staining = self.dist_staining
+        )
         
 
         if self.args.target_domain_ds_to_compute_stats != None or self.args.ds_to_compute_acc_trainset_source_target != None:
@@ -365,7 +387,9 @@ class Trainer(Basic):
                     proxy_training_set=self.args.proxy_training_set,
                     num_val_sample_per_class=self.args.num_val_sample_per_class,
                     std_cams_folder=None,
-                    get_splits_eval=[constants.TRAINSET]
+                    sfuda_faust=self.args.faust,
+                    sfuda_n_rnd_views=self._get_faust_n_views(),
+                    get_splits_eval=["train", "valcl", "valpx","test"]
                 )
 
             # self.target_domain_loaders = get_data_loader(
@@ -464,7 +488,7 @@ class Trainer(Basic):
             # self.source_test_miou = []
             # self.source_train_miou = []
 
-        self.sl_mask_builder = None
+        self.sl_mask_builder = None        
         if args.task in [constants.F_CL, constants.NEGEV] or args.pixel_wise_classification:
             self.sl_mask_builder = self._get_sl(args)
 
@@ -523,6 +547,9 @@ class Trainer(Basic):
                 self.corrected_pseudo_labels = self.select_images_to_correct_and_incorrect(self.model, self.loaders[constants.TRAINSET], select_imgs_ratio=self.args.correct_pseudo_labels_ratio)
 
 
+            if args.erl:
+                self.index_src_logits = self.init_y_bar(model=self.model,loader=self.loaders[constants.TRAINSET])
+
         if self.args.sf_uda:
 
             self.metrics = KLConsistencyMetrics(device="cuda")
@@ -535,9 +562,10 @@ class Trainer(Basic):
                     self.store_master_loss = []
                     self.store_ce_flip_loss = []
                     self.store_ce_not_flip_loss = []
+                    #self.loader.dataset.transform = None
 
                     self.pred_distribution, self.overpred_class, self.underpred_class = self.compute_prediction_bias(model=self.model,
-                                loader=self.loaders, top_k=None
+                                loader_notransform=self.loaders_notransform, top_k=None
                             )
 
                     # select images to shift label
@@ -545,7 +573,7 @@ class Trainer(Basic):
                     if self.args.select_distance:
                         self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_distances(
                             model=self.model,
-                            loader=self.loaders,
+                            loader=self.loaders_notransform,
                             select_imgs_ratio=self.args.esfda_select_imgs_ratio,
                             random_select_ratio=self.args.random_select_ratio
                         )
@@ -555,23 +583,23 @@ class Trainer(Basic):
                         if self.args.entropy_probabilistic:
                             self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy_probabilistic(
                                 model=self.model,
-                                loader=self.loaders
+                                loader=self.loaders_notransform
                             )
                         elif self.args.entropy_gt:
                                 self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_gt(
                                     model=self.model,
-                                    loader=self.loaders
+                                    loader=self.loaders_notransform
                                 )
 
                         elif self.args.entropy_random:
                             self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_random(
                                 model=self.model,
-                                loader=self.loaders
+                                loader=self.loaders_notransform
                             )
                         else:
                             self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy(
                                 model=self.model,
-                                loader=self.loaders,
+                                loader=self.loaders_notransform,
                                 select_imgs_ratio=self.args.esfda_select_imgs_ratio,
                                 random_select_ratio=self.args.random_select_ratio,
                                 reverse_imgs=self.args.esfda_reverse_imgs,
@@ -776,7 +804,28 @@ class Trainer(Basic):
             )
             train_eval_loader = loaders[constants.TRAINSET]
 
-        
+        elif args.rgv:
+            mask_root = args.mask_root if self.load_tr_masks else ''
+            loaders = get_data_loader(
+                data_roots=self.args.data_paths,
+                metadata_root=self.args.metadata_root,
+                batch_size=self.args.batch_size,
+                eval_batch_size=self.args.eval_batch_size,
+                workers=self.args.num_workers,
+                resize_size=self.args.resize_size,
+                crop_size=self.args.crop_size,
+                load_tr_masks=self.load_tr_masks,
+                mask_root=mask_root,
+                proxy_training_set=self.args.proxy_training_set,
+                num_val_sample_per_class=self.args.num_val_sample_per_class,
+                std_cams_folder=None,
+                get_splits_eval=[constants.TRAINSET],
+                sfuda_faust=False,
+                sfuda_n_rnd_views=0
+            )
+            train_eval_loader = loaders[constants.TRAINSET]
+            return Rgv(model_trg=self.model,
+                    train_loader_trg=train_eval_loader,num_classes=self.args.num_classes, device = self.args.c_cudaid)
         
         else:
             raise NotImplementedError('SFUDA: unspecified method.')
@@ -972,6 +1021,61 @@ class Trainer(Basic):
                 self.args.cutmix_prob > np.random.rand(1).item() and
                 self.args.cutmix_beta > 0)
 
+    def build_key_arg(self, base_key_arg=None, src_probs=None):
+
+        key_arg = base_key_arg.copy() if base_key_arg is not None else {}
+
+        key_arg["src_probs"] = src_probs
+
+        return key_arg
+
+    def rgv_refine_and_align(self, images, aug_images, index):
+
+        # --- Forward normal ---
+        output = self.model(images)
+        feats = self.model.lin_ft.clone().detach()
+        cl_logits = output.clone()
+        probs = F.softmax(cl_logits.detach(), dim=1)
+
+        # --- Pseudo-label refining via MemoryBank (Eq.9) ---
+        p_refined = self.sfuda_master.memory.get_knn(feats, k=5, tau=0.07)
+
+        # --- Certainty (Eq.10) ---
+        entropy = -(p_refined * p_refined.log()).sum(dim=1)
+        max_logp = p_refined.log().max(dim=1)[0]
+        entropy_norm = (entropy - entropy.min()) / (entropy.max() - entropy.min() + 1e-8)
+        maxlog_norm = (max_logp - max_logp.min()) / (max_logp.max() - max_logp.min() + 1e-8)
+        certainty = ((1 - entropy_norm) + maxlog_norm) / 2
+
+        beta = 0.6
+        mask_certainty = certainty >= beta
+
+        
+        mask_not_DI = torch.tensor(
+            [name not in self.sfuda_master.D_maps['I'] for name in index],
+            device=self.device, dtype=torch.bool
+        )
+
+        mask = mask_certainty & mask_not_DI
+
+
+        if self.model.support_background:
+            w = self.model.classification_head.fc.weight[1:]
+        else:
+            w = self.model.classification_head.fc.weight
+
+
+        aug_imgs = aug_images.to(self.device)
+        aug_logits = self.model(aug_imgs)
+        aug_feats = self.model.lin_ft
+
+        y_tilde = p_refined.argmax(dim=1)
+
+        self.sfuda_master.memory.update(feats, probs, names=index)
+
+        return certainty, mask, aug_feats
+
+
     def _one_step_train(self,
                         images,
                         raw_imgs,
@@ -979,11 +1083,17 @@ class Trainer(Basic):
                         p_glabel,
                         std_cams,
                         masks,
-                        views):
+                        views,
+                        index,
+                        aug_images):
         args = self.args
         y_global = targets
         y_pl_global = p_glabel
 
+        if self.args.erl:
+            y_bar_batch = torch.stack([self.index_src_logits[name] for name in index]).to(self.args.c_cudaid)
+
+            
         z_label = targets
 
         if args.sf_uda:
@@ -1002,6 +1112,38 @@ class Trainer(Basic):
                 cutmix_holder = [target_a, target_b, lam]
 
         if args.sf_uda:
+
+            if args.pixel_wise_classification and args.ece_adapt:
+                _, _, h, w = self.model.encoder_last_features.shape
+                interpolation_mode = 'bilinear'
+                if std_cams is None:
+                    cams_inter = self.get_std_cams_minibatch(images=images,
+                                                            targets=z_label)
+                else:
+                    cams_inter = std_cams
+
+                if self.args.low_res:
+                    fcams=self.model.cams
+                else:
+                    _, _, i, x = cams_inter.shape
+                    fcams= F.interpolate(self.model.cams,
+                                (i, x),
+                                mode=interpolation_mode,
+                                align_corners=False)
+
+                with torch.no_grad():
+                    if self.args.low_res:
+                        cams_inter = F.interpolate(cams_inter,
+                                (h, w),
+                                mode=interpolation_mode,
+                                align_corners=False)
+
+                    seeds = self.sl_mask_builder(cams_inter)
+
+            else:
+                seeds = None
+                fcams = None
+
             if args.task == constants.STD_CL:
                 if args.faust:
                     assert views is not None
@@ -1030,6 +1172,7 @@ class Trainer(Basic):
                                      key_arg=self.nrc_args
                                      )
                     logits = cl_logits
+                    
 
                 elif self.args.cdcl:
                     out = self.model(images)
@@ -1039,7 +1182,17 @@ class Trainer(Basic):
                             cl_logits = output
 
                     cdcl_out = self.sfuda_master.forward_data(features)
-                    loss = self.loss(epoch=self.epoch,model=self.model,cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global,key_arg=cdcl_out)
+
+
+
+                    if self.args.erl:
+                        key_args = self.build_key_arg(cdcl_out, src_probs=y_bar_batch)
+                    else:
+                        key_args = cdcl_out
+
+                    #loss = self.loss(epoch=self.epoch,model=self.model,cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global,key_arg=cdcl_out)
+                    loss = self.loss(epoch=self.epoch,model=self.model,fcams=fcams, cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global,seeds=seeds,key_arg=key_args)
+                    
                     logits = cl_logits
 
                 elif self.args.sfde:
@@ -1064,6 +1217,44 @@ class Trainer(Basic):
                     
                     loss = self.loss(epoch=self.epoch,model=self.model,cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global)
                     logits = cl_logits
+
+                elif self.args.rgv:
+
+                    pseudo_labels = torch.tensor(
+                    [self.sfuda_master.D_maps['I'].get(n, -255) for n in index],
+                    device=images.device,
+                    dtype=torch.long)
+
+                    mask_CE = pseudo_labels != -255
+
+
+                    certainty, mask_SA, aug_feats = self.rgv_refine_and_align(images, aug_images, index)
+
+                    key_arg = {}
+
+                    # --- Cross-Entropy (D_I) ---
+                    key_arg["pseudo_labels_CE"] = pseudo_labels
+                    key_arg["mask_CE"] = mask_CE
+
+                    # --- Semantic Alignment (D_U) ---
+                    if aug_feats is not None:
+                        key_arg["aug_feats_SA"] = aug_feats      
+                    if certainty is not None:
+                        key_arg["certainty_SA"] = certainty      
+                    if mask_SA is not None:
+                        key_arg["mask_SA"] = mask_SA   
+
+                    #cl_logits = output
+                    loss = self.loss(epoch=self.epoch,
+                                     model=self.model,
+                                     cl_logits=cl_logits,
+                                     glabel=y_global,
+                                     pseudo_glabel=pseudo_labels,
+                                     cutmix_holder=cutmix_holder,
+                                     key_arg = key_arg 
+                                     )
+                    logits = cl_logits
+
 
                 else:
                     output = self.model(images)
@@ -1268,12 +1459,14 @@ class Trainer(Basic):
 
                     if self.args.esfda_loc:
                        interpolation_mode = 'bilinear'
-                       attention_map = self.model.encoder_last_features.mean(dim=1, keepdim=True)
+                       fcams = self.model.encoder_last_features.mean(dim=1, keepdim=True)
                        #fattention = torch.sigmoid(attention_map)
 
                        cams_inter_init = std_cams
 
-                       _, _, H, W = attention_map.shape
+                       seeds = None
+
+                       _, _, H, W = fcams.shape
 
                        cams_inter = F.interpolate(
                             cams_inter_init,      
@@ -1282,16 +1475,43 @@ class Trainer(Basic):
                             align_corners=False
                         )
 
+                    if args.pixel_wise_classification:
+                        _, _, h, w = self.model.encoder_last_features.shape
+                        interpolation_mode = 'bilinear'
+                        if std_cams is None:
+                            cams_inter = self.get_std_cams_minibatch(images=images,
+                                                                    targets=z_label)
+                        else:
+                            cams_inter = std_cams
+
+                        if self.args.low_res:
+                            fcams=self.model.cams
+                        else:
+                            _, _, i, x = cams_inter.shape
+                            fcams= F.interpolate(self.model.cams,
+                                        (i, x),
+                                        mode=interpolation_mode,
+                                        align_corners=False)
+
+                        with torch.no_grad():
+                            if self.args.low_res:
+                                cams_inter = F.interpolate(cams_inter,
+                                        (h, w),
+                                        mode=interpolation_mode,
+                                        align_corners=False)
+
+                            seeds = self.sl_mask_builder(cams_inter, class_idx=y_pred_batch)
 
 
                     loss = self.loss(epoch=self.epoch,
                                      model=self.model,
                                      cams_inter=cams_inter, 
-                                     fcams=attention_map,
+                                     fcams=fcams,
                                      cl_logits=cl_logits,
                                      glabel=y_global,
                                      pseudo_glabel=y_pl_global,
                                      cutmix_holder=cutmix_holder,
+                                     seeds=seeds,
                                      key_arg=key_arg
                                     )
                     logits = cl_logits
@@ -1535,6 +1755,22 @@ class Trainer(Basic):
     def _sf_uda_before_epoch_process(self):
         assert self.args.sf_uda
 
+
+        if self.args.rgv:
+            print(f'Running RGV pseudo-label estimation at epoch {self.epoch}')
+            if self.epoch % self.args.rgv_round_interval == 0:
+                print(f'Updating RGV sample selection at round {self.epoch // self.args.rgv_round_interval}')
+                D_samples = self.sfuda_master.run()
+                self.D_samples = D_samples  
+            else:
+                D_samples = getattr(self, "D_samples", None)
+                if D_samples is None:
+                    print("Initializing RGV samples at epoch 0")
+                    D_samples = self.sfuda_master.run()
+                    self.D_samples = D_samples
+
+            return D_samples
+
         if self.args.shot:
             if self.args.ce_pseudo_lb:
 
@@ -1593,7 +1829,7 @@ class Trainer(Basic):
                 pl)
    
 
-        if self.args.sfde:
+        elif self.args.sfde:
             print(f'running label estimation SFDE epoch {self.epoch}')
             mask_root = self.mask_root if self.load_tr_masks else ''
             sfuda_select_ids_pl, target_hypt,  filtered_classes, self.clustering_acc = self.sfuda_master.solve()
@@ -1628,7 +1864,7 @@ class Trainer(Basic):
             self.normal_sampler = self.sfuda_master.construct_surrogate_feature_sampler(filtered_classes, self.loaders_filtered[constants.TRAINSET])
             
 
-        if self.args.cdcl:
+        elif self.args.cdcl:
             print(f'running label estimation CDCL epoch {self.epoch}')
             mask_root = self.mask_root if self.load_tr_masks else ''
             sfuda_select_ids_pl, target_hypt,  filtered_classes, self.clustering_acc = self.sfuda_master.solve()
@@ -1656,9 +1892,11 @@ class Trainer(Basic):
                 mask_root=mask_root,
                 proxy_training_set=self.args.proxy_training_set,
                 num_val_sample_per_class=self.args.num_val_sample_per_class,
-                std_cams_folder=None,
-                get_splits_eval=[constants.TRAINSET],
-                per_split_sfuda_select_ids_pl= {constants.TRAINSET: sfuda_select_ids_pl})
+                std_cams_folder=self.args.std_cams_folder,
+                #get_splits_eval=[constants.TRAINSET],
+                per_split_sfuda_select_ids_pl= {constants.TRAINSET: sfuda_select_ids_pl,constants.PXVALIDSET: None,constants.CLVALIDSET: None,constants.TESTSET: None})
+                #per_split_sfuda_select_ids_pl= {constants.TRAINSET: sfuda_select_ids_pl})
+
 
     def on_epoch_start(self):
         torch.cuda.empty_cache()
@@ -1709,7 +1947,7 @@ class Trainer(Basic):
             elif self.args.adadsa:
                 self.model = adadsa.adadsa_freeze_all_model_except_bn_a(
                     self.model)
-            elif self.args.nrc:
+            elif self.args.nrc or self.args.rgv:
                 pass
             else:  # todo
                 raise NotImplementedError('Add more SFUDA methods.')
@@ -1793,30 +2031,69 @@ class Trainer(Basic):
         
         return distances
 
+
     @torch.no_grad()
-    def compute_prediction_bias(self, model, loader, top_k = None):
+    def init_y_bar(self, model, loader):
 
         model.eval()
-        loader = loader['train']
+        loader = loader
+        #loader_notransform.dataset.transform = get_eval_transforms_global(self.args.crop_size)
 
-        class_counts = None
-        total_samples = 0
+        y_bar = {} 
+
+        num_classes = self.args.num_classes
 
         for batch_idx, (images, targets, p_glabel, index,
                         raw_imgs, std_cams, masks, views) in tqdm(
                             enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+            images = images.cuda(self.args.c_cudaid)
+            logits = model(images)
+            probs = F.softmax(logits, dim=1)  
+
+            for j, name in enumerate(index):
+                if isinstance(name, (list, tuple)):
+                    name = name[0]
+                if torch.is_tensor(name):
+                    name = name.item() if name.numel() == 1 else name
+                name = str(name)
+
+                y_bar[name] = probs[j].detach().clone()
+
+        return y_bar
+
+    @torch.no_grad()
+    def compute_prediction_bias(self, model, loader_notransform, top_k = None):
+
+        model.eval()
+        loader_notransform = loader_notransform['train']
+        loader_notransform.dataset.transform = get_eval_transforms_global(self.args.crop_size)
+
+        
+        
+        num_classes = self.args.num_classes
+        class_counts = torch.zeros(num_classes, device=self.args.c_cudaid)
+        total_samples = 0
+
+        for batch_idx, (images, targets, p_glabel, index,
+                        raw_imgs, std_cams, masks, views) in tqdm(
+                            enumerate(loader_notransform), ncols=constants.NCOLS, total=len(loader_notransform)):
 
             images = images.cuda(self.args.c_cudaid)
             logits = model(images)
             probs = F.softmax(logits, dim=1)
             preds = probs.argmax(dim=1)
-            num_classes = probs.size(1)
+            #num_classes = probs.size(1)
 
-            if class_counts is None:
-                class_counts = torch.zeros(num_classes, device=images.device)
+            # if class_counts is None:
+            #     class_counts = torch.zeros(num_classes, device=images.device)
 
-            class_counts += torch.bincount(preds, minlength=num_classes).float()
-            total_samples += preds.numel()
+            # class_counts += torch.bincount(preds, minlength=num_classes).float()
+            # total_samples += preds.numel()
+
+            for c in range(num_classes):
+                class_counts[c] += (preds == c).sum()
+
+            total_samples += preds.size(0)
 
         # --- Distribution ---
         pred_distribution = (class_counts / total_samples).cpu().numpy()
@@ -1931,7 +2208,7 @@ class Trainer(Basic):
         loader = loader['train']
 
         idx_to_pred = {}
-        by_class_all = {0: [], 1: []}
+        by_class_all = {c: [] for c in range(self.args.num_classes)}
         idx_to_target = {}      #  store ground truth labels
         assigned_labels_map = {}    # idx -> label final (flip: top-2, stable: top-1)
         idx_to_top1 = {}
@@ -1957,7 +2234,6 @@ class Trainer(Basic):
             top2_vals, top2_idx = probs.topk(k=k, dim=1, largest=True, sorted=True)
             
 
-            # Entropy computation
             entropy = -torch.sum(probs * torch.log(probs + 1e-6), dim=1)
 
             for i in range(images.size(0)):
@@ -2081,9 +2357,15 @@ class Trainer(Basic):
                         targets_per_class[c] += 1
                         remainder -= 1
 
+                for c in by_class_all.keys():
+                    by_class_all[c].sort(key=lambda x: x[1])  # x[1] = entropy
+
+    
                 # Select img to retain
                 for c in freeze_classes:
                     pool = by_class_all.get(c, [])
+                    pool = [(idx, ent) for (idx, ent) in pool if idx not in flippable_subset]
+                    
                     take = min(targets_per_class.get(c, 0), len(pool))
                     chosen = pool[:take]   # Rank by entropy
                     stable_selected.extend([idx for (idx, _) in chosen])
@@ -2723,7 +3005,7 @@ class Trainer(Basic):
         
 
         for batch_idx, (images, targets, p_glabel, index,
-                        raw_imgs, std_cams, masks, views) in tqdm(
+                        raw_imgs, std_cams, masks, views, aug_images) in tqdm(
                 enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
 
             self.batch_idx = batch_idx
@@ -2790,10 +3072,12 @@ class Trainer(Basic):
             targets = self._fill_minibatch(targets, mbatchsz)
             p_glabel = self._fill_minibatch(p_glabel, mbatchsz)
             raw_imgs = self._fill_minibatch(raw_imgs, mbatchsz)
+            aug_images = self._fill_minibatch(aug_images, mbatchsz)
 
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)
             p_glabel = p_glabel.cuda(self.args.c_cudaid)
+            aug_images = aug_images.cuda(self.args.c_cudaid)
             
             if self.args.esfda and self.args.esfda_select_imgs:
                 y_pred_batch = y_pred_batch.cuda(self.args.c_cudaid)
@@ -2887,7 +3171,9 @@ class Trainer(Basic):
                                                         p_glabel,
                                                         std_cams,
                                                         masks,
-                                                        views
+                                                        views,
+                                                        index,
+                                                        aug_images
                                                         )
 
             with torch.no_grad():
@@ -2910,7 +3196,7 @@ class Trainer(Basic):
                 # loss.backward()
                 # self.optimizer.step()
 
-            if self.args.ds_to_compute_acc_trainset_source_target == constants.GLAS and batch_idx % self.args.cmpt_batch == 0:
+            if self.args.target_domain_ds_to_compute_stats in [constants.CAMELYON512, constants.CAMELYON17_512] and batch_idx % self.args.cmpt_batch == 0:
                 # self.model.eval()
                 # with torch.no_grad():
                 #     self.compute_acc_on_source_and_target(self.epoch)
@@ -2924,7 +3210,7 @@ class Trainer(Basic):
                     self.compute_acc_on_target_came(self.epoch)
                     #self.compute_loc_on_target(self.epoch)
 
-                    if self.args.dataset == constants.CAMELYON512 and self.args.cl_train_models:
+                    if self.args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and self.args.cl_train_models:
                         self.update_best_cl_train_model_came(epoch, split=constants.TRAINSET)
                 self.model.train()
                 
@@ -3092,7 +3378,7 @@ class Trainer(Basic):
         all_targets = []
         all_probs = []  
 
-        for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+        for i, (images, targets, _, _, _, _, _, _,_) in enumerate(loader):
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)
 
@@ -3372,13 +3658,13 @@ class Trainer(Basic):
             # mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
             # y_pred_batch = y_pred_batch.cuda(self.args.c_cudaid)
 
-            p_glabel = supervised_labels
-            mask_list  = [img_name not in self.flipped_indices for img_name in index]
-            # mask_list_retain = [img_name not in self.stable_selected for img_name in index]
-            #y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
-            y_pred_batch = torch.tensor([self.assigned_labels_map[idx] for idx in index])
-            mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
-            y_pred_batch = y_pred_batch.cuda(self.args.c_cudaid)
+            # p_glabel = supervised_labels
+            # mask_list  = [img_name not in self.flipped_indices for img_name in index]
+            # # mask_list_retain = [img_name not in self.stable_selected for img_name in index]
+            # #y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
+            # y_pred_batch = torch.tensor([self.assigned_labels_map[idx] for idx in index])
+            # mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
+            # y_pred_batch = y_pred_batch.cuda(self.args.c_cudaid)
 
 
             with torch.no_grad():
@@ -3437,19 +3723,19 @@ class Trainer(Basic):
                 idx_b = index[b]
                 pred_b = pred[b].item()
 
-                # Flip
-                if idx_b in self.flipped_indices:
-                    init_cls = self.assigned_labels_map[idx_b]
-                    #tgt_flip = 0
-                    correct_flip += int(pred_b == init_cls)
-                    total_flip += 1
+                # # Flip
+                # if idx_b in self.flipped_indices:
+                #     init_cls = self.assigned_labels_map[idx_b]
+                #     #tgt_flip = 0
+                #     correct_flip += int(pred_b == init_cls)
+                #     total_flip += 1
 
-                # Stable
-                if idx_b in self.stable_selected:
-                    #pos = self.stable_selected.index(idx_b)
-                    tgt_stable = int(self.assigned_labels_map[idx_b])
-                    correct_stable += int(pred_b == tgt_stable)
-                    total_stable += 1
+                # # Stable
+                # if idx_b in self.stable_selected:
+                #     #pos = self.stable_selected.index(idx_b)
+                #     tgt_stable = int(self.assigned_labels_map[idx_b])
+                #     correct_stable += int(pred_b == tgt_stable)
+                #     total_stable += 1
                 
 
             num_correct += (pred == targets).sum().detach()
@@ -3596,17 +3882,17 @@ class Trainer(Basic):
         self.metrics.hm_hist.append(Hm)
         self.metrics.htilde_hist.append(Htilde)
 
-        #Store accuracy unlearned and not unlearned ---
-        acc_flip = correct_flip / total_flip if total_flip > 0 else 0.0
-        acc_stable = correct_stable / total_stable if total_stable > 0 else 0.0
+        # #Store accuracy unlearned and not unlearned ---
+        # acc_flip = correct_flip / total_flip if total_flip > 0 else 0.0
+        # acc_stable = correct_stable / total_stable if total_stable > 0 else 0.0
 
-        if not hasattr(self, "history_acc_flip"):
-            self.history_acc_flip = []
-        if not hasattr(self, "history_acc_stable"):
-            self.history_acc_stable = []
+        # if not hasattr(self, "history_acc_flip"):
+        #     self.history_acc_flip = []
+        # if not hasattr(self, "history_acc_stable"):
+        #     self.history_acc_stable = []
 
-        self.history_acc_flip.append(acc_flip)
-        self.history_acc_stable.append(acc_stable)
+        # self.history_acc_flip.append(acc_flip)
+        # self.history_acc_stable.append(acc_stable)
 
         torch.cuda.empty_cache()
         return classification_acc.item(), classification_acc_normal, classification_acc_cancer, images_entropy, f1, precision, recall
@@ -3659,7 +3945,7 @@ class Trainer(Basic):
     def compute_acc_on_target(self, epoch, split=constants.TRAINSET):
         self.model.eval()
         with torch.no_grad():
-            target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[constants.TRAINSET], compute_kl = True)
+            target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[constants.CLVALIDSET], compute_kl = True)
             self.target_train_acc_cl.append(target_train_acc)
             self.target_train_f1.append(f1)
             self.target_train_precision.append(precision)
@@ -3849,12 +4135,12 @@ class Trainer(Basic):
         cam_computer_source_train = CAMComputer(
             args=deepcopy(self.args),
             model=self.model,
-            loader=self.target_domain_loaders['train'],
-            metadata_root=os.path.join(self.args.metadata_root, 'train'),
+            loader=self.target_domain_loaders['valpx'],
+            metadata_root=os.path.join(self.args.metadata_root, 'valpx'),
             mask_root=self.args.mask_root,
             iou_threshold_list=self.args.iou_threshold_list,
             dataset_name=self.args.dataset,
-            split='train',
+            split='valpx',
             cam_curve_interval=self.args.cam_curve_interval,
             multi_contour_eval=self.args.multi_contour_eval,
             out_folder=self.args.outd,

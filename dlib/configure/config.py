@@ -525,6 +525,9 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         "sl_pc_equalize": False,  # use or not equalize the number of positive and negative samples.
         "ece": False,  # use or not ECE.
         "ece_lambda": 1.,  # lambda for ECE.
+
+        "ece_adapt": False,  # use or not ECE.
+        "ece_adapt_lambda": 1.,  # lambda for ECE.
         
         "cal": False,  # use or not CAL.
         "cal_lambda": 1.,  # lambda for CAL.
@@ -816,6 +819,30 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # ======================================================================
         #                           END - NRC
         # ======================================================================
+
+        # ======================================================================
+        #                             RGV  
+        # ======================================================================
+        # RGV: "Revisiting Source-Free Domain Adaptation: Insights into Representativeness, Generalization, and Variety", CVPR 2025,
+        # https://openaccess.thecvf.com/content/CVPR2025/papers/Zhu_Revisiting_Source-Free_Domain_Adaptation_Insights_into_Representativeness_Generalization_and_Variety_CVPR_2025_paper.pdf.
+        'rgv': False,  # RGV method. ON/OFF.
+        'sfda_aug_transform': True,  # RGV augmentation transform. ON/OFF.
+        'rgv_round_interval': 2 , #round for rgv
+        'semalg': False,
+        'lambdaS': 0.4 ,
+        'betaS': 0.4 ,
+        # ======================================================================
+        #                           END - RGV
+        # ======================================================================
+
+        # ======================================================================
+        #                               ERL
+        # ======================================================================
+
+        'erl': False,  # ERL method. ON/OFF.
+        'erl_beta': 0.1, #hyperparameter for ERL EMA
+        'erl_lambda': 0.1, #hyperparameter for ERL loss
+
 
 
         #                       DISTRIBUTION ESTIMATION

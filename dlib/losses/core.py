@@ -1644,6 +1644,124 @@ class EnergyCEloss(SelfLearningFcams):
                 ):
         super(SelfLearningFcams, self).forward(epoch=epoch)
 
+        # assert self._is_already_set
+
+        # if not self.is_on():
+        #     return self._zero
+
+        # assert not self.multi_label_flag
+
+        # if not self.apply_negative_samples:
+        #     return self.loss(input=fcams, target=seeds) * self.ece_lambda
+
+        # ind_non_neg = (glabel != self.negative_c).nonzero().view(-1)
+
+        # nbr = ind_non_neg.numel()
+
+        # if nbr == 0:
+        #     return self._zero
+
+        # fcams_n_neg = fcams[ind_non_neg]
+        # seeds_n_neg = seeds[ind_non_neg]
+        # return self.loss(input=fcams_n_neg, target=seeds_n_neg) * self.ece_lambda
+
+
+        assert self._is_already_set
+        if not self.is_on():
+            return self._zero
+        assert not self.multi_label_flag
+
+        cal_mask_forget = None
+        cal_mask_retain = None
+
+        if key_arg is not None:
+            if "cal_mask_forget" in key_arg:
+                cal_mask_forget = key_arg["cal_mask_forget"]
+            if "cal_mask_retain" in key_arg:
+                cal_mask_retain = key_arg["cal_mask_retain"]
+
+
+        # --- Combine both masks (logical OR)
+        if cal_mask_forget is not None or cal_mask_retain is not None:
+            # convert both to tensors (if needed)
+            if cal_mask_forget is None:
+                cal_mask_forget = torch.zeros_like(torch.tensor(cal_mask_retain, device=fcams.device, dtype=torch.bool))
+            if cal_mask_retain is None:
+                cal_mask_retain = torch.zeros_like(torch.tensor(cal_mask_forget, device=fcams.device, dtype=torch.bool))
+
+            if not torch.is_tensor(cal_mask_forget):
+                cal_mask_forget = torch.tensor(cal_mask_forget, device=fcams.device, dtype=torch.bool)
+            if not torch.is_tensor(cal_mask_retain):
+                cal_mask_retain = torch.tensor(cal_mask_retain, device=fcams.device, dtype=torch.bool)
+
+            # Logical OR: use if either mask is True
+            cal_mask_final = cal_mask_forget | cal_mask_retain
+
+            ind_selected = cal_mask_final.nonzero(as_tuple=True)[0]
+            if ind_selected.numel() == 0:
+                return self._zero
+
+            fcams = fcams[ind_selected]
+            seeds = seeds[ind_selected]
+            if glabel is not None:
+                glabel = glabel[ind_selected]
+
+        if not self.apply_negative_samples:
+            return self.loss(input=fcams, target=seeds) * self.ece_lambda
+
+        ind_non_neg = (glabel != self.negative_c).nonzero(as_tuple=True)[0]
+        if ind_non_neg.numel() == 0:
+            return self._zero
+
+        fcams = fcams[ind_non_neg]
+        seeds = seeds[ind_non_neg]
+        return self.loss(input=fcams, target=seeds) * self.ece_lambda
+    
+
+
+class EnergyCEAdaptloss(SelfLearningFcams):
+    def __init__(self, **kwargs):
+        super(EnergyCEAdaptloss, self).__init__(**kwargs)
+
+        self.loss = nn.CrossEntropyLoss(
+            reduction="mean", ignore_index=self.seg_ignore_idx).to(self._device)
+
+        self.ece_adapt_lambda = 0.0
+        self.apply_negative_samples: bool = False
+        self.negative_c: int = 0
+
+        self._is_already_set = False
+
+    def set_it(self,ece_adapt_lambda, apply_negative_samples: bool, negative_c: int):
+        assert isinstance(apply_negative_samples, bool)
+        assert isinstance(negative_c, int)
+        assert negative_c >= 0
+
+        self.ece_lambda = ece_adapt_lambda
+        self.negative_c = negative_c
+        self.apply_negative_samples = apply_negative_samples
+
+        self._is_already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+        super(SelfLearningFcams, self).forward(epoch=epoch)
+
         assert self._is_already_set
 
         if not self.is_on():
@@ -1654,7 +1772,7 @@ class EnergyCEloss(SelfLearningFcams):
         if not self.apply_negative_samples:
             return self.loss(input=fcams, target=seeds) * self.ece_lambda
 
-        ind_non_neg = (glabel != self.negative_c).nonzero().view(-1)
+        ind_non_neg = (pseudo_glabel != self.negative_c).nonzero().view(-1)
 
         nbr = ind_non_neg.numel()
 
@@ -1664,6 +1782,10 @@ class EnergyCEloss(SelfLearningFcams):
         fcams_n_neg = fcams[ind_non_neg]
         seeds_n_neg = seeds[ind_non_neg]
         return self.loss(input=fcams_n_neg, target=seeds_n_neg) * self.ece_lambda
+
+
+
+
     
 class PxOrtognalityloss(SelfLearningFcams):
     def __init__(self, **kwargs):

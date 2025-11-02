@@ -369,7 +369,7 @@ class CAMComputer(object):
 
     def compute_and_evaluate_cams(self):
         print("Computing and evaluating cams.")
-        for batch_idx, (images, targets, _, image_ids, _, _, _, _) in tqdm(
+        for batch_idx, (images, targets, _, image_ids, _, _, _, _, _) in tqdm(
                 enumerate(self.loader), ncols=constants.NCOLS,
                 total=len(self.loader)):
 

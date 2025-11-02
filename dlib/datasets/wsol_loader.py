@@ -67,6 +67,17 @@ def configure_metadata(metadata_root):
     return metadata
 
 
+
+def get_eval_transforms_global(crop_size):
+    return Compose([
+        Resize((crop_size, crop_size)),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
+    ])
+
+
+
+
 class WSOLImageLabelDataset(Dataset):
     def __init__(self,
                  data_root,
@@ -83,6 +94,7 @@ class WSOLImageLabelDataset(Dataset):
                  sfuda_select_ids_pl: dict = None,
                  sfuda_faust: bool = False,
                  sfuda_n_rnd_views: int = 0,
+                 sfda_aug_transform=None,
                  sfuda_eval_transform = None
                  ):
 
@@ -102,6 +114,8 @@ class WSOLImageLabelDataset(Dataset):
         assert sfuda_n_rnd_views >= 0, sfuda_n_rnd_views
         self.sfuda_n_rnd_views = sfuda_n_rnd_views
         self.sfuda_eval_transform = sfuda_eval_transform
+
+        self.sfda_aug_transform = sfda_aug_transform
 
         assert isinstance(sfuda_faust, bool), type(sfuda_faust)
         self.sfuda_faust = sfuda_faust
@@ -246,6 +260,14 @@ class WSOLImageLabelDataset(Dataset):
 
         image, raw_img, std_cam, mask = self.transform(
             image, raw_img, std_cam, mask)
+        
+
+        if self.sfda_aug_transform is not None:
+            img_for_aug = img_origin.copy()
+            aug_images = self.sfda_aug_transform(img_for_aug)
+        else:
+            aug_images = torch.zeros_like(image)
+
 
         raw_img = np.array(raw_img, dtype=np.float32)  # h, w, 3
         raw_img = dlibf.to_tensor(raw_img).permute(2, 0, 1)  # 3, h, w.
@@ -272,7 +294,7 @@ class WSOLImageLabelDataset(Dataset):
             views = clean_img.unsqueeze(0)  # 1, c, h, w
 
         return image, image_label, im_pl, image_id, raw_img, std_cam, mask, \
-               views
+               views, aug_images
 
     def get_views(self, img_org: Image.Image) -> list:
 
@@ -540,7 +562,8 @@ def get_data_loader(data_roots,
                     get_splits_eval=None,
                     per_split_sfuda_select_ids_pl: dict = None,
                     sfuda_faust: bool = False,  # FAUST
-                    sfuda_n_rnd_views: int = 0  # FAUST
+                    sfuda_n_rnd_views: int = 0,  # FAUST
+                    sfda_aug_transform=None
                     ):
 
     def get_eval_tranforms():
@@ -574,7 +597,7 @@ def get_data_loader(data_roots,
                     sfuda_select_ids_pl=per_split_sfuda_select_ids_pl[split],
                     sfuda_faust=False,
                     sfuda_n_rnd_views=0,
-                    sfuda_eval_transform=None
+                    sfuda_eval_transform=sfda_aug_transform
                 )
             for split in get_splits_eval
         }
@@ -608,6 +631,15 @@ def get_data_loader(data_roots,
         constants.CLVALIDSET: get_eval_tranforms(),
         constants.TESTSET: get_eval_tranforms()
     }
+
+    sfda_aug_transform = transforms.Compose([
+        transforms.RandomResizedCrop(size=(crop_size, crop_size), scale=(0.8, 1.0)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
+        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0)),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
+    ])
 
     if per_split_sfuda_select_ids_pl is None:
         per_split_sfuda_select_ids_pl = {
@@ -658,7 +690,8 @@ def get_data_loader(data_roots,
                 sfuda_faust=sfuda_faust if split == constants.TRAINSET else
                 False,
                 sfuda_n_rnd_views=get_sfuda_n_rnd_views(split),
-                sfuda_eval_transform=get_sfuda_eval_transform(split)
+                sfuda_eval_transform=get_sfuda_eval_transform(split),
+                sfda_aug_transform=sfda_aug_transform if split == constants.TRAINSET else None
             )
         for split in _SPLITS
     }

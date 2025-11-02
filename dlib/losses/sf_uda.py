@@ -46,8 +46,18 @@ __all__ = [
     #SFDE
     'UdaCdd'
 
+    #CDCL
+    'UdaCdcl'
+
+    #ERL
+    'UdaErl'
+
     # NRC  
     'UdaNANrc'
+    
+    #RGV
+    'RgvSemanticAlignmentLoss'
+
     ]
 
 
@@ -115,7 +125,7 @@ class UdaCrossEntropyImgPseudoLabels(ElementaryLoss):
         # Check if pseudo_glabel is not None and has valid labels
         if (pseudo_glabel != -255).sum() == 0:
             # No valid pseudo-labels, return zero loss
-            return torch.tensor(0.0, device=cl_logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=cl_logits.device, requires_grad=False)
 
         # Compute the loss only if there are valid pseudo-labels
         loss = self.loss(input=cl_logits, target=pseudo_glabel)
@@ -1043,6 +1053,65 @@ class UdaCdcl(ElementaryLoss):
         return loss* self.cdcl_lambda
 
 
+class UdaErl(ElementaryLoss):
+    """
+    Compute ERL loss based on the paper: https://github.com/liyi01827/SFDA_LLN.
+    """
+    def __init__(self, **kwargs):
+        super(UdaErl, self).__init__(**kwargs)
+        
+        self.beta = 0.9            # moving average momentum
+        self.lambda_elr = 3.0      # regularization strength
+        self.y_bar = {}            # dict: image_name -> moving avg prediction
+        self.already_set = False
+
+    def set_it(self, erl_beta= 0.99, erl_lambda: float = 1.0):
+        self.erl_beta = erl_beta
+        self.erl_lambda = erl_lambda
+        self.loss = self.compute_loss
+        self.already_set = True
+
+
+    
+    def compute_loss(self, y_bar_batch, logits_batch):
+
+        eps = 1e-8
+        probs = F.softmax(logits_batch, dim=1)       
+        dot = torch.sum(y_bar_batch * probs, dim=1)  
+        loss = torch.log(1 - dot + eps)              
+        return loss.mean()  
+
+    def forward(self,
+            epoch=0,
+            model=None,
+            cams_inter=None,
+            fcams=None,
+            cl_logits=None,
+            seg_logits=None,
+            glabel=None,
+            pseudo_glabel=None,
+            masks=None,
+            raw_img=None,
+            x_in=None,
+            im_recon=None,
+            seeds=None,
+            cutmix_holder=None,
+            key_arg: dict = None  # holds multiple input at once. access
+            # via appropriate key.
+            ):
+        super(UdaErl, self).forward(epoch=epoch)
+
+        assert self.already_set
+
+        logits_batch = cl_logits     # [B, C]
+        y_bar_batch = key_arg["src_probs"]   # [B, C]
+
+        elr_loss = self.compute_loss(y_bar_batch, logits_batch)
+
+        return self.erl_lambda * elr_loss
+    
+
+
 class UdaNLL(ElementaryLoss):
     """Compute negative log lilkelihood."""
     def __init__(self, **kwargs):
@@ -1087,3 +1156,71 @@ class UdaNLL(ElementaryLoss):
         loss = self.loss.forward(pixel_features).sum()
         
         return loss* self.nll_lambda_
+    
+
+
+class RgvSemanticAlignmentLoss(ElementaryLoss):
+    """
+    Certainty-weighted semantic alignment loss (Eq.11 of RGV).
+    """
+    def __init__(self, **kwargs):
+        super(RgvSemanticAlignmentLoss, self).__init__(**kwargs)
+
+        self.beta: float = 0.6
+        self.dist_type: str = 'cos'  # 'cos' ou 'l2'
+        self.lambda_: float = 1.0
+
+        if self.dist_type == 'cos':
+            self.loss = nn.CosineEmbeddingLoss(reduction="mean")
+        else:
+            self.loss = nn.MSELoss(reduction="mean")
+
+        self.already_set = False
+
+
+
+
+    def set_it(self, beta: float = 0.6, dist_type: str = 'cos', lambdaS: float = 1.0):
+
+        assert isinstance(beta, float), type(beta)
+        assert 0 <= beta <= 1., beta
+        assert dist_type in ['cos', 'l2'], dist_type
+        assert isinstance(lambdaS, float), type(lambdaS)
+
+        self.beta = beta
+        self.dist_type = dist_type
+        self.lambdaS_ = lambdaS
+
+        if self.dist_type == 'cos':
+            self.loss = nn.CosineEmbeddingLoss(reduction="mean")
+        else:
+            self.loss = nn.MSELoss(reduction="mean") 
+
+        self.already_set = True
+
+    def forward(self, model, feats_aug, p_refined, certainty):
+        # feats_aug : h(Aug(xᵢ))  -> (N, D)
+        # p_refined : proba
+        # certainty : η(𝑝̃ᵢ)
+        # model.classifier.weight : w_c (C, D)
+
+        mask = certainty >= self.beta
+        if mask.sum() == 0:
+            return torch.tensor(0.0, device=feats_aug.device, requires_grad=True)
+
+        y_tilde = p_refined.argmax(dim=1)  
+  
+
+        feats_sel = feats_aug[mask]
+        centers_sel = self.w[y_tilde[mask]]
+
+        if self.dist_type == 'cos':
+            
+            
+            dist = 1 - F.cosine_similarity(feats_sel, centers_sel, dim=1)
+        else:
+            dist = torch.norm(feats_sel - centers_sel, dim=1)
+
+        loss = dist.mean()
+        return self.lambdaS * loss
+

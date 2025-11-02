@@ -538,6 +538,10 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--ece_lambda', type=float, default=None, 
                         help='ECE: lambda value for loss .')
     
+    parser.add_argument('--ece_adapt', type=str2bool, default=None)
+    parser.add_argument('--ece_adapt_lambda', type=float, default=None, 
+                        help='ECE: lambda value for loss .')
+    
     parser.add_argument('--cal', type=str2bool, default=None)
     parser.add_argument('--cal_lambda', type=float, default=None, 
                         help='CAL: lambda value for loss .')
@@ -630,6 +634,28 @@ def get_args(args: dict, eval: bool = False):
                         help='USE/NOT NRC method for SFUDA.')
     parser.add_argument('--r_nrc', type=float, default=None,
                         help='Affinity Value for NRC.')
+    
+     # 3- ERL
+    parser.add_argument('--erl', type=str2bool, default=None,
+                        help='USE/NOT ERL method for SFUDA.')
+    parser.add_argument('--erl_beta', type=float, default=None,
+                        help='Beta for EMA ERL.')
+    parser.add_argument('--erl_lambda', type=float, default=None,
+                        help='Lambda for ERL.')
+    
+     # 3- RGV
+    parser.add_argument('--rgv', type=str2bool, default=None,
+                        help='USE/NOT RGV method for SFUDA.')
+    parser.add_argument('--rgv_round_interval', type=str2bool, default=None,
+                        help='round for RGV method for SFUDA.')
+    parser.add_argument('--semalg', type=str2bool, default=None,
+                        help='semalg for RGV method for SFUDA.')
+    parser.add_argument('--lambdaS', type=float, default=None,
+                        help='lambdaS for RGV method for SFUDA.')
+    parser.add_argument('--betaS', type=float, default=None,
+                        help='betaS for RGV method for SFUDA.')
+    
+
     # 4- SFUDA-DE
     parser.add_argument('--sfde', type=str2bool, default=None,
                         help='USE/NOT SFDE method for SFUDA.')
@@ -696,6 +722,7 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_loc_mode', type=str, default=None, 
                         help='ECE: lambda value for loss .')
 
+    parser.add_argument('--sfda_aug_transform', type=str2bool, default=None)
 
 
     
@@ -1178,18 +1205,25 @@ def get_args(args: dict, eval: bool = False):
         pre = constants.FORMAT_DEBUG.split('_')[0]
         if dsname_target_domain.startswith(pre):
             dsname_target_domain = dsname_target_domain.replace('{}_'.format(pre), '')
-        assert dsname_target_domain in [constants.CAMELYON512, constants.GLAS]
+        assert dsname_target_domain in [constants.CAMELYON512, constants.GLAS, constants.CAMELYON17_512]
         args['target_domain_data_paths'] = config.configure_data_paths(args, dsname_target_domain)
-        if dsname_target_domain == constants.CAMELYON512:
-            args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'],
+
+        args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'],
                                      f"fold-{args['fold_came_compute']}")
-            args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, constants.GLAS,
-                                     f"fold-{args['fold']}")
-        else:
-            assert dsname_target_domain == constants.GLAS
-            args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'], f"fold-{args['fold']}")
-            args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, constants.CAMELYON512,
-                                     f"fold-{args['fold_came_compute']}")
+        args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['ds_to_compute_acc_trainset_source_target'],
+                                     f"fold-{args['sf_uda_source_ds_fold']}")
+        
+
+        # if dsname_target_domain == constants.CAMELYON512:
+        #     args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'],
+        #                              f"fold-{args['fold_came_compute']}")
+        #     args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['ds_to_compute_acc_trainset_source_target'],
+        #                              f"fold-{args['sf_uda_source_ds_fold']}")
+        # else:
+        #     assert dsname_target_domain == constants.GLAS
+        #     args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'], f"fold-{args['fold']}")
+        #     args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['ds_to_compute_acc_trainset_source_target'],
+        #                              f"fold-{args['fold_came_compute']}")
         
         args['mask_root_target'] = join(args['mask_root_target'], args['target_domain_ds_to_compute_stats'])
 
@@ -1441,7 +1475,7 @@ def get_args(args: dict, eval: bool = False):
     if args.sf_uda:
         assert args.task in [constants.STD_CL, constants.NEGEV], args.task
 
-        l_sf_uda_techs = [args.shot, args.faust, args.adadsa, args.sdda, args.nrc, args.sfde, args.cdcl, args.esfda, args.pxsfde]
+        l_sf_uda_techs = [args.shot, args.faust, args.adadsa, args.sdda, args.nrc, args.sfde, args.cdcl, args.esfda, args.pxsfde, args.rgv]
 
         assert any(l_sf_uda_techs)
         assert sum(l_sf_uda_techs) == 1, 'Only one SFUDA must be active.'
@@ -1501,6 +1535,9 @@ def get_args(args: dict, eval: bool = False):
         elif args.esfda:
             pass
 
+        elif args.rgv:
+            pass
+
         else:
             raise NotImplementedError
         
@@ -1526,7 +1563,7 @@ def get_args(args: dict, eval: bool = False):
     if args.dataset == constants.BREAKHIS:
         assert args.magnification in constants.MAGNIFICATIONSBHIS
 
-    assert args.fold in list(range(5))
+    assert args.fold in list(range(6))
     if args.task == constants.SEG:
         assert args.dataset in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
 

@@ -365,13 +365,13 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
         args_dict = yaml.load(fy, Loader=IgnoreKeyLoader)
         # args_dict = yaml.safe_load(fy)
         # args_dict['model']['freeze_encoder'] = False
-        args_dict['pixel_wise_classification'] = False
+        args_dict['pixel_wise_classification'] = True
         args_dict['multiple_layer_pixel_classifier'] = False
         args_dict['anchors_ortogonal'] = False
         args_dict['detach_pixel_classifier'] = False
         args_dict['batch_norm_pixel_classifier'] = False
         args_dict['one_layer_pixel_classifier'] = False
-        #args_dict['cpt_cam_entropy'] = True
+        args_dict['cpt_cam_entropy'] = True
         #args_dict['model']['spatial_dropout'] = 0.0
         args = Dict2Obj(args_dict)
         args.outd = tmp_outd
@@ -396,9 +396,10 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
                             map_location=get_cpu_device())
         model.classification_head.load_state_dict(header_w, strict=True)
 
-        # pixel_header_w = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
-        #                      map_location=get_cpu_device())
-        # model.pixel_wise_classification_head.load_state_dict(pixel_header_w, strict=True)
+        if parsedargs.pixel_wise_classification:
+            pixel_header_w = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
+                                map_location=get_cpu_device())
+            model.pixel_wise_classification_head.load_state_dict(pixel_header_w, strict=True)
 
     DLLogger.log(fmsg("Model checkpoint Loaded from {}".format(path_cl)))
         
@@ -435,7 +436,7 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
     ####################################################################################
     DLLogger.flush()
     
-    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{5}")
+    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{args.fold}")
     #read sys var DATASETSH
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     target_domain_data_paths = config.configure_data_paths(args_dict, dataset)
@@ -476,6 +477,9 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
     overlay_images = {}
     input_images = {}
     gt_masks = {}
+
+    os.makedirs("/export/livia/home/vision/Aguichemerre/CAM_MIDL/resnet50-layercam-attention-bcl-camelyon_cam_train", exist_ok=True)
+
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
         enumerate(loaders[split]), ncols=constants.NCOLS,
         total=len(loaders[split])):
@@ -483,37 +487,31 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
         images = images.to(device)
         targets = targets.to(device)
         
-
-
         with torch.no_grad():
-           out = model(images.cuda())
-        #    pixel_features = model.encoder_last_features
+            out = model(images.cuda())
+
+        interpolation_mode = 'bilinear'
+        attention_map = model.encoder_last_features.mean(dim=1, keepdim=True)
+        #fattention = torch.sigmoid(attention_map)
+
         GroundTruth = []
-        for image, target, image_id in zip(images, targets, index):
-            #if image_id == "Warwick_QU_Dataset_(Released_2016_07_08)/train_2.bmp":
-                #print("wait")
+        for i, (image, target, image_id) in enumerate(zip(images, targets, index)):
+                attn = attention_map[i].squeeze(0)
 
-            #print(image_id)
+                attn.detach()
 
-            with torch.set_grad_enabled(cam_computer.req_grad):
-                cam, cl_logits = cam_computer.get_cam_one_sample(
-                    image=image.unsqueeze(0), target=1)
-                
-                cam.detach()
-
-                # cam_np = cam.cpu().numpy()
-                # cam_np = ((cam_np - cam_np.min()) * (1/(cam_np.max() - cam_np.min()) * 255)).astype('uint8')
-                # cam_img = Image.fromarray(cam_np)
-
-
-                # image_idx = os.path.basename(image_id)
-                # file_wo_bmp = os.path.splitext(image_idx)[0]
-                # output_path = path_cam + '_' + file_pt
                 tmp = str(Path(image_id).with_suffix(''))
                 file_wo_bmp = tmp.replace('/', '_')
                 file_pt = f'{file_wo_bmp}.pt'
+                path_cam = "/export/livia/home/vision/Aguichemerre/CAM_MIDL/resnet50-deepmil-attention-bcl-camelyon_cams_train"
                 output_path = path_cam + '/' + file_pt
-                torch.save(cam, output_path)
+                torch.save(attn, output_path)
+
+
+                #attn_np = attn.cpu().numpy()
+                #attn_norm = (attn_np - attn_np.min()) / (attn_np.max() - attn_np.min() + 1e-8)
+
+                #plt.imsave(os.path.join(path_cam, f"{file_wo_bmp}_attn.png"), attn_norm, cmap='jet')
 
 
     return overlay_images, input_images, method_name, gt_masks

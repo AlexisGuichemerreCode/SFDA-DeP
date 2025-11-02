@@ -27,6 +27,7 @@ from torch.cuda.amp import autocast
 import matplotlib.pyplot as plt
 from skimage.transform import resize
 from sklearn.manifold import TSNE
+from sklearn.metrics import davies_bouldin_score
 
 #import cuml
 #print("cuML version:", cuml.__version__)
@@ -411,8 +412,8 @@ def class_separability_measure(SW, SB, ST):
     return J1, J2
 
 
-def class_separability(mask_source, features, label_source, cam_source, image_id_source, target_method, dataset, parsedargs):
-    _,l,m,n=features.shape
+def class_separability(mask_source, features, label_source, image_id_source, target_method, dataset, parsedargs):
+    l,m,n=features.shape
 
     cancer_features = np.empty((0, l))
     non_cancer_features = np.empty((0, l))
@@ -424,8 +425,8 @@ def class_separability(mask_source, features, label_source, cam_source, image_id
     non_zero_indices = torch.nonzero(mask_source, as_tuple=True)
     zero_indices = torch.nonzero(mask_source == 0, as_tuple=True)
 
-    non_zero_probs = features[0, :, non_zero_indices[0], non_zero_indices[1]]
-    zero_probs = features[0, :, zero_indices[0], zero_indices[1]]
+    non_zero_probs = features[:, non_zero_indices[0], non_zero_indices[1]]
+    zero_probs = features[:, zero_indices[0], zero_indices[1]]
 
     # Convert your PyTorch tensors to NumPy arrays (if necessary)
     non_zero_probs_np = non_zero_probs.detach().cpu().numpy()
@@ -817,21 +818,6 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
     target_domain_data_paths_CAME = config.configure_data_paths(args_dict, 'CAMELYON512')
 
-    # loaders = get_data_loader(
-    #         data_roots=target_domain_data_paths,
-    #         metadata_root=metadata_root,
-    #         batch_size=32,#args.batch_size,
-    #         workers=args.num_workers,
-    #         resize_size=args.resize_size,
-    #         crop_size=args.crop_size,
-    #         proxy_training_set=args.proxy_training_set,
-    #         num_val_sample_per_class=args.num_val_sample_per_class,
-    #         std_cams_folder=args.std_cams_folder,
-    #         # distributed_eval=False,
-    #         get_splits_eval=['test'],
-    #         #constants.TRAINSET
-    #         eval_batch_size = 32#args.eval_batch_size,
-    #     )
     
     loaders = get_data_loader(
             data_roots=target_domain_data_paths,
@@ -849,114 +835,18 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             eval_batch_size = 32#args.eval_batch_size,
         )
     
-
-    # x = torch.randn((1, 2048, 28, 28), device=device, requires_grad=True)
-
-    # step_size = 1.0
-    # noise_scale = 0.01
-    # num_steps = 100
-    # plot_interval = 1 
-    # for step in range(num_steps):
-    #     logits, _ = model.pixel_wise_classification_head(x) 
-    #     energy = -torch.logsumexp(logits, dim=1)
-        
-    #     # Calcul du gradient par rapport à x
-    #     grad_x = torch.autograd.grad(energy, x, grad_outputs=torch.ones_like(energy), create_graph=False)[0]
-
-    #     # Mise à jour avec SGLD
-    #     noise = torch.randn_like(x) * noise_scale
-    #     x = x - step_size * grad_x + noise
-    #     x = x.detach().clone().requires_grad_(True)
-    #     vectors = x.detach().cpu().numpy()
-        
-    #     # Affichage TSNE tous les 'plot_interval' itérations
-    #     if step % plot_interval == 0 or step == num_steps - 1:
-    #         output_dir = os.path.join('visualization', 'energy', dataset, 'sgld')
-    #         os.makedirs(output_dir, exist_ok=True)
-
-    #         weights = model.pixel_wise_classification_head.conv4.weight.data.cpu().numpy()
-    #         weights = weights.reshape(weights.shape[0], -1)
-
-    #         batch_size, vector_dim, height, width = vectors.shape
-    #         vectors_reshaped = vectors.reshape(batch_size, vector_dim, height * width).transpose(0, 2, 1)  
-    #         vectors_flattened = vectors_reshaped.reshape(height * width, vector_dim)  
-
-    #         combined_data = np.vstack([vectors_flattened, weights])
-
-    #         tsne = TSNE(n_components=2, perplexity=1, random_state=42, init="pca")
-
-    #         reduced_vectors = tsne.fit_transform(weights)
-
-    #         plt.figure(figsize=(8, 6))
-    #         plt.scatter(reduced_vectors[:, 0], reduced_vectors[:, 1], alpha=0.6, edgecolors='k')
-    #         plt.title(f"t-SNE à l'itération {step}")
-    #         plt.xlabel("TSNE Dim 1")
-    #         plt.ylabel("TSNE Dim 2")
-    #         plt.grid(True)
-    #         plt.savefig(f"tsne_step_{step}.png", dpi=300)
-    #         plt.close()
-
-    #         reduced_vectors = tsne.fit_transform(combined_data) 
-            
-    #         generated_points = reduced_vectors[:-weights.shape[0], :]
-    #         weight_points = reduced_vectors[-weights.shape[0]:, :]
-
-    #         plt.figure(figsize=(8, 6))
-    #         plt.scatter(generated_points[:, 0], generated_points[:, 1], alpha=0.6, edgecolors='k', label="Generated Samples")
-
-    #         # Afficher le premier poids avec un triangle blanc
-    #         plt.scatter(weight_points[0, 0], weight_points[0, 1], marker="^", s=200, color="white", edgecolors='black', label="First Weight (White Triangle)")
-
-    #         # Afficher le deuxième poids avec un triangle noir
-    #         plt.scatter(weight_points[1, 0], weight_points[1, 1], marker="v", s=200, color="black", edgecolors='black', label="Second Weight (Black Triangle)")
-
-    #         plt.title(f"t-SNE à l'itération {step}")
-    #         plt.xlabel("TSNE Dim 1")
-    #         plt.ylabel("TSNE Dim 2")
-    #         plt.grid(True)
-    #         save_path = os.path.join(output_dir, f"tsne_step_{step}.png")
-    #         plt.savefig(save_path, dpi=300)
-    #         plt.close()
-        
-
-    # cam_computer = CAMComputer(
-    #         args=deepcopy(args),
-    #         model=model,
-    #         loader=loaders['test'],
-    #         metadata_root=os.path.join(metadata_root, 'test'),
-    #         mask_root=args.mask_root,
-    #         iou_threshold_list=args.iou_threshold_list,
-    #         dataset_name=args.dataset,
-    #         split= 'test',
-    #         cam_curve_interval=args.cam_curve_interval,
-    #         multi_contour_eval=args.multi_contour_eval,
-    #         out_folder=args.outd,
-    #     )   
     overlay_images = {}
     input_images = {}
     gt_masks = {}
-    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
-        enumerate(loaders[split]), ncols=constants.NCOLS,
-        total=len(loaders[split])):
-        image_size = images.shape[2:]
-        images = images.to(device)
-        targets = targets.to(device)
-        
-        #print(batch_idx)
-        #with torch.no_grad():
-        #    out = model(images.cuda())
-        #    pixel_features = model.encoder_last_features
-        GroundTruth = []
-        for image, target, image_id in zip(images, targets, index):
-            if image_id not in image_ids_to_draw:
-                 continue
-            if target.item() == 1:
-                classe = 'cancer'
-            else:
-                classe = 'normal'
 
-            if classe == 'normal': 
-                cam_computer = CAMComputer(
+
+    image_features_all = []
+    image_labels_all = []
+    J2_px = []
+    J2_img = []
+    DBI_img = []
+
+    cam_computer = CAMComputer(
                         args=deepcopy(args),
                         model=model,
                         loader=loaders['train'],
@@ -968,24 +858,35 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                         cam_curve_interval=args.cam_curve_interval,
                         multi_contour_eval=args.multi_contour_eval,
                         out_folder=args.outd,
-                    )  
-                with torch.set_grad_enabled(cam_computer.req_grad):
-                    cam, cl_logits = cam_computer.get_cam_one_sample(
-                        image=image.unsqueeze(0), target=target.item())
-                    
-                with torch.no_grad():
-                    out = model(image.cuda().unsqueeze(0))
-                    pixel_features = model.encoder_last_features
+                    )
 
-                    #pixel_features = model.loc_last_features
-                gt_mask = get_mask(f'/export/gauss/vision/Aguichemerre/datasets/{dataset}',
+    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
+        enumerate(loaders[split]), ncols=constants.NCOLS,
+        total=len(loaders[split])):
+        image_size = images.shape[2:]
+        images = images.to(device)
+        targets = targets.to(device)
+        
+
+        GroundTruth = []
+
+        with torch.no_grad():
+            out = model(images.cuda())
+            img_features = model.lin_ft.detach().cpu()
+            pixel_features = model.encoder_last_features.detach().cpu()  # [1, C, H, W]
+
+
+            image_features_all.append(img_features)
+            image_labels_all.append(targets)
+
+
+        for i, (image, target, image_id) in enumerate(zip(images, targets, index)):
+            if (dataset == constants.CAMELYON512 and target.item() == 1) or dataset == constants.GLAS:
+                gt_mask = get_mask(f'/export/livia/home/vision/Aguichemerre/datasets/{dataset}',
                             cam_computer.evaluator.mask_paths[image_id],
                             cam_computer.evaluator.ignore_paths[image_id])
                 
                 gt_mask_tensor = torch.tensor(gt_mask, dtype=torch.float32)
-                #probabilities = F.softmax(out, dim=1)
-                #gt_resize = resize(gt_mask, (28, 28))
-                #gt_resize = (gt_resize * 255).astype('uint8')
 
                 h,l,m,n = pixel_features.shape
                 gt_resize=F.interpolate(gt_mask_tensor.unsqueeze(0).unsqueeze(0),
@@ -995,30 +896,8 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                 
                 resized_mask_array = (gt_resize.detach().cpu().numpy() *255).astype('uint8')
 
-                # plt.figure(figsize=(5, 5))
-                # plt.imshow(resized_mask_array, cmap='gray', interpolation='nearest')
-                # plt.axis('off')
-                # plt.savefig('image_array.png', bbox_inches='tight', pad_inches=0)
-                # plt.close()
+                pixel_features_px = pixel_features[i]
 
-                
-
-                
-                parts = image_id.split('/')
-                clean_image_id = parts[-1].replace('.bmp', '').replace('.png', '')
-                #plt.title(f"T-SNE visualization for a {classe} image ", fontsize=10)
-                # Sauvegarder l'image
-                #output_dir = os.path.join('visualization', 'energy', dataset, classe, parsedargs.dataset_type, clean_image_id)
-                #os.makedirs(output_dir, exist_ok=True)
-
-                #image_norm = image.permute(1,2,0)
-                #image_norm = np.uint8(255 * image_norm.cpu().numpy())
-                # plt.imshow(image_norm)
-                # clean_image_id +='.png'
-                # save_path = os.path.join(output_dir,clean_image_id)
-                # plt.tight_layout()
-                # plt.savefig(save_path)
-                # plt.close()
 
                 output_dir_pxap_value = os.path.join('visualization', 'energy', dataset)
                 output_file_path = os.path.join(output_dir_pxap_value, f"{parsedargs.dataset_type}_cam_performance_log.txt")
@@ -1026,69 +905,26 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                 mode = "a" if os.path.exists(output_file_path) else "w"
                 os.makedirs(output_dir_pxap_value, exist_ok=True)
                 
-                #image_id_formatted = [f"({image_id})"]
-                image_id_formatted = [image_id]
-                #cam_performance = cam_computer.compute_and_evaluate_cams_one_image(images=images, targets=targets, image_ids=image_id_formatted, image_size=image_size)
+                J1, J2_px_val = class_separability(resized_mask_array, pixel_features_px, target, image_id, target_method, dataset, parsedargs)
 
-                #J1, J2 = class_separability(resized_mask_array, pixel_features, target, cam, image_id, target_method, dataset, parsedargs)
+                J2_px.append(J2_px_val)
 
-                method_nospace = target_method.replace(' ','')
-                #print(f"cam_performance: {cam_performance}")
-                #log_line = f"{clean_image_id},{method_nospace},{cam_performance},{J1},{J2},{target.item()}\n"
-                #log_line = f"{clean_image_id},{method_nospace},{J1},{J2},{target.item()}\n"
-                #Ajout d'une nouvelle ligne au fichier texte
-                #with open(output_file_path, "a") as f:
-                #   f.write(log_line)
 
-                # method = args.method
+    features_all = torch.cat(image_features_all, dim=0).cpu().numpy()# [N, D]
+    labels_all = torch.cat(image_labels_all, dim=0).cpu().numpy()
+      
 
-                #cancer_features, non_cancer_features, background_features = extract_features_source_target(resized_mask_array, pixel_features, target, cam, image_id, target_method, dataset, parsedargs)
-                # foreground_features, background_features = extract_pixel_features(resized_mask_array, pixel_features, target, cam, image_id, target_method, dataset, parsedargs)
-                # features = np.vstack([foreground_features, background_features])
-                # labels = np.array([1] * len(foreground_features) + [0] * len(background_features))
-                # tsne = TSNE(n_components=2, perplexity=30, random_state=42, init="pca")
-                # features_2d = tsne.fit_transform(features)
-                # plt.figure(figsize=(8, 6))
-                # plt.scatter(features_2d[labels == 1, 0], features_2d[labels == 1, 1], c='red', label="Foreground", alpha=0.5, s=5)
-                # plt.scatter(features_2d[labels == 0, 0], features_2d[labels == 0, 1], c='blue', label="Background", alpha=0.5, s=5)
 
-                # plt.legend()
-                # plt.title("t-SNE Visualization of Foreground & Background Features")
-                # plt.xlabel("t-SNE Component 1")
-                # plt.ylabel("t-SNE Component 2")
-                # plt.savefig("tsne_visualization.png", dpi=300, bbox_inches='tight')
+    # Calculate scatter matrices
+    SW, SB, ST = calculate_scatter_matrices(features_all, labels_all)
 
-                if 'PixelCAM' in target_method:
-                    #cam_prob = F.softmax(model.cams, dim=1)
-                    #cancer_features, non_cancer_features, background_features = plot_pixel_prob(resized_mask_array, cam_prob, target, cam, image_id, target_method, dataset, parsedargs) 
-                    energy = compute_energy(model.cams) 
-                    energy = energy.squeeze(0)
-                    
-                    parts = image_id.split('/')
-                    clean_image_id = parts[-1].replace('.bmp', '').replace('.png', '')
-                    #plt.title(f"T-SNE visualization for a {classe} image ", fontsize=10)
-                    # Sauvegarder l'image
-                    output_dir = os.path.join('visualization', 'energy', dataset, classe, parsedargs.dataset_type, clean_image_id)
-                    os.makedirs(output_dir, exist_ok=True)
+    # Compute separability measures
+    J1_img_val, J2_img_val = class_separability_measure(SW, SB, ST)
 
-                    filename = os.path.join(output_dir, f"{target_method}_energy.png")
+    DBI_img_val = davies_bouldin_score(features_all, labels_all)
 
-                    # Créer le scatter plot
-                    plt.figure(figsize=(6,6))
-                    plt.imshow(energy.detach().cpu().numpy(), cmap="inferno")
-                    plt.colorbar(label="Energy")
-                    plt.title("Pixel-wise Energy Map")
-                    #plt.axis("off")
-                    plt.show()
-                    plt.legend()
-                    plt.savefig(filename)
-                    
-                    cancer_features, non_cancer_features, background_features = plot_pixel_logits(resized_mask_array, model.cams, target, cam, image_id, target_method, dataset, parsedargs)
-                #cancer_features, non_cancer_features, background_features = class_separability(resized_mask_array, pixel_features, target, cam, image_id, target_method, dataset, parsedargs)
-                
-                
-                
-                #cancer_features, non_cancer_features, background_features = extract_features(gt_resize, pixel_features, target, cam, image_id)
+    mean_J2_px = np.mean(J2_px)
+
 
     return overlay_images, input_images, method_name, gt_masks
     
@@ -1111,7 +947,7 @@ def fast_eval():
     parser.add_argument('--image_ids_to_draw_target', nargs='+', type=str, default=None)
     parser.add_argument("--source_dataset", type=str, default=None, help="Source dataset")
     #parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
-    parser.add_argument("--path_pre_trained_source", type=json.loads, default={})
+    parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
     
 
     parsedargs = parser.parse_args()
@@ -1156,7 +992,7 @@ def fast_eval():
         #target_methods = ['DeepMIL','GradCAMpp','LayerCAM','SAT']
         #target_methods = ['GradCAMpp']
 
-        target_methods = ['PixelCAM LC']
+        target_methods = ['SOURCE']
 
         method_name_lst = []
         for ind_method, target_method in enumerate(target_methods):

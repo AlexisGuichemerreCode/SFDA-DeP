@@ -275,6 +275,7 @@ class SAT(VisionTransformer):
     def forward(self, x, labels=None, phase='train'):
         batch = x.size(0)
         x_cls, x_loc, x_patch,  mask_all = self.forward_features(x)  
+        #self.lin_ft = x_cls
         n, p, c = x_patch.shape
 
         mask_all = torch.stack(mask_all)
@@ -288,6 +289,8 @@ class SAT(VisionTransformer):
         x_patch = x_patch.contiguous()
 
         self.encoder_last_features = x_patch
+
+        self.lin_ft = self.encoder_last_features.mean(dim=[2,3])
 
         if self.pixel_wise_classification:
             loc_last_features, loc_logits = self.pixel_wise_classification_head(x_patch)
@@ -335,6 +338,18 @@ class SAT(VisionTransformer):
     def freeze_cl_hypothesis(self):
         # SFUDA: freeze the last linear weights + bias of the classifier
         self.freeze_part(self.head)
+
+
+    @property
+    def get_linear_weights(self):
+        W = self.head.weight.mean(dim=[2, 3])
+        return W
+
+        #return self.head.weight.mean(dim=[2, 3])
+        # weights = self.head.weight
+        # weights = weights.view(weights.size(0), -1)
+        # weights = self.head.weight.view(self.head.weight.size(0), -1)
+        # return weights
         
     def flush(self):
         self.encoder_last_features = None

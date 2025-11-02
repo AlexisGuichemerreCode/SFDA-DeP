@@ -62,7 +62,7 @@ def main():
     trainer.print_performances()
     trainer.report(epoch=0, split=constants.VALIDSET)
 
-    if args.ds_to_compute_acc_trainset_source_target in [constants.CAMELYON512, constants.GLAS]:
+    if args.ds_to_compute_acc_trainset_source_target in [constants.CAMELYON512, constants.GLAS, constants.CAMELYON17_512]:
             if args.measure_loc:
                 trainer.compute_loc_on_target(0)
 
@@ -128,7 +128,7 @@ def main():
         trainer.save_loss(filename="loss_history.pickle")
         trainer.save_loss_esfda()
         trainer.save_unlearning_acc(filename="unlearning_acc_history.pickle")
-        trainer.plot_unlearning_acc()
+        #trainer.plot_unlearning_acc()
         trainer.plot_losses()
 
         

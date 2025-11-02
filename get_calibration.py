@@ -309,7 +309,77 @@ IgnoreKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, 
 IgnoreKeyLoader.add_constructor('tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar', IgnoreKeyLoader.ignore_numpy_scalars)
 
 
-def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd='tmp_outd', path_cam= None, parsedargs=None):
+def compute_ece(logits, labels, n_bins=15):
+    """Expected Calibration Error (ECE)"""
+    softmaxes = F.softmax(logits, dim=1)
+    confidences, predictions = torch.max(softmaxes, 1)
+    accuracies = predictions.eq(labels)
+
+    ece = torch.zeros(1, device=logits.device)
+    bin_boundaries = torch.linspace(0, 1, n_bins + 1)
+
+    for i in range(n_bins):
+        in_bin = (confidences > bin_boundaries[i]) & (confidences <= bin_boundaries[i+1])
+        prop_in_bin = in_bin.float().mean()
+        if prop_in_bin.item() > 0:
+            accuracy_in_bin = accuracies[in_bin].float().mean()
+            avg_conf_in_bin = confidences[in_bin].mean()
+            ece += torch.abs(avg_conf_in_bin - accuracy_in_bin) * prop_in_bin
+
+    return ece.item()
+
+
+def compute_nll(logits, labels):
+    """Negative Log Likelihood (NLL)"""
+    log_probs = F.log_softmax(logits, dim=1)
+    nll = F.nll_loss(log_probs, labels, reduction='mean')
+    return nll.item()
+
+
+def compute_brier_score(logits, labels, num_classes=None):
+    """Brier Score"""
+    probs = F.softmax(logits, dim=1)
+    num_classes = num_classes or probs.size(1)
+    one_hot = F.one_hot(labels, num_classes=num_classes).float()
+    brier = torch.mean(torch.sum((probs - one_hot) ** 2, dim=1))
+    return brier.item()
+
+
+class ClasswiseTemperatureScaling(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        # un T par classe
+        self.temperature = nn.Parameter(torch.ones(num_classes))
+
+    def forward(self, logits):
+        # Divise chaque logit par sa température correspondante
+        temperature = self.temperature.unsqueeze(0).expand_as(logits)
+        return logits / temperature
+
+    def set_temperature(self, logits, labels, max_iter=1000, lr=0.01, verbose=True):
+        nll_criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.LBFGS([self.temperature], lr=lr, max_iter=max_iter)
+
+        logits = logits.detach()
+        labels = labels.detach()
+
+        def eval():
+            optimizer.zero_grad()
+            loss = nll_criterion(self.forward(logits), labels)
+            loss.backward()
+            return loss
+
+        optimizer.step(eval)
+
+        if verbose:
+            print("Optimal temperatures per class:", self.temperature.data.cpu().numpy())
+        return self
+    
+
+
+
+
+def get_calibration(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd='tmp_outd', path_cam= None, parsedargs=None):
     # config_model.yaml
     # if parsedargs.draw_vis_with_best_source_classifier:
     #     print('wait')
@@ -435,7 +505,7 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
     ####################################################################################
     DLLogger.flush()
     
-    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{5}")
+    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{args.fold}")
     #read sys var DATASETSH
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     target_domain_data_paths = config.configure_data_paths(args_dict, dataset)
@@ -444,7 +514,7 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
     args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
     target_domain_data_paths_CAME = config.configure_data_paths(args_dict, 'CAMELYON512')
 
-    loaders = get_data_loader(
+    loaders_train = get_data_loader(
             data_roots=target_domain_data_paths,
             metadata_root=metadata_root,
             batch_size=32,#args.batch_size,
@@ -459,61 +529,132 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
             eval_batch_size = 32#args.eval_batch_size,
         )   
     
-    cam_computer = CAMComputer(
-            args=deepcopy(args),
-            model=model,
-            loader=loaders[split],
-            metadata_root=os.path.join(metadata_root, split),
-            mask_root=args.mask_root,
-            iou_threshold_list=args.iou_threshold_list,
-            dataset_name=args.dataset,
-            split=split,
-            cam_curve_interval=args.cam_curve_interval,
-            multi_contour_eval=args.multi_contour_eval,
-            out_folder=args.outd,
-        )
+    loaders_valid = get_data_loader(
+            data_roots=target_domain_data_paths,
+            metadata_root=metadata_root,
+            batch_size=32,#args.batch_size,
+            workers=args.num_workers,
+            resize_size=args.resize_size,
+            crop_size=args.crop_size,
+            proxy_training_set=args.proxy_training_set,
+            num_val_sample_per_class=args.num_val_sample_per_class,
+            std_cams_folder=args.std_cams_folder,
+            # distributed_eval=False,
+            get_splits_eval=[constants.CLVALIDSET],
+            eval_batch_size = 32#args.eval_batch_size,
+        )   
+    
+    loaders_test = get_data_loader(
+            data_roots=target_domain_data_paths,
+            metadata_root=metadata_root,
+            batch_size=32,#args.batch_size,
+            workers=args.num_workers,
+            resize_size=args.resize_size,
+            crop_size=args.crop_size,
+            proxy_training_set=args.proxy_training_set,
+            num_val_sample_per_class=args.num_val_sample_per_class,
+            std_cams_folder=args.std_cams_folder,
+            # distributed_eval=False,
+            get_splits_eval=[constants.TESTSET],
+            eval_batch_size = 32#args.eval_batch_size,
+        )   
+    
       
     overlay_images = {}
     input_images = {}
     gt_masks = {}
+
+    total_ece, total_brier, total_nll, count = 0, 0, 0, 0
+
+    logits_val_list, labels_val_list = [], []
+    num_classes = 2
+    
+
+    # for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
+    #     enumerate(loaders_train[split]), ncols=constants.NCOLS,
+    #     total=len(loaders_train[split])):
+    #     image_size = images.shape[2:]
+    #     images = images.to(device)
+    #     targets = targets.to(device)
+        
+
+
+    #     with torch.no_grad():
+    #         out = model(images)
+    #         total_ece += compute_ece(out, targets) * targets.size(0)
+    #         total_brier += compute_brier_score(out, targets) * targets.size(0)
+    #         total_nll += compute_nll(out, targets) * targets.size(0)
+    #         count += targets.size(0)
+
+    # ece = total_ece / count
+    # brier = total_brier / count
+    # nll = total_nll / count
+
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
-        enumerate(loaders[split]), ncols=constants.NCOLS,
-        total=len(loaders[split])):
+        enumerate(loaders_valid[constants.CLVALIDSET]), ncols=constants.NCOLS,
+        total=len(loaders_valid[constants.CLVALIDSET])):
+
         image_size = images.shape[2:]
         images = images.to(device)
         targets = targets.to(device)
         
 
-
         with torch.no_grad():
-           out = model(images.cuda())
-        #    pixel_features = model.encoder_last_features
-        GroundTruth = []
-        for image, target, image_id in zip(images, targets, index):
-            #if image_id == "Warwick_QU_Dataset_(Released_2016_07_08)/train_2.bmp":
-                #print("wait")
+            out = model(images)
+            logits_val_list.append(out)
+            labels_val_list.append(targets)
 
-            #print(image_id)
+    logits_val = torch.cat(logits_val_list)
+    labels_val = torch.cat(labels_val_list)
 
-            with torch.set_grad_enabled(cam_computer.req_grad):
-                cam, cl_logits = cam_computer.get_cam_one_sample(
-                    image=image.unsqueeze(0), target=1)
-                
-                cam.detach()
+    print(f"Validation set collected: logits {logits_val.shape}, labels {labels_val.shape}")
 
-                # cam_np = cam.cpu().numpy()
-                # cam_np = ((cam_np - cam_np.min()) * (1/(cam_np.max() - cam_np.min()) * 255)).astype('uint8')
-                # cam_img = Image.fromarray(cam_np)
+    # =====================================================
+    # 2️⃣ Calibrate T per class
+    # =====================================================
+    calibrator = ClasswiseTemperatureScaling(num_classes=num_classes).to(device)
+    calibrator.set_temperature(logits_val, labels_val, verbose=True)
+    print(f"Optimal T per class: {calibrator.temperature.data.cpu().numpy()}")
 
+    # =====================================================
+    # 3️⃣ Collect logits & labels on TEST set (target)
+    # =====================================================
+    logits_test_list, labels_test_list = [], []
 
-                # image_idx = os.path.basename(image_id)
-                # file_wo_bmp = os.path.splitext(image_idx)[0]
-                # output_path = path_cam + '_' + file_pt
-                tmp = str(Path(image_id).with_suffix(''))
-                file_wo_bmp = tmp.replace('/', '_')
-                file_pt = f'{file_wo_bmp}.pt'
-                output_path = path_cam + '/' + file_pt
-                torch.save(cam, output_path)
+    with torch.no_grad():
+        for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
+            enumerate(loaders_test["test"]),
+            ncols=100, total=len(loaders_test["test"])
+        ):
+            images, targets = images.to(device), targets.to(device)
+            out = model(images)
+            logits_test_list.append(out)
+            labels_test_list.append(targets)
+
+    logits_test = torch.cat(logits_test_list)
+    labels_test = torch.cat(labels_test_list)
+
+    print(f"Test set collected: logits {logits_test.shape}, labels {labels_test.shape}")
+
+    # =====================================================
+    # 4️⃣ Evaluate before and after calibration
+    # =====================================================
+    # Avant calibration
+    ece_before = compute_ece(logits_test, labels_test)
+    nll_before = compute_nll(logits_test, labels_test)
+    brier_before = compute_brier_score(logits_test, labels_test)
+
+    # Appliquer la calibration (division classe par classe)
+    scaled_logits = calibrator.forward(logits_test)
+
+    # Après calibration
+    ece_after = compute_ece(scaled_logits, labels_test)
+    nll_after = compute_nll(scaled_logits, labels_test)
+    brier_after = compute_brier_score(scaled_logits, labels_test)
+
+    print("\n=== Calibration Results ===")
+    print(f"Before:  ECE={ece_before:.4f},  NLL={nll_before:.4f},  Brier={brier_before:.4f}")
+    print(f"After :  ECE={ece_after:.4f},  NLL={nll_after:.4f},  Brier={brier_after:.4f}")
 
 
     return overlay_images, input_images, method_name, gt_masks
@@ -598,7 +739,7 @@ def fast_eval():
 
 
             #Get features at the pixel level
-            overlay_images, input_images, method_name, gt_masks = get_cam(exp_path=exp_path,checkpoint_type=checkpoint_type, dataset=parsedargs.source_dataset, cudaid=parsedargs.cudaid, split='train', tmp_outd='tmp_outd', path_cam = parsedargs.path_cam, parsedargs=parsedargs)
+            overlay_images, input_images, method_name, gt_masks = get_calibration(exp_path=exp_path,checkpoint_type=checkpoint_type, dataset=parsedargs.source_dataset, cudaid=parsedargs.cudaid, split='train', tmp_outd='tmp_outd', path_cam = parsedargs.path_cam, parsedargs=parsedargs)
 
 if __name__ == '__main__':
     fast_eval()

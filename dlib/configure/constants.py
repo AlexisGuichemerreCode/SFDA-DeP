@@ -532,7 +532,7 @@ RMODE_SEARCH = 'search-mode'
 RMODE_FINAL = 'final-mode'
 
 # nbr folds: all datasets have 5 folds.
-FOLDS_NBR = 5
+FOLDS_NBR = 6
 FOLD_SEARCH = 0  # fold used for hyper-prama search.
 
 # folder

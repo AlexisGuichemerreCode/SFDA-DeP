@@ -1,10 +1,10 @@
-DLLL 2025-09-30 19:20:26.984328 0:00:00.246622 
-==================================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: CAMELYON512 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
-==================================================================================================
+DLLL 2025-10-27 02:55:41.194841 0:00:00.131361 
+===================================================================================================
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: CAMELYON512 	 METHOD: GRADCAMPP 	 ENCODER: RESNET50 	
+===================================================================================================
 
-DLLL 2025-09-30 19:20:27.889100 0:00:01.151394 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23518277
-DLLL 2025-09-30 19:20:27.889292 0:00:01.151586 Arch: STDClassifier
+DLLL 2025-10-27 02:55:44.242000 0:00:03.178520 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23514179
+DLLL 2025-10-27 02:55:44.242233 0:00:03.178753 Arch: STDClassifier
 task: STD_CL
 encoder_name: resnet50
 encoder_weights: imagenet
@@ -23,7 +23,7 @@ aux_params:
 	gated: False
 	prm_ks: 3
 	prm_st: 1
-	pixel_wise_classification: True
+	pixel_wise_classification: False
 	batch_norm: False
 	multiple_layer: False
 	one_layer: False
@@ -34,15 +34,14 @@ freeze_cl: False
 im_rec: False
 img_range: tanh 
 
-DLLL 2025-09-30 19:20:27.894801 0:00:01.157095 u-resnet50. Task: STD_CL. 
+DLLL 2025-10-27 02:55:44.246261 0:00:03.182781 u-resnet50. Task: STD_CL. 
  NBR-PARAMS: 
 	Encoder [resnet50]: 23508032. 
 	Classification head [WGAP]: 6147. 
-	Pixel Wise Classification head [PixelWise]: 4098. 
-	Total: 23518277. 
+	Total: 23514179. 
 
-DLLL 2025-09-30 19:20:28.856771 0:00:02.119065 
+DLLL 2025-10-27 02:55:45.222903 0:00:04.159423 
 ========================================================================================================================
- MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/MUSFDA_MODELS/CAMELYON/PIXELCAM/NOTFROZEN/ID_TARGET_B_CL_ESFDA_NEW_01_169_CAMELYON512_PIXELCAM_LR0P001_5_ESFDARATIO0P2-TSK_STD_CL-DS_CAMELYON512-FOLD_0-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_PIXELCAM-SPOOLING_WGAP-ARCH_STDCLASSIFIER-ECD_RESNET50/CAMELYON512-0-RESNET50-PIXELCAM-WGAP-CP_BEST_CLASSIFICATION
+ MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/CVPRW_HISTOLOGY_PROJECT_2024/MODEL_BENCHMARK_SFUDA/CDCL/CAMELYON512/GRADCAMPP/BCL/ID_TARGET_CDCL_78_CAMELYON512_GRADCAMPP_5-TSK_STD_CL-DS_CAMELYON512-FOLD_0-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_GRADCAMPP-SPOOLING_WGAP-ARCH_STDCLASSIFIER-ECD_RESNET50/CAMELYON512-0-RESNET50-GRADCAMPP-WGAP-CP_BEST_CLASSIFICATION
 ========================================================================================================================
 
