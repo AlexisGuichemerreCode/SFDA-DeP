@@ -1198,29 +1198,54 @@ class RgvSemanticAlignmentLoss(ElementaryLoss):
 
         self.already_set = True
 
-    def forward(self, model, feats_aug, p_refined, certainty):
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
         # feats_aug : h(Aug(xᵢ))  -> (N, D)
         # p_refined : proba
         # certainty : η(𝑝̃ᵢ)
         # model.classifier.weight : w_c (C, D)
 
-        mask = certainty >= self.beta
-        if mask.sum() == 0:
-            return torch.tensor(0.0, device=feats_aug.device, requires_grad=True)
+        if not self.is_on() or key_arg is None:
+            return self._zero
 
-        y_tilde = p_refined.argmax(dim=1)  
-  
 
-        feats_sel = feats_aug[mask]
-        centers_sel = self.w[y_tilde[mask]]
+        feats_aug = key_arg.get("aug_feats_SA", None)
+        certainty = key_arg.get("certainty_SA", None)
+        mask = key_arg.get("mask_SA", None)
+        y_tilde = key_arg.get("y_tilde_SA", None)
+        w = key_arg.get("weights", None)
+
+
+        if feats_aug is None or certainty is None or y_tilde is None or w is None:
+            return torch.tensor(0.0, device=model.classification_head.fc.weight.device, requires_grad=False)
+
+        mask_valid = mask if mask is not None else (certainty >= self.beta)
+        if mask_valid.sum() == 0:
+            return torch.tensor(0.0, device=feats_aug.device, requires_grad=False)
+
+        feats_sel = feats_aug[mask_valid]
+        centers_sel = w[y_tilde[mask_valid]]
 
         if self.dist_type == 'cos':
-            
-            
-            dist = 1 - F.cosine_similarity(feats_sel, centers_sel, dim=1)
+            target = torch.ones(feats_sel.size(0), device=feats_sel.device)
+            loss_val = self.loss(feats_sel, centers_sel, target)
         else:
-            dist = torch.norm(feats_sel - centers_sel, dim=1)
+            loss_val = self.loss(feats_sel, centers_sel)
 
-        loss = dist.mean()
-        return self.lambdaS * loss
+        return self.lambda_ * loss_val
 

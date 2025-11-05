@@ -1056,13 +1056,12 @@ class Trainer(Basic):
             device=self.device, dtype=torch.bool
         )
 
-        mask = mask_certainty & mask_not_DI
 
 
         if self.model.support_background:
-            w = self.model.classification_head.fc.weight[1:]
+            weights = self.model.classification_head.fc.weight[1:]
         else:
-            w = self.model.classification_head.fc.weight
+            weights = self.model.classification_head.fc.weight
 
 
         aug_imgs = aug_images.to(self.device)
@@ -1073,7 +1072,7 @@ class Trainer(Basic):
 
         self.sfuda_master.memory.update(feats, probs, names=index)
 
-        return certainty, mask, aug_feats
+        return certainty, mask_not_DI, y_tilde, aug_feats, weights
 
 
     def _one_step_train(self,
@@ -1220,6 +1219,13 @@ class Trainer(Basic):
 
                 elif self.args.rgv:
 
+                    out = self.model(images)
+                    
+                    with torch.no_grad():
+                            output = self.model(images)
+                            cl_logits = output
+
+
                     pseudo_labels = torch.tensor(
                     [self.sfuda_master.D_maps['I'].get(n, -255) for n in index],
                     device=images.device,
@@ -1228,7 +1234,7 @@ class Trainer(Basic):
                     mask_CE = pseudo_labels != -255
 
 
-                    certainty, mask_SA, aug_feats = self.rgv_refine_and_align(images, aug_images, index)
+                    certainty_SA, mask_SA, y_tilde_SA, aug_feats_SA, weights = self.rgv_refine_and_align(images, aug_images, index)
 
                     key_arg = {}
 
@@ -1237,12 +1243,18 @@ class Trainer(Basic):
                     key_arg["mask_CE"] = mask_CE
 
                     # --- Semantic Alignment (D_U) ---
-                    if aug_feats is not None:
-                        key_arg["aug_feats_SA"] = aug_feats      
-                    if certainty is not None:
-                        key_arg["certainty_SA"] = certainty      
+                    if aug_feats_SA is not None:
+                        key_arg["aug_feats_SA"] = aug_feats_SA      
+                    if certainty_SA is not None:
+                        key_arg["certainty_SA"] = certainty_SA      
                     if mask_SA is not None:
                         key_arg["mask_SA"] = mask_SA   
+                    if y_tilde_SA is not None:
+                        key_arg["y_tilde_SA"] = y_tilde_SA
+                    if weights is not None:
+                        key_arg["weights"] = weights
+
+                    
 
                     #cl_logits = output
                     loss = self.loss(epoch=self.epoch,
@@ -1674,6 +1686,18 @@ class Trainer(Basic):
         out = v[:mbatchsz]
         assert out.shape[0] == mbatchsz
         return out
+
+    #@staticmethod
+    def _fill_minibatch_list(self, items, target_size):
+        if len(items) == target_size:
+            return items
+        elif len(items) < target_size:
+            repeat_factor = target_size // len(items)
+            remainder = target_size % len(items)
+            items = items * repeat_factor + items[:remainder]
+        else:
+            items = items[:target_size]
+        return items
 
     def select_images_to_correct_and_incorrect(self, model, loader, select_imgs_ratio=0.1):
 
@@ -3073,6 +3097,7 @@ class Trainer(Basic):
             p_glabel = self._fill_minibatch(p_glabel, mbatchsz)
             raw_imgs = self._fill_minibatch(raw_imgs, mbatchsz)
             aug_images = self._fill_minibatch(aug_images, mbatchsz)
+            index = self._fill_minibatch_list(index, mbatchsz)
 
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)
