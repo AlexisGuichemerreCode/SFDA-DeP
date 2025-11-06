@@ -354,7 +354,7 @@ class Sfde(object):
         #layer_to_extract_feat = 'classification_head.avgpool'
         #self.feature_extractor = FeatureExtractor_for_source_code(model=self.model, layers=[layer_to_extract_feat])
 
-        for data, label, plabel, _, _, _, _, _ in iter(loader):
+        for data, label, plabel, _, _, _, _, _, _ in iter(loader):
             out = self.model(data.cuda())
             feat = self.model.lin_ft
             #feat = self.feature_extractor(data.cuda())[layer_to_extract_feat].squeeze(2).squeeze(2)

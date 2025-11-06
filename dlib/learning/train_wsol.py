@@ -556,6 +556,9 @@ class Trainer(Basic):
 
             #self._sf_uda_before_epoch_process()
 
+            if self.args.erl:
+                self.update_y_bar_full(model=self.model,loader=self.loaders[constants.TRAINSET])
+
             if self.args.esfda:
                 if self.args.esfda_select_imgs:
 
@@ -2068,7 +2071,7 @@ class Trainer(Basic):
         num_classes = self.args.num_classes
 
         for batch_idx, (images, targets, p_glabel, index,
-                        raw_imgs, std_cams, masks, views) in tqdm(
+                        raw_imgs, std_cams, masks, views, _) in tqdm(
                             enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
             images = images.cuda(self.args.c_cudaid)
             logits = model(images)
@@ -2084,6 +2087,33 @@ class Trainer(Basic):
                 y_bar[name] = probs[j].detach().clone()
 
         return y_bar
+    
+    @torch.no_grad()
+    def update_y_bar_full(self, model, loader):
+
+        model.eval()
+        num_classes = self.args.num_classes
+
+
+        for batch_idx, (images, targets, p_glabel, index,
+                    raw_imgs, std_cams, masks, views, _) in tqdm(
+                        enumerate(loader), ncols=constants.NCOLS, total=len(loader),
+                        desc="Updating y_bar"):
+
+            images = images.cuda(self.args.c_cudaid, non_blocking=True)
+            logits = model(images)
+            probs = F.softmax(logits, dim=1)
+
+            for j, name in enumerate(index):
+                if isinstance(name, (list, tuple)):
+                    name = name[0]
+                if torch.is_tensor(name):
+                    name = name.item() if name.numel() == 1 else name
+                name = str(name)
+
+                old_y = self.index_src_logits.get(name, torch.zeros(num_classes, device=probs.device))
+                new_y = self.args.erl_beta * old_y + (1 - self.args.erl_beta) * probs[j].detach()
+                self.index_src_logits[name] = new_y.clone().detach()
 
     @torch.no_grad()
     def compute_prediction_bias(self, model, loader_notransform, top_k = None):
