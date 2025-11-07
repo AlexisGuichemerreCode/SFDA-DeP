@@ -975,7 +975,7 @@ class UdaCdd(ElementaryLoss):
                 result_source = torch.cat(list_of_source, dim=0)
                 
 
-                if "tscam" in model.name:
+                if "tscam" in model.name.lower() or "sat" in model.name.lower():
                     result_target_resize = torch.cat(Features, dim=0).unsqueeze(-1).unsqueeze(-1).repeat(1, 1, 14, 14)
                     result_source_resize = torch.cat(list_of_source, dim=0).unsqueeze(-1).unsqueeze(-1).repeat(1, 1, 14, 14)
 
