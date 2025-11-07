@@ -2129,7 +2129,7 @@ class Trainer(Basic):
         total_samples = 0
 
         for batch_idx, (images, targets, p_glabel, index,
-                        raw_imgs, std_cams, masks, views) in tqdm(
+                        raw_imgs, std_cams, masks, views, _) in tqdm(
                             enumerate(loader_notransform), ncols=constants.NCOLS, total=len(loader_notransform)):
 
             images = images.cuda(self.args.c_cudaid)
@@ -2275,7 +2275,7 @@ class Trainer(Basic):
             freeze_classes = list(set(idx_to_pred.values()))
 
         for batch_idx, (images, targets, p_glabel, index,
-                        raw_imgs, std_cams, masks, views) in tqdm(
+                        raw_imgs, std_cams, masks, views, _) in tqdm(
                 enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
 
             images = images.cuda(self.args.c_cudaid)
@@ -3685,7 +3685,7 @@ class Trainer(Basic):
         correct_flip, total_flip = 0, 0
         correct_stable, total_stable = 0, 0
 
-        for i, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views) in enumerate(loader):
+        for i, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views, _) in enumerate(loader):
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)
 
@@ -4036,7 +4036,7 @@ class Trainer(Basic):
                     print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {target_train_acc:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
 
 
-    def compute_acc_on_target_came(self, epoch, compute_kl= False, split=constants.TRAINSET):
+    def compute_acc_on_target_came(self, epoch, compute_kl= False, split=constants.CLVALIDSET):
         self.model.eval()
         with torch.no_grad():
             target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[split], compute_kl = True)

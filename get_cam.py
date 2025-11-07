@@ -365,18 +365,21 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
         args_dict = yaml.load(fy, Loader=IgnoreKeyLoader)
         # args_dict = yaml.safe_load(fy)
         # args_dict['model']['freeze_encoder'] = False
-        args_dict['pixel_wise_classification'] = False
+        args_dict['pixel_wise_classification'] = True
         args_dict['multiple_layer_pixel_classifier'] = False
         args_dict['anchors_ortogonal'] = False
         args_dict['detach_pixel_classifier'] = False
         args_dict['batch_norm_pixel_classifier'] = False
         args_dict['one_layer_pixel_classifier'] = False
+        args_dict['cpt_cam_entropy'] = False
         #args_dict['cpt_cam_entropy'] = True
         #args_dict['model']['spatial_dropout'] = 0.0
         args = Dict2Obj(args_dict)
         args.outd = tmp_outd
         args.distributed = False
         args.eval_checkpoint_type = checkpoint_type
+        args.model['folder_pre_trained_cl'] = path_cl
+        
 
     args.sf_uda = False
 
@@ -396,9 +399,9 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
                             map_location=get_cpu_device())
         model.classification_head.load_state_dict(header_w, strict=True)
 
-        # pixel_header_w = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
-        #                      map_location=get_cpu_device())
-        # model.pixel_wise_classification_head.load_state_dict(pixel_header_w, strict=True)
+        pixel_header_w = torch.load(join(path_cl, 'pixel_wise_classification_head.pt'),
+                              map_location=get_cpu_device())
+        model.pixel_wise_classification_head.load_state_dict(pixel_header_w, strict=True)
 
     DLLogger.log(fmsg("Model checkpoint Loaded from {}".format(path_cl)))
         
@@ -435,7 +438,7 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
     ####################################################################################
     DLLogger.flush()
     
-    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{5}")
+    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{2}")
     #read sys var DATASETSH
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     target_domain_data_paths = config.configure_data_paths(args_dict, dataset)
@@ -476,7 +479,7 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
     overlay_images = {}
     input_images = {}
     gt_masks = {}
-    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
+    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views, _) in tqdm(
         enumerate(loaders[split]), ncols=constants.NCOLS,
         total=len(loaders[split])):
         image_size = images.shape[2:]
