@@ -175,7 +175,7 @@ class PartialEntropy(ElementaryLoss):
             probs = probs[cal_mask]
 
         if probs.shape[0] == 0:
-            return torch.tensor(0.0, device=cl_logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=cl_logits.device, requires_grad=False)
 
         loss = self.loss(probs).mean()
         return loss * self.esfda_entropy_partial_lambda
@@ -294,7 +294,7 @@ class CENotFlipLoss(ElementaryLoss):
 
 
         if cl_logits.shape[0] == 0:
-            return torch.tensor(0.0, device=cl_logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=cl_logits.device, requires_grad=False)
 
         return loss
         #return self.loss(input=cl_logits, target=y_pred_batch_not_flip) * self.lambda_
@@ -370,7 +370,7 @@ class CEFlipLoss(ElementaryLoss):
             
 
         if cl_logits.shape[0] == 0:
-            return torch.tensor(0.0, device=cl_logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=cl_logits.device, requires_grad=False)
 
         #flipped_label = 1 - y_pred_batch_to_flip
         flipped_label = y_pred_batch_to_flip

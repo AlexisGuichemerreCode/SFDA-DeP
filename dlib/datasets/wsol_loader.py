@@ -581,6 +581,14 @@ def get_data_loader(data_roots,
                 split: None for split in get_splits_eval
             }
 
+        if isinstance(std_cams_folder, dict):
+            std_cams_per_split = std_cams_folder
+        else:
+            std_cams_per_split = {
+                split: std_cams_folder if std_cams_folder is not None else ''
+                for split in get_splits_eval
+            }
+
         eval_datasets = {
             split: WSOLImageLabelDataset(
                     data_root=data_roots[split],
@@ -593,7 +601,7 @@ def get_data_loader(data_roots,
                     load_tr_masks=False,
                     mask_root='',
                     num_sample_per_class=0,
-                    root_data_cams='',
+                    root_data_cams=std_cams_per_split[split],
                     sfuda_select_ids_pl=per_split_sfuda_select_ids_pl[split],
                     sfuda_faust=False,
                     sfuda_n_rnd_views=0,
