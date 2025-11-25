@@ -235,6 +235,7 @@ class Cdcl(object):
         self.support_background = support_background
         self.threshold = threshold
         self.convergence = convergence
+        self.n_cls = n_cls
         #self.source_anchors = F.normalize(torch.randn(2, 2048), dim=1).cpu()
 
     def solve(self):
@@ -342,7 +343,7 @@ class Cdcl(object):
         # else:
         #     print("Aucune erreur trouvée : les labels pour tous les éléments sont les mêmes dans les deux dictionnaires.")
 
-        filtered_classes = self.filter_class(chosen_samples_2['label'], min_sn_cls, 2)
+        filtered_classes = self.filter_class(chosen_samples_2['label'], min_sn_cls, self.n_cls)
         print('The number of filtered classes: %d' % len(filtered_classes))
 
         return chosen_samples_2, filtered_classes

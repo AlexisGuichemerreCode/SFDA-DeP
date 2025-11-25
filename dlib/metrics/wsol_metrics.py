@@ -363,7 +363,7 @@ class MaskEvaluator(LocalizationEvaluator):
     def __init__(self, **kwargs):
         super(MaskEvaluator, self).__init__(**kwargs)
 
-        if self.dataset_name not in [constants.OpenImages, constants.GLAS,
+        if self.dataset_name not in [constants.OpenImages,constants.OpenImagesSrc, constants.OpenImagesTrgt,constants.GLAS,
                                      constants.CAMELYON512, constants.CAMELYON17_512]:
             raise ValueError(f"Cant evalaute masks on {self.dataset_name}.")
 

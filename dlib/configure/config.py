@@ -26,12 +26,20 @@ def configure_data_paths(args, dsname=None):
         train = val = test = join(args['data_root'], dsname)
         data_paths = mch(train=train, val=val, test=test)
     elif dsname in [constants.GLAS, constants.CAMELYON512,
-                    constants.CAMELYON17_512, constants.BREAKHIS, constants.ICIAR]:
+                    constants.CAMELYON17_512, constants.BREAKHIS, constants.ICIAR, constants.OpenImages, constants.OpenImagesTrgt]:
 
         _splits = [constants.TRAINSET, constants.PXVALIDSET,
                    constants.CLVALIDSET, constants.TESTSET]
         _dict = {
             split: join(args['data_root'], dsname) for split in _splits
+        }
+        data_paths = munch.Munch(_dict)
+    elif dsname in [constants.OpenImagesSrc]:
+
+        _splits = [constants.TRAINSET, constants.PXVALIDSET,
+                   constants.CLVALIDSET, constants.TESTSET]
+        _dict = {
+            split: join(args['data_root'], constants.OpenImages) for split in _splits
         }
         data_paths = munch.Munch(_dict)
     else:
@@ -45,7 +53,7 @@ def configure_std_cams_folder(dsname):
     if dsname in [constants.CUB, constants.ILSVRC, constants.OpenImages]:
         folders = mch(train='', val='', test='')
     elif dsname in [constants.GLAS, constants.CAMELYON512,
-                    constants.CAMELYON17_512, constants.BREAKHIS, constants.ICIAR]:
+                    constants.CAMELYON17_512, constants.BREAKHIS, constants.ICIAR, constants.OpenImages, constants.OpenImagesSrc, constants.OpenImagesTrgt]:
 
         _splits = [constants.TRAINSET, constants.PXVALIDSET,
                    constants.CLVALIDSET, constants.TESTSET]
@@ -869,6 +877,9 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'esfda_select_imgs_ratio':  0.1,  # ratio of images to select
         'random_select_ratio':  0.1,  # ratio of images to select
         'entropy_threshold': None, # minimum entropy to consider to forget for unlearning
+        'retain_all_others': False,  # retain all other samples not selected for unlearning
+        'dynamic_selection': False,  # dynamically select samples based on entropy each epoch
+        'resample_every': 5,  # resample every n epochs
 
         'balance_stable_to_flips' : False,  # balance the number of stable and flips
         'stable_match_strategy': False,  # match the number of stable and flips
@@ -904,6 +915,8 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
 
         'measure_loc': False,
 
+        'grsfda': False,  # GRSFDA method. ON/OFF.
+        
         # ======================================================================
         #                     END - ENERGY DISTRIBUTION ESTIMATION
         # ======================================================================
@@ -1093,7 +1106,10 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
                                      f"fold-{args['fold']}")
 
     
-    args['mask_root'] = join(args['mask_root'], dsname)
+    if "OpenImages" in dsname:
+        args['mask_root'] = join(args['mask_root'], "OpenImages_mask")
+    else:
+        args['mask_root'] = join(args['mask_root'], dsname)
     
 
     data_cams = join(root_dir, constants.DATA_CAMS)

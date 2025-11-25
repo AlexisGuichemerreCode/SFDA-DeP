@@ -685,6 +685,9 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_select_imgs', type=str2bool, default=None,)
     parser.add_argument('--esfda_select_imgs_ratio', type=float, default=None,)
     parser.add_argument('--random_select_ratio', type=float, default=None,)
+    parser.add_argument('--retain_all_others', type=str2bool, default=None,)
+    parser.add_argument('--dynamic_selection', type=str2bool, default=None,)
+    parser.add_argument('--resample_every', type=float, default=None,)
 
     parser.add_argument('--balance_stable_to_flips', type=str2bool, default=None,)
     parser.add_argument('--stable_match_strategy', type=str2bool, default=None,)
@@ -723,6 +726,10 @@ def get_args(args: dict, eval: bool = False):
                         help='ECE: lambda value for loss .')
 
     parser.add_argument('--sfda_aug_transform', type=str2bool, default=None)
+
+
+     # losses SFUDA
+    parser.add_argument('--grsfda', type=str2bool, default=None, help='USE/NOT GRSFDA method for SFUDA.')
 
 
     
@@ -1475,7 +1482,7 @@ def get_args(args: dict, eval: bool = False):
     if args.sf_uda:
         assert args.task in [constants.STD_CL, constants.NEGEV], args.task
 
-        l_sf_uda_techs = [args.shot, args.faust, args.adadsa, args.sdda, args.nrc, args.sfde, args.cdcl, args.esfda, args.pxsfde, args.rgv]
+        l_sf_uda_techs = [args.shot, args.faust, args.adadsa, args.sdda, args.nrc, args.sfde, args.cdcl, args.esfda, args.pxsfde, args.rgv, args.grsfda]
 
         assert any(l_sf_uda_techs)
         assert sum(l_sf_uda_techs) == 1, 'Only one SFUDA must be active.'
@@ -1536,6 +1543,9 @@ def get_args(args: dict, eval: bool = False):
             pass
 
         elif args.rgv:
+            pass
+
+        elif args.grsfda:
             pass
 
         else:

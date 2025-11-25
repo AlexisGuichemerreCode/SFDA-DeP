@@ -314,6 +314,10 @@ class MBSeederSLFCAMS(nn.Module):
             opx_neg = _STOneSample(min_= self.min_, max_=self.max_, nbr_bg=self_all_bg, neg_samples_partial=self.neg_samples_partial)
         
         for i in range(b):
+            if class_idx[i] == -255:
+                out[i] = self.ignore_idx
+                continue
+            
             if self.neg_samples_partial and class_idx[i] == 0:
                 _, all_bg[i] = opx_neg(cam=x[i].squeeze(), erode=erode)
             else:

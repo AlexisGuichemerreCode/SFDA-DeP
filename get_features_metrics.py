@@ -58,6 +58,7 @@ from dlib.utils.reproducibility import set_seed
 from dlib.process.instantiators import get_model, get_pretrainde_classifier
 
 from dlib.datasets.wsol_loader import get_data_loader
+from dlib.datasets.wsol_loader import get_eval_transforms_global
 from dlib.datasets.wsol_loader import configure_metadata
 from dlib.datasets.wsol_loader import get_class_labels
 from dlib.datasets.wsol_loader import get_image_ids
@@ -609,22 +610,73 @@ def compute_energy(logits):
     return -torch.logsumexp(logits, dim=1)
 
 class IgnoreKeyLoader(yaml.SafeLoader):
-    def ignore_keys(self, node):
-        ignore_key = 'best_valid_tau_cl'
-        if isinstance(node, yaml.MappingNode):
-            i = 0
-            while i < len(node.value):
-                if node.value[i][0].value == ignore_key:
-                    del node.value[i]
-                else:
-                    i += 1
-        return self.construct_yaml_map(node)
+    pass
 
-    def ignore_numpy_scalars(self, node):
-        return None  # or any other dummy value
+# --- Ignore une clé spécifique ---
+def ignore_keys(loader, node):
+    ignore_key = 'best_valid_tau_cl'
+    if isinstance(node, yaml.MappingNode):
+        i = 0
+        while i < len(node.value):
+            if node.value[i][0].value == ignore_key:
+                del node.value[i]
+            else:
+                i += 1
+    return loader.construct_mapping(node)
 
-IgnoreKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, IgnoreKeyLoader.ignore_keys)
-IgnoreKeyLoader.add_constructor('tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar', IgnoreKeyLoader.ignore_numpy_scalars)
+# --- Ignore les scalaires NumPy (float32, int64, etc.) ---
+def ignore_numpy_scalars(loader, node):
+    try:
+        value = loader.construct_scalar(node)
+        return float(value)
+    except Exception:
+        return None
+
+# --- Enregistre les constructeurs ---
+IgnoreKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    ignore_keys
+)
+IgnoreKeyLoader.add_constructor(
+    'tag:yaml.org,2002:python/object/apply:numpy._core.multiarray.scalar',
+    ignore_numpy_scalars
+)
+IgnoreKeyLoader.add_constructor(
+    'tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar',
+    ignore_numpy_scalars
+)
+
+
+def _compute_accuracy(args, model, loader):
+    num_correct = 0
+    num_images = 0
+
+    for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
+        images = images.cuda()
+        targets = targets.cuda()
+        with torch.no_grad():
+            cl_logits = cl_forward(args, model, images)
+            pred = cl_logits.argmax(dim=1)
+
+        num_correct += (pred == targets).sum().item()
+        num_images += images.size(0)
+
+    classification_acc = num_correct / float(num_images) * 100
+    return classification_acc
+
+
+def save_or_show(filename=None, save=False, save_dir=None):
+    """Helper: save figure if save=True, else show."""
+    if save and filename is not None and save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        path = os.path.join(save_dir, filename)
+        plt.savefig(path, dpi=300, bbox_inches="tight")
+        plt.close()
+        print(f"[saved] {path}")
+    else:
+        plt.show()
+
+
 
 
 def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_draw_target, checkpoint_type, dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None, target_method=None):
@@ -835,6 +887,8 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             eval_batch_size = 32#args.eval_batch_size,
         )
     
+    
+    
     overlay_images = {}
     input_images = {}
     gt_masks = {}
@@ -846,88 +900,236 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     J2_img = []
     DBI_img = []
 
-    cam_computer = CAMComputer(
-                        args=deepcopy(args),
-                        model=model,
-                        loader=loaders['train'],
-                        metadata_root=os.path.join(metadata_root, 'train'),
-                        mask_root=args.mask_root,
-                        iou_threshold_list=args.iou_threshold_list,
-                        dataset_name=args.dataset,
-                        split= 'train',
-                        cam_curve_interval=args.cam_curve_interval,
-                        multi_contour_eval=args.multi_contour_eval,
-                        out_folder=args.outd,
-                    )
+    # cam_computer = CAMComputer(
+    #                     args=deepcopy(args),
+    #                     model=model,
+    #                     loader=loaders['train'],
+    #                     metadata_root=os.path.join(metadata_root, 'train'),
+    #                     mask_root=args.mask_root,
+    #                     iou_threshold_list=args.iou_threshold_list,
+    #                     dataset_name=args.dataset,
+    #                     split= 'train',
+    #                     cam_curve_interval=args.cam_curve_interval,
+    #                     multi_contour_eval=args.multi_contour_eval,
+    #                     out_folder=args.outd,
+    #                 )
+    
 
-    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
-        enumerate(loaders[split]), ncols=constants.NCOLS,
-        total=len(loaders[split])):
-        image_size = images.shape[2:]
-        images = images.to(device)
-        targets = targets.to(device)
+    # acc_cl = _compute_accuracy(args, model, loaders['train'])
+    # cam_performance = cam_computer.compute_and_evaluate_cams()
+    # cam_perf_pxap = cam_computer.evaluator.perf_gist[constants.MTR_PXAP]
+
+    entropies = []
+    preds = []
+    gts = []     
+
+
+
+
+    # for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views, _) in tqdm(
+    #     enumerate(loaders[split]), ncols=constants.NCOLS,
+    #     total=len(loaders[split])):
+    #     image_size = images.shape[2:]
+    #     images = images.to(device)
+    #     targets = targets.to(device)
         
 
-        GroundTruth = []
+    #     GroundTruth = []
 
-        with torch.no_grad():
-            out = model(images.cuda())
-            img_features = model.lin_ft.detach().cpu()
-            pixel_features = model.encoder_last_features.detach().cpu()  # [1, C, H, W]
-
-
-            image_features_all.append(img_features)
-            image_labels_all.append(targets)
+    #     with torch.no_grad():
+    #         out = model(images.cuda())
+    #         img_features = model.lin_ft.detach().cpu()
+    #         pixel_features = model.encoder_last_features.detach().cpu()  # [1, C, H, W]
 
 
-        for i, (image, target, image_id) in enumerate(zip(images, targets, index)):
-            if (dataset == constants.CAMELYON512 and target.item() == 1) or dataset == constants.GLAS:
-                gt_mask = get_mask(f'/export/livia/home/vision/Aguichemerre/datasets/{dataset}',
-                            cam_computer.evaluator.mask_paths[image_id],
-                            cam_computer.evaluator.ignore_paths[image_id])
-                
-                gt_mask_tensor = torch.tensor(gt_mask, dtype=torch.float32)
-
-                h,l,m,n = pixel_features.shape
-                gt_resize=F.interpolate(gt_mask_tensor.unsqueeze(0).unsqueeze(0),
-                                    (m,n),
-                                    mode='bilinear',
-                                    align_corners=False).squeeze(0).squeeze(0)
-                
-                resized_mask_array = (gt_resize.detach().cpu().numpy() *255).astype('uint8')
-
-                pixel_features_px = pixel_features[i]
+    #         image_features_all.append(img_features)
+    #         image_labels_all.append(targets)
 
 
-                output_dir_pxap_value = os.path.join('visualization', 'energy', dataset)
-                output_file_path = os.path.join(output_dir_pxap_value, f"{parsedargs.dataset_type}_cam_performance_log.txt")
 
-                mode = "a" if os.path.exists(output_file_path) else "w"
-                os.makedirs(output_dir_pxap_value, exist_ok=True)
-                
-                J1, J2_px_val = class_separability(resized_mask_array, pixel_features_px, target, image_id, target_method, dataset, parsedargs)
-
-                J2_px.append(J2_px_val)
-
-
-    features_all = torch.cat(image_features_all, dim=0).cpu().numpy()# [N, D]
-    labels_all = torch.cat(image_labels_all, dim=0).cpu().numpy()
+    # features_all = torch.cat(image_features_all, dim=0).cpu().numpy()# [N, D]
+    # labels_all = torch.cat(image_labels_all, dim=0).cpu().numpy()
       
 
 
-    # Calculate scatter matrices
-    SW, SB, ST = calculate_scatter_matrices(features_all, labels_all)
+    # # Calculate scatter matrices
+    # SW, SB, ST = calculate_scatter_matrices(features_all, labels_all)
 
-    # Compute separability measures
-    J1_img_val, J2_img_val = class_separability_measure(SW, SB, ST)
+    # # Compute separability measures
+    # J1_img_val, J2_img_val = class_separability_measure(SW, SB, ST)
 
-    DBI_img_val = davies_bouldin_score(features_all, labels_all)
+    # DBI_img_val = davies_bouldin_score(features_all, labels_all)
 
-    mean_J2_px = np.mean(J2_px)
+    # mean_J2_px = np.mean(J2_px)
 
 
-    return overlay_images, input_images, method_name, gt_masks
+    # return overlay_images, input_images, method_name, gt_masks
+
+    save = True
+    save_dir = "results/entropy_plots"
+    loader = loaders['train']
+    loader.dataset.transform = get_eval_transforms_global(args.crop_size)
     
+    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views, _) \
+            in tqdm(enumerate(loader), total=len(loader)):
+
+        images = images.to(device)
+        targets = targets.to(device)
+
+        with torch.no_grad():
+            logits = model(images)
+            probs = F.softmax(logits, dim=1)
+
+            # Entropy for each image: H = -sum(p log p)
+            entropy = -torch.sum(probs * torch.log(probs + 1e-12), dim=1)
+
+            pred = torch.argmax(probs, dim=1)
+
+        entropies.append(entropy.cpu())
+        preds.append(pred.cpu())
+        gts.append(targets.cpu())
+
+    # stack
+    entropies = torch.cat(entropies).numpy()
+    preds = torch.cat(preds).numpy()
+    gts = torch.cat(gts).numpy()
+
+    import matplotlib.pyplot as plt
+
+    entropy_normal = entropies[gts == 0]
+    entropy_cancer = entropies[gts == 1]
+
+    plt.figure(figsize=(6,4))
+    plt.hist(entropy_normal, bins=40, alpha=0.6, label="Normal")
+    plt.hist(entropy_cancer, bins=40, alpha=0.6, label="Cancer")
+    plt.xlabel("Entropy")
+    plt.ylabel("Count")
+    plt.legend()
+    plt.title("Entropy distribution per true class")
+    save_or_show("entropy_histogram.png", save=save, save_dir=save_dir)
+
+    ratios = np.arange(0.1, 1.01, 0.1)
+
+    acc_curve_pred0 = []  # predicted normal
+    acc_curve_pred1 = []  # predicted cancer
+    acc_curve_all  = []   # overall
+
+    # tri selon entropie
+    order = np.argsort(entropies)
+
+    ent_sorted = entropies[order]
+    pred_sorted = preds[order]
+    gt_sorted = gts[order]
+
+    for r in ratios:
+        k = int(len(ent_sorted) * r)
+        pred_r = pred_sorted[:k]
+        gt_r = gt_sorted[:k]
+
+        # overall accuracy
+        acc_curve_all.append((pred_r == gt_r).mean())
+
+        # accuracy for predicted normal
+        idx0 = pred_r == 0
+        if idx0.sum() > 0:
+            acc_curve_pred0.append((pred_r[idx0] == gt_r[idx0]).mean())
+        else:
+            acc_curve_pred0.append(np.nan)
+
+        # accuracy for predicted cancer
+        idx1 = pred_r == 1
+        if idx1.sum() > 0:
+            acc_curve_pred1.append((pred_r[idx1] == gt_r[idx1]).mean())
+        else:
+            acc_curve_pred1.append(np.nan)
+
+
+        plt.figure(figsize=(6,4))
+
+    plt.plot(ratios*100, acc_curve_all, '-o', label="Overall")
+    plt.plot(ratios*100, acc_curve_pred0, '-o', label="Predicted Normal")
+    plt.plot(ratios*100, acc_curve_pred1, '-o', label="Predicted Cancer")
+
+    plt.xlabel("Selected images (%)")
+    plt.ylabel("Accuracy")
+    plt.title("Accuracy vs entropy-based selection")
+    plt.legend()
+    plt.grid(True)
+    
+
+    save_or_show("accuracy_vs_ratio.png", save=save, save_dir=save_dir)
+
+    ratios = np.arange(0.1, 1.01, 0.1)
+
+    acc_curve_balanced = []
+    acc_curve_class0 = []
+    acc_curve_class1 = []
+
+    # Séparer par classe (pred)
+    mask0 = preds == 0       # prédicted normal
+    mask1 = preds == 1       # predicted cancer
+
+    ent0 = entropies[mask0]
+    ent1 = entropies[mask1]
+    gt0  = gts[mask0]
+    gt1  = gts[mask1]
+    pred0 = preds[mask0]
+    pred1 = preds[mask1]
+
+    # Trier par entropie (du plus confiant au moins confiant)
+    idx0 = np.argsort(ent0)
+    idx1 = np.argsort(ent1)
+
+    ent0_sorted = ent0[idx0]
+    ent1_sorted = ent1[idx1]
+    gt0_sorted  = gt0[idx0]
+    gt1_sorted  = gt1[idx1]
+    pred0_sorted = pred0[idx0]
+    pred1_sorted = pred1[idx1]
+
+    n0 = len(ent0_sorted)
+    n1 = len(ent1_sorted)
+
+    for r in ratios:
+        # Nombre d’images que représente r%
+        k0 = int(n0 * r)
+        k1 = int(n1 * r)
+
+        # On prend le minimum pour équilibrer les deux classes
+        m = min(k0, k1)
+
+        if m == 0:
+            acc_curve_balanced.append(np.nan)
+            acc_curve_class0.append(np.nan)
+            acc_curve_class1.append(np.nan)
+            continue
+
+        # Sélection équilibrée
+        pred_sel  = np.concatenate([pred0_sorted[:m], pred1_sorted[:m]])
+        gt_sel    = np.concatenate([gt0_sorted[:m],   gt1_sorted[:m]])
+
+        # Accuracy globale
+        acc_curve_balanced.append((pred_sel == gt_sel).mean())
+
+        # Accuracy spécifique par classe
+        acc_curve_class0.append((pred0_sorted[:m] == gt0_sorted[:m]).mean())
+        acc_curve_class1.append((pred1_sorted[:m] == gt1_sorted[:m]).mean())
+
+
+    # Plot
+    plt.figure(figsize=(6,4))
+    plt.plot(ratios*100, acc_curve_balanced, '-o', label="Balanced (per class)")
+    plt.plot(ratios*100, acc_curve_class0, '-o', label="Normal class accuracy")
+    plt.plot(ratios*100, acc_curve_class1, '-o', label="Cancer class accuracy")
+
+    plt.xlabel("Selected % (per class)")
+    plt.ylabel("Accuracy")
+    plt.title("Balanced accuracy vs. entropy-based selection")
+    plt.legend()
+    plt.grid(True)
+
+    save_or_show("balanced_accuracy_vs_ratio.png", save=save, save_dir=save_dir)
+        
 def fast_eval():
     t0 = dt.datetime.now()
 
@@ -969,7 +1171,7 @@ def fast_eval():
     DLLogger.init_arb(backends=log_backends, master_pid=os.getpid())
     ##########
 
-    base_checkpoint_types = [constants.BEST_LOC]
+    base_checkpoint_types = ["B-UNLEARNING1"]
         
     for checkpoint_type_extended in base_checkpoint_types:
         checkpoint_type = checkpoint_type_extended

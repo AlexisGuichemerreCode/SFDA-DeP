@@ -621,8 +621,8 @@ def get_loss_target(args):
             
             if args.dataset == constants.GLAS:
                 negative_samples = False
-            elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and args.neg_samples_partial:
-                negative_samples = False
+            # elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and args.neg_samples_partial:
+            #     negative_samples = False
             elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512]:
                 negative_samples = True
             
@@ -1549,6 +1549,8 @@ def get_model(args, eval=False, eval_path_weights=''):
                                   map_location=get_cpu_device())
             model.classification_head.load_state_dict(header_w, strict=False)
 
+            
+
     path_file = args.model['path_pre_trained']
     if path_file not in [None, 'None']:
         msg = "You have asked to load a specific pre-trained " \
@@ -1619,7 +1621,7 @@ def get_model(args, eval=False, eval_path_weights=''):
         model_src.eval()
         freeze_all_params(model_src)
 
-        if args.shot or args.faust or args.sfde or args.cdcl:  # shot/faust/sfde/cdcl methods
+        if args.shot or args.faust or args.sfde or args.cdcl or args.grsfda:  # shot/faust/sfde/cdcl methods
             model.train()
             model.freeze_cl_hypothesis()  # last linear weights + bias of
             # classifier. some wsol methods do not have a last linear

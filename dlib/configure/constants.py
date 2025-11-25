@@ -342,6 +342,8 @@ assert not DEBUG
 ILSVRC = "ILSVRC"
 CUB = "CUB"
 OpenImages = 'OpenImages'
+OpenImagesSrc = 'OpenImagesSrc'
+OpenImagesTrgt = 'OpenImagesTrgt'
 
 GLAS = 'GLAS'  # GLAS 15
 ICIAR = 'ICIAR'  # ICIAR-2018-BACH-Challenge
@@ -354,10 +356,12 @@ if DEBUG:
     CUB = FORMAT_DEBUG.format(CUB)
     ILSVRC = FORMAT_DEBUG.format(ILSVRC)
     OpenImages = FORMAT_DEBUG.format(OpenImages)
+    OpenImagesSrc = FORMAT_DEBUG.format(OpenImagesSrc)
+    OpenImagesTrgt = FORMAT_DEBUG.format(OpenImagesTrgt)
 
 
-datasets = [CUB, ILSVRC, OpenImages, GLAS, BREAKHIS, CAMELYON512,CAMELYON17_512, ICIAR]
-SUPPORTED_DS = [GLAS, BREAKHIS, CAMELYON512,CAMELYON17_512, ICIAR]
+datasets = [CUB, ILSVRC, OpenImages, OpenImagesSrc, OpenImagesTrgt, GLAS, BREAKHIS, CAMELYON512,CAMELYON17_512, ICIAR]
+SUPPORTED_DS = [GLAS, BREAKHIS, CAMELYON512,CAMELYON17_512, ICIAR, OpenImages, OpenImagesSrc, OpenImagesTrgt]
 
 # Magnification for breakhis dataset
 MAG40X = '40X'
@@ -373,6 +377,9 @@ NBR_CHUNKS_TR_ILSVRC = {
 }
 
 LOCALIZATION_AVAIL = {
+    OpenImages: True, 
+    OpenImagesSrc: True, 
+    OpenImagesTrgt: True,
     GLAS: True,
     CAMELYON512: True,
     CAMELYON17_512: True,
@@ -387,6 +394,8 @@ NUMBER_CLASSES = {
     ILSVRC: 1000,
     CUB: 200,
     OpenImages: 100,
+    OpenImagesSrc: 100,
+    OpenImagesTrgt: 100,
     GLAS: 2,
     CAMELYON512: 2,
     CAMELYON17_512: 2,
@@ -407,6 +416,9 @@ COLOUR_BEST_CP = {
 }
 
 EVAL_CHECKPOINT = {
+    OpenImages: BEST_LOC,
+    OpenImagesSrc: BEST_LOC,
+    OpenImagesTrgt: BEST_LOC,
     GLAS: BEST_LOC,
     CAMELYON512: BEST_LOC,
     CAMELYON17_512: BEST_LOC,
@@ -559,7 +571,10 @@ PAIR_MIXED_C = 'mixed_class'
 DS_HAS_NEG_SAM = {
     CAMELYON512: True,
     CAMELYON17_512: True,
-    GLAS: False
+    GLAS: False,
+    OpenImages: False,
+    OpenImagesSrc: False,
+    OpenImagesTrgt: False,
 }
 
 

@@ -1772,7 +1772,11 @@ class EnergyCEAdaptloss(SelfLearningFcams):
         if not self.apply_negative_samples:
             return self.loss(input=fcams, target=seeds) * self.ece_lambda
 
-        ind_non_neg = (pseudo_glabel != self.negative_c).nonzero().view(-1)
+        #ind_non_neg = (pseudo_glabel != -255) & (pseudo_glabel != self.negative_c)
+        #ind_non_neg = (pseudo_glabel != self.negative_c).nonzero().view(-1)
+
+        ind_non_neg = ((pseudo_glabel != -255) & (pseudo_glabel != 0)).nonzero().view(-1)
+
 
         nbr = ind_non_neg.numel()
 

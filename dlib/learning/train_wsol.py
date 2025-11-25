@@ -316,6 +316,10 @@ class Trainer(Basic):
 
 
         self.store_loss = []
+        self.flipped_indices = []
+        self.reinforce_indices = []
+        self.entropy_all = []
+        self.idx_to_pred = {}
 
         if args.entropy_models:
             self.entropy_models = args.entropy_models
@@ -559,62 +563,64 @@ class Trainer(Basic):
             if self.args.erl:
                 self.update_y_bar_full(model=self.model,loader=self.loaders[constants.TRAINSET])
 
-            if self.args.esfda:
-                if self.args.esfda_select_imgs:
 
-                    self.store_master_loss = []
-                    self.store_ce_flip_loss = []
-                    self.store_ce_not_flip_loss = []
-                    #self.loader.dataset.transform = None
+            # if self.args.esfda:
+            #     if self.args.esfda_select_imgs:
 
-                    self.pred_distribution, self.overpred_class, self.underpred_class = self.compute_prediction_bias(model=self.model,
-                                loader_notransform=self.loaders_notransform, top_k=None
-                            )
+            #         self.store_master_loss = []
+            #         self.store_ce_flip_loss = []
+            #         self.store_ce_not_flip_loss = []
+            #         #self.loader.dataset.transform = None
 
-                    # select images to shift label
+            #         self.pred_distribution, self.overpred_class, self.underpred_class = self.compute_prediction_bias(model=self.model,
+            #                     loader_notransform=self.loaders_notransform, top_k=None
+            #                 )
 
-                    if self.args.select_distance:
-                        self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_distances(
-                            model=self.model,
-                            loader=self.loaders_notransform,
-                            select_imgs_ratio=self.args.esfda_select_imgs_ratio,
-                            random_select_ratio=self.args.random_select_ratio
-                        )
+            #         # select images to shift label
 
-                    if self.args.select_entropy:
+            #         if self.args.select_distance:
+            #             self.flipped_indices, self.reinforce_indices, self.idx_to_pred = self.select_flippable_indices_distances(
+            #                 model=self.model,
+            #                 loader=self.loaders_notransform,
+            #                 select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+            #                 random_select_ratio=self.args.random_select_ratio
+            #             )
 
-                        if self.args.entropy_probabilistic:
-                            self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy_probabilistic(
-                                model=self.model,
-                                loader=self.loaders_notransform
-                            )
-                        elif self.args.entropy_gt:
-                                self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_gt(
-                                    model=self.model,
-                                    loader=self.loaders_notransform
-                                )
+            #         if self.args.select_entropy:
 
-                        elif self.args.entropy_random:
-                            self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_random(
-                                model=self.model,
-                                loader=self.loaders_notransform
-                            )
-                        else:
-                            self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy(
-                                model=self.model,
-                                loader=self.loaders_notransform,
-                                select_imgs_ratio=self.args.esfda_select_imgs_ratio,
-                                random_select_ratio=self.args.random_select_ratio,
-                                reverse_imgs=self.args.esfda_reverse_imgs,
-                                entropy_threshold=self.args.entropy_threshold
-                            )
+            #             if self.args.entropy_probabilistic:
+            #                 self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy_probabilistic(
+            #                     model=self.model,
+            #                     loader=self.loaders_notransform
+            #                 )
+            #             elif self.args.entropy_gt:
+            #                     self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_gt(
+            #                         model=self.model,
+            #                         loader=self.loaders_notransform
+            #                     )
 
-                else:
-                    self.flipped_indices = self.select_flippable_indices(
-                        model=self.model,
-                        loader=self.loaders,
-                        select_imgs_ratio=self.args.esfda_select_imgs_ratio
-                    )
+            #             elif self.args.entropy_random:
+            #                 self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_random(
+            #                     model=self.model,
+            #                     loader=self.loaders_notransform
+            #                 )
+            #             else:
+            #                 self.flipped_indices, self.reinforce_indices, self.idx_to_pred, self.entropy_all, self.all_selected, self.stable_selected, self.stable_labels = self.select_flippable_indices_entropy(
+            #                     model=self.model,
+            #                     loader=self.loaders_notransform,
+            #                     select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+            #                     random_select_ratio=self.args.random_select_ratio,
+            #                     reverse_imgs=self.args.esfda_reverse_imgs,
+            #                     entropy_threshold=self.args.entropy_threshold,
+            #                     retain_all_others=self.args.retain_all_others
+            #                 )
+
+            #     else:
+            #         self.flipped_indices = self.select_flippable_indices(
+            #             model=self.model,
+            #             loader=self.loaders,
+            #             select_imgs_ratio=self.args.esfda_select_imgs_ratio
+            #         )
 
         # ======================================================================
 
@@ -787,6 +793,27 @@ class Trainer(Basic):
                         )
         
         elif args.esfda:
+            mask_root = args.mask_root if self.load_tr_masks else ''
+            loaders = get_data_loader(
+                data_roots=self.args.data_paths,
+                metadata_root=self.args.metadata_root,
+                batch_size=self.args.batch_size,
+                eval_batch_size=self.args.eval_batch_size,
+                workers=self.args.num_workers,
+                resize_size=self.args.resize_size,
+                crop_size=self.args.crop_size,
+                load_tr_masks=self.load_tr_masks,
+                mask_root=mask_root,
+                proxy_training_set=self.args.proxy_training_set,
+                num_val_sample_per_class=self.args.num_val_sample_per_class,
+                std_cams_folder=None,
+                get_splits_eval=[constants.TRAINSET],
+                sfuda_faust=False,
+                sfuda_n_rnd_views=0
+            )
+            train_eval_loader = loaders[constants.TRAINSET]
+
+        elif args.grsfda:
             mask_root = args.mask_root if self.load_tr_masks else ''
             loaders = get_data_loader(
                 data_roots=self.args.data_paths,
@@ -1339,12 +1366,47 @@ class Trainer(Basic):
                 else:
                     output = self.model(images)
                     cl_logits = output
+
+                    if args.pixel_wise_classification and args.ece_adapt:
+                        _, _, h, w = self.model.encoder_last_features.shape
+                        interpolation_mode = 'bilinear'
+                        if std_cams is None:
+                            cams_inter = self.get_std_cams_minibatch(images=images,
+                                                                    targets=z_label)
+                        else:
+                            cams_inter = std_cams
+
+                        if self.args.low_res:
+                            fcams=self.model.cams
+                        else:
+                            _, _, i, x = cams_inter.shape
+                            fcams= F.interpolate(self.model.cams,
+                                        (i, x),
+                                        mode=interpolation_mode,
+                                        align_corners=False)
+
+                        with torch.no_grad():
+                            if self.args.low_res:
+                                cams_inter = F.interpolate(cams_inter,
+                                        (h, w),
+                                        mode=interpolation_mode,
+                                        align_corners=False)
+
+                            seeds = seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
+
+                    else:
+                        seeds = None
+                        fcams = None
+
+
                     loss = self.loss(epoch=self.epoch,
                                      model=self.model,
+                                     fcams=fcams,
                                      cl_logits=cl_logits,
                                      glabel=y_global,
                                      pseudo_glabel=y_pl_global,
-                                     cutmix_holder=cutmix_holder
+                                     cutmix_holder=cutmix_holder,
+                                     seeds=seeds
                                      )
                     logits = cl_logits
 
@@ -1863,6 +1925,23 @@ class Trainer(Basic):
 
             return D_samples
 
+        
+        if self.args.grsfda:
+            if self.args.ce_pseudo_lb:
+                percent = self.compute_dynamic_percent(
+                    base_percent=0.05,
+                    epoch=self.epoch,
+                    n_epochs_step=2,
+                    growth_factor=2.0
+                )
+
+
+
+                final_selected, pl, acc = self.select_by_entropy_balanced(self.model,self.loaders_notransform[constants.TRAINSET],percent=percent)
+
+                self.loaders[constants.TRAINSET].dataset.set_img_pseudo_labels(
+                        pl)
+
         if self.args.shot:
             if self.args.ce_pseudo_lb:
 
@@ -1989,6 +2068,88 @@ class Trainer(Basic):
                 per_split_sfuda_select_ids_pl= {constants.TRAINSET: sfuda_select_ids_pl,constants.PXVALIDSET: None,constants.CLVALIDSET: None,constants.TESTSET: None})
                 #per_split_sfuda_select_ids_pl= {constants.TRAINSET: sfuda_select_ids_pl})
 
+        elif self.args.esfda:
+            # =====================================================
+            # DYNAMIC RE-SAMPLING OF Xforget / Xretain
+            # =====================================================
+            if (self.epoch == 1):
+                # Static mode → one-time precomputation
+
+                self.store_master_loss = []
+                self.store_ce_flip_loss = []
+                self.store_ce_not_flip_loss = []
+                #self.loader.dataset.transform = None
+
+                self.pred_distribution, self.overpred_class, self.underpred_class = self.compute_prediction_bias(model=self.model,
+                            loader_notransform=self.loaders_notransform, top_k=None
+                        )
+                (
+                self.flipped_indices, 
+                self.reinforce_indices, 
+                self.idx_to_pred, 
+                self.entropy_all, 
+                self.all_selected, 
+                self.stable_selected, 
+                self.stable_labels,
+                self.probs_all,
+                self.KL_global,
+                self.assigned_labels_map             
+                ) = self.select_flippable_indices_entropy(model=self.model,
+                                loader=self.loaders_notransform,
+                                select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+                                random_select_ratio=self.args.random_select_ratio,
+                                reverse_imgs=self.args.esfda_reverse_imgs,
+                                entropy_threshold=self.args.entropy_threshold,
+                                retain_all_others=self.args.retain_all_others
+                            )
+
+
+                print(f"[Static] Sampling done once before training.")
+
+                # ------------------------------------------------------------
+                #  BUILD RETAIN SETS : overpred and underpred
+                # ------------------------------------------------------------
+
+                # 1) Xretain = all images not in Xforget
+                all_seen = list(self.idx_to_pred.keys())
+
+                self.Xretain = [idx for idx in all_seen if idx not in self.flipped_indices]
+
+                # 2) Xretain_overpred = retain images whose predicted class is overpred_class
+                over = set([cls for cls, _ in self.overpred_class])      
+                self.retain_overpred = [idx for idx in self.Xretain if self.idx_to_pred[idx] in over]
+
+                # 3) Xretain_underpred = retain images whose predicted class is underpred_class
+                under = set([cls for cls, _ in self.underpred_class])  
+                self.retain_underpred = [idx for idx in self.Xretain if self.idx_to_pred[idx] in under]
+
+            elif (self.args.dynamic_selection and self.epoch % self.args.resample_every == 0):
+                # Dynamic mode → resample every N epochs
+                self.pred_distribution, self.overpred_class, self.underpred_class = self.compute_prediction_bias(model=self.model,
+                            loader_notransform=self.loaders_notransform, top_k=None
+                        )
+                (
+                self.flipped_indices, 
+                self.reinforce_indices, 
+                self.idx_to_pred, 
+                self.entropy_all, 
+                self.all_selected, 
+                self.stable_selected, 
+                self.stable_labels,
+                self.KL_global  
+                ) = self.select_flippable_indices_entropy(model=self.model,
+                                loader=self.loaders_notransform,
+                                select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+                                random_select_ratio=self.args.random_select_ratio,
+                                reverse_imgs=self.args.esfda_reverse_imgs,
+                                entropy_threshold=self.args.entropy_threshold,
+                                retain_all_others=self.args.retain_all_others
+                            )
+
+                print(f"[Dynamic] Resampled Xforget / Xretain at epoch {self.epoch}.")
+
+
+
 
     def on_epoch_start(self):
         torch.cuda.empty_cache()
@@ -2026,7 +2187,7 @@ class Trainer(Basic):
                 # bias of classifier. some wsol methods do not have a last
                 # linear classifier: either simple fully conv layers, attention,
                 # or no weights (simple max pooling for e.g.)
-            elif self.args.esfda:
+            elif self.args.esfda or self.args.grsfda:
                 if self.args.freeze_classifier_sfda:
                     self.model.freeze_cl_hypothesis()  # last linear weights + bias of
                     # classifier. some wsol methods do not have a last linear
@@ -2316,195 +2477,271 @@ class Trainer(Basic):
         return selected_flippable, reinforce_indices, idx_to_pred
 
     @torch.no_grad()
-    def select_flippable_indices_entropy(self, model, loader, select_imgs_ratio=0.1,
-                                        random_select_ratio=1.0, reverse_imgs = True,    
-                                        stable_per_class=200,sub_flippable_ratio=1.0,
-                                     entropy_threshold=None):
-        model.eval()
-        entropy_list = []  # (index, entropy) for cancer-predicted images
-        entropy_all = {}          # store entropy for ALL images
+    def select_flippable_indices_entropy(
+        self,
+        model,
+        loader,
+        select_imgs_ratio=0.1,
+        random_select_ratio=1.0,
+        reverse_imgs=True,
+        stable_per_class=200,
+        sub_flippable_ratio=1.0,
+        entropy_threshold=None,
+        retain_all_others=False,   
+    ):
+        """
+        Select flippable (forget) and stable (retain) image indices using entropy-based
+        uncertainty estimation. High-entropy samples are flipped (assigned top-2 label)
+        while the rest keep their top-1 prediction.
 
+        Args:
+            model: model used to compute entropy and top-k predictions.
+            loader: dataloader dictionary containing 'train'.
+            select_imgs_ratio: proportion of high-entropy images to consider.
+            random_select_ratio: random sub-sampling ratio of selected images.
+            reverse_imgs: if True, entropy is sorted descending (highest first).
+            stable_per_class: (unused legacy argument).
+            sub_flippable_ratio: (unused legacy argument).
+            entropy_threshold: if provided, overrides ratio selection with absolute threshold.
+            retain_all_others: if True → ALL non-flipped images become Xretain.
+
+        Returns:
+            selected_flippable: set of indices selected for flipping.
+            reinforce_indices: empty set (legacy placeholder).
+            idx_to_pred: mapping idx → predicted class.
+            entropy_all: mapping idx → entropy value.
+            flippable_subset: same as selected_flippable.
+            stable_selected: list of retained indices.
+            stable_labels: list of stable predicted labels.
+        """
+
+        model.eval()
         loader = loader['train']
 
-        idx_to_pred = {}
-        by_class_all = {c: [] for c in range(self.args.num_classes)}
-        idx_to_target = {}      #  store ground truth labels
-        assigned_labels_map = {}    # idx -> label final (flip: top-2, stable: top-1)
-        idx_to_top1 = {}
-        idx_to_top2 = {}
+        # --- Storage structures ---
+        entropy_list = []        # List of (idx, entropy) for the classes selected to flip
+        entropy_all = {}         # idx -> entropy
+        idx_to_pred = {}         # idx -> predicted class
+        idx_to_target = {}       # idx -> GT label (for analysis)
+        idx_to_top1 = {}         # idx -> top-1 prediction
+        idx_to_top2 = {}         # idx -> top-2 prediction
+        by_class_all = {c: [] for c in range(self.args.num_classes)}  # class -> list of (idx, entropy)
+        probs_all = {}   # idx -> probability vector
+        idx_to_name = {}
 
+
+        K = self.args.num_classes
+        pred_count = torch.zeros(K)        # accumulate class frequencies
+        total_samples = 0                  # count total images
+
+        # Classes that are over-predicted and from which we will select Xforget
         freeze_classes = [c for c, _ in self.overpred_class]
-
-
         if len(freeze_classes) == 0:
+            # Fallback: freeze all classes that appear in predictions
             freeze_classes = list(set(idx_to_pred.values()))
 
-        for batch_idx, (images, targets, p_glabel, index,
-                        raw_imgs, std_cams, masks, views, _) in tqdm(
-                enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+        # ========================================================
+        # Pass through the dataset once: compute probabilities,
+        # entropy, top-k predictions, and store mappings.
+        # ========================================================
+        for batch_idx, (
+            images, targets, p_glabel, index,
+            raw_imgs, std_cams, masks, views, _
+        ) in tqdm(
+            enumerate(loader),
+            ncols=constants.NCOLS,
+            total=len(loader)
+        ):
 
             images = images.cuda(self.args.c_cudaid)
             logits = model(images)
             probs = F.softmax(logits, dim=1)
             preds = probs.argmax(dim=1)
 
+            # UPDATE GLOBAL CLASS COUNT
+            for c in preds:
+                pred_count[c.item()] += 1
+
+            total_samples += preds.size(0)
+
+
+
             C = probs.size(1)
             k = 2 if C >= 2 else 1
             top2_vals, top2_idx = probs.topk(k=k, dim=1, largest=True, sorted=True)
-            
 
             entropy = -torch.sum(probs * torch.log(probs + 1e-6), dim=1)
 
+            # --- Process each sample in the batch ---
             for i in range(images.size(0)):
                 idx = index[i]
+                idx_to_name[idx] = idx
                 pred = preds[i].item()
+                gt = targets[i].item()
                 ent = entropy[i].item()
-                gt  = targets[i].item()
-                
-                idx_to_pred[idx] = pred
-                entropy_all[idx] = ent
-                idx_to_target[idx] = gt   # save GT
 
+                # Save prediction and entropy
+                idx_to_pred[idx] = pred
+                idx_to_target[idx] = gt
+                entropy_all[idx] = ent
+                probs_all[idx] = probs[i].detach().cpu()
+
+                # Save top-1 and top-2
                 t1 = int(top2_idx[i, 0].item())
                 t2 = int(top2_idx[i, 1].item()) if C >= 2 else t1
                 idx_to_top1[idx] = t1
                 idx_to_top2[idx] = t2
 
-
-
-                # if pred == 1:  # Only select from predicted cancer
-                #     entropy_list.append((idx, ent))
-
+                # Select candidates only from the over-predicted classes
                 if pred in freeze_classes:
                     entropy_list.append((idx, ent))
 
+                # Track per-class distributions
                 if pred in by_class_all:
                     by_class_all[pred].append((idx, ent))
 
+        # ========================================================
+        # STEP 3 : Compute GLOBAL KL(U || predicted distribution)
+        # ========================================================
+        p_hat = pred_count / total_samples
+        U = torch.ones(K) / K
+        KL_global = torch.sum(U * (torch.log(U + 1e-12) - torch.log(p_hat + 1e-12)))
+        self.KL_global = KL_global.item()
 
-        # Sort by descending entropy (most uncertain first)
+
+
+        # ========================================================
+        # Sort entropy in descending order → highest uncertainty first
+        # ========================================================
         if reverse_imgs:
-            entropy_list.sort(key=lambda x: x[1], reverse=reverse_imgs)
+            entropy_list.sort(key=lambda x: x[1], reverse=True)
         else:
             entropy_list.sort(key=lambda x: x[1])
 
         py_random.seed(self.seed)
 
-        # preselect_num = int(len(entropy_list) * select_imgs_ratio)
-        # preselected_indices = entropy_list[:preselect_num]
-
-        # final_select_num = max(1, int(len(preselected_indices) * random_select_ratio))
-        # selected_indices = py_random.sample(preselected_indices, final_select_num)
-
-        # selected_flippable = set(idx for idx, _ in selected_indices)
-        # reinforce_indices = set()
-
-        # --- Select with threshold or ratio Sélection par seuil absolu ou par ratio ---
+        # ========================================================
+        # Select images to flip: threshold-based or ratio-based
+        # ========================================================
         if entropy_threshold is not None:
-            # Select all imgs above the threshold
-            preselected_indices = [(idx, ent) for idx, ent in entropy_list if ent >= entropy_threshold]
+            preselected_indices = [(idx, e) for (idx, e) in entropy_list if e >= entropy_threshold]
             if len(preselected_indices) == 0:
-                print(f"[WARN] No imgs above the threshold {entropy_threshold}.")
+                print(f"[WARN] No images above entropy threshold {entropy_threshold}.")
         else:
-            preselect_num = int(len(entropy_list) * select_imgs_ratio)
-            preselected_indices = entropy_list[:preselect_num]
+            max_n = int(len(entropy_list) * select_imgs_ratio)
+            preselected_indices = entropy_list[:max_n]
 
-        # --- Sample randomly ---
-        final_select_num = max(1, int(len(preselected_indices) * random_select_ratio))
-        if final_select_num < len(preselected_indices):
-            selected_indices = py_random.sample(preselected_indices, final_select_num)
+        # Random subsampling
+        final_n = max(1, int(len(preselected_indices) * random_select_ratio))
+        if final_n < len(preselected_indices):
+            selected_indices = py_random.sample(preselected_indices, final_n)
         else:
             selected_indices = preselected_indices
 
+        selected_flippable = set(idx for (idx, _) in selected_indices)
+        flippable_subset = selected_flippable
 
-        selected_flippable = set(idx for idx, _ in selected_indices)
-        reinforce_indices = set()
-
+        # ========================================================
+        # Assign labels:
+        #  - flippable -> top-2
+        #  - stable    -> top-1
+        # ========================================================
         assigned_labels_map = {}
-
-        for idx in idx_to_pred.keys():  
+        for idx in idx_to_pred.keys():
             if idx in selected_flippable:
                 assigned_labels_map[idx] = idx_to_top2.get(idx, idx_to_top1[idx])
             else:
                 assigned_labels_map[idx] = idx_to_top1[idx]
 
         self.assigned_labels_map = assigned_labels_map
+        reinforce_indices = set()   # Placeholder for legacy logic
 
-        flippable_subset = set(selected_flippable)  
-
-        preserve_all = self.args.stable_match_strategy
-
+        # ========================================================
+        # Select Xretain (stable) set
+        # ========================================================
         stable_selected = []
         stable_labels = []
 
-        if not preserve_all:
-            # All idx
-            all_seen = list(idx_to_pred.keys())
-            # retain
-            nonflipped = [idx for idx in all_seen if idx not in flippable_subset]
+        # All samples seen during traversal
+        all_seen = list(idx_to_pred.keys())
 
-            # 
-            #if freeze_classes is not None and len(freeze_classes) > 0:
-            #    nonflipped = [idx for idx in nonflipped if idx_to_pred[idx] in set(freeze_classes)]
-
-            stable_selected = nonflipped
-            stable_labels = [idx_to_pred[idx] for idx in stable_selected]
+        # ========================================================
+        # NEW OPTION: retain absolutely all non-flipped images
+        # ========================================================
+        if retain_all_others:
+            # Xretain = all_seen \ Xforget
+            stable_selected = [idx for idx in all_seen if idx not in flippable_subset]
+            stable_labels   = [idx_to_pred[idx] for idx in stable_selected]
 
         else:
-            total_target = len(flippable_subset)   # nb of imgs to flip
-            if total_target > 0 and len(freeze_classes) > 0:
-                # Build quota per class
-                total_candidates = sum(len(by_class_all.get(c, [])) for c in freeze_classes)
-                if total_candidates == 0:
-                    targets_per_class = {c: 0 for c in freeze_classes}
-                else:
-                    quotas = {c: (len(by_class_all.get(c, [])) / total_candidates) * total_target
-                            for c in freeze_classes}
-                    base = {c: int(quotas[c]) for c in freeze_classes}
-                    allocated = sum(base.values())
-                    remainder = total_target - allocated
+            # ====================================================
+            # Original behavior:
+            # two cases depending on stable_match_strategy
+            # ====================================================
+            preserve_all = self.args.stable_match_strategy
 
-                    # Distrib rest based on fraction
-                    fracs = sorted(
-                        ((c, quotas[c] - base[c]) for c in freeze_classes),
-                        key=lambda t: t[1], reverse=True
-                    )
-                    targets_per_class = base
-                    for c, _ in fracs:
-                        if remainder <= 0:
-                            break
-                        targets_per_class[c] += 1
-                        remainder -= 1
+            if not preserve_all:
+                # Simple retain: keep everything not flipped
+                nonflipped = [idx for idx in all_seen if idx not in flippable_subset]
+                stable_selected = nonflipped
+                stable_labels = [idx_to_pred[idx] for idx in stable_selected]
 
-                for c in by_class_all.keys():
-                    by_class_all[c].sort(key=lambda x: x[1])  # x[1] = entropy
+            else:
+                # Class-balanced retain among freeze_classes
+                total_target = len(flippable_subset)
 
-    
-                # Select img to retain
-                for c in freeze_classes:
-                    pool = by_class_all.get(c, [])
-                    pool = [(idx, ent) for (idx, ent) in pool if idx not in flippable_subset]
-                    
-                    take = min(targets_per_class.get(c, 0), len(pool))
-                    chosen = pool[:take]   # Rank by entropy
-                    stable_selected.extend([idx for (idx, _) in chosen])
-                    stable_labels.extend([c] * take)
+                if total_target > 0 and len(freeze_classes) > 0:
+                    # Compute quotas
+                    total_candidates = sum(len(by_class_all[c]) for c in freeze_classes)
+                    if total_candidates == 0:
+                        targets_per_class = {c: 0 for c in freeze_classes}
+                    else:
+                        quotas = {
+                            c: (len(by_class_all[c]) / total_candidates) * total_target
+                            for c in freeze_classes
+                        }
+                        base = {c: int(quotas[c]) for c in freeze_classes}
+                        allocated = sum(base.values())
+                        remainder = total_target - allocated
 
+                        # Distribute remainder
+                        fracs = sorted(
+                            [(c, quotas[c] - base[c]) for c in freeze_classes],
+                            key=lambda t: t[1],
+                            reverse=True
+                        )
+                        targets_per_class = base
+                        for c, _ in fracs:
+                            if remainder <= 0:
+                                break
+                            targets_per_class[c] += 1
+                            remainder -= 1
 
-        flip_correct, flip_total = 0, 0
-        for idx in flippable_subset:
-            if idx in idx_to_target:
-                flip_total += 1
-                if idx_to_pred[idx] == idx_to_target[idx]:
-                    flip_correct += 1
+                    # Sort by entropy ascending (most confident retained first)
+                    for c in by_class_all.keys():
+                        by_class_all[c].sort(key=lambda x: x[1])
+
+                    # Select stable samples for each class
+                    for c in freeze_classes:
+                        pool = [(idx, ent) for (idx, ent) in by_class_all[c]
+                                if idx not in flippable_subset]
+
+                        take = min(targets_per_class.get(c, 0), len(pool))
+                        chosen = pool[:take]
+                        stable_selected.extend([idx for (idx, _) in chosen])
+                        stable_labels.extend([c] * take)
+
+        # ========================================================
+        # Compute monitoring statistics (correctness of flip/retain)
+        # ========================================================
+        flip_correct = sum(1 for idx in flippable_subset
+                        if idx_to_pred.get(idx) == idx_to_target.get(idx))
+        flip_total = len(flippable_subset)
         flip_acc = flip_correct / flip_total if flip_total > 0 else 0.0
 
-        stable_correct, stable_total = 0, 0
-        for idx in stable_selected:
-            if idx in idx_to_target:
-                stable_total += 1
-                if idx_to_pred[idx] == idx_to_target[idx]:
-                    stable_correct += 1
+        stable_correct = sum(1 for idx in stable_selected
+                            if idx_to_pred.get(idx) == idx_to_target.get(idx))
+        stable_total = len(stable_selected)
         stable_acc = stable_correct / stable_total if stable_total > 0 else 0.0
 
         results = {
@@ -2512,24 +2749,43 @@ class Trainer(Basic):
             "forget": stable_acc
         }
 
-        output_path = os.path.join(self.args.outd, "results_unlearning_acc.txt")
-        output_pickle = os.path.join(self.args.outd, "results__unlearning_acc.pkl")
+        # Save metrics
+        out_txt = os.path.join(self.args.outd, "results_unlearning_acc.txt")
+        out_pkl = os.path.join(self.args.outd, "results__unlearning_acc.pkl")
 
-        nb_xforget = len(flippable_subset)
-        nb_xretain = len(stable_selected)
+        with open(out_txt, "w") as f:
+            f.write(f"Nb retain : {len(stable_selected)}\n")
+            f.write(f"retain acc : {flip_acc:.4f}\n")
+            f.write(f"Nb forget : {len(flippable_subset)}\n")
+            f.write(f"forget acc : {stable_acc:.4f}\n")
 
-        with open(output_path, "w") as f_txt:
-            f_txt.write(f"Nb of retain : {nb_xretain:.4f}\n")
-            f_txt.write(f"retain : {flip_acc:.4f}\n")
-            f_txt.write(f"Nb of forget : {nb_xforget:.4f}\n")
-            f_txt.write(f"forget  : {stable_acc:.4f}\n")
+        with open(out_pkl, "wb") as f:
+            pkl.dump(results, f)
+
+        Forget_labels = [assigned_labels_map[idx] for idx in selected_flippable]
+        Retain_labels = [assigned_labels_map[idx] for idx in stable_selected]
 
 
-        with open(output_pickle, "wb") as f_pkl:
-            pkl.dump(results, f_pkl)
+        return (
+            selected_flippable,       
+            stable_selected,           
+            assigned_labels_map,       
+            KL_global 
+            )
 
+        # return (
+        #     selected_flippable,
+        #     reinforce_indices,
+        #     idx_to_pred,
+        #     entropy_all,
+        #     flippable_subset,
+        #     stable_selected,
+        #     stable_labels,
+        #     probs_all,
+        #     KL_global,
+        #     assigned_labels_map
+        # )
 
-        return selected_flippable, reinforce_indices, idx_to_pred, entropy_all, flippable_subset, stable_selected, stable_labels
 
     @torch.no_grad()
     def select_flippable_indices_gt(self,model, loader, n_per_class=2000):
@@ -2737,7 +2993,7 @@ class Trainer(Basic):
         print(f"[RANDOM] mode={mode} | flips={len(selected_flippable)} | "
             f"stables={len(stable_selected)} (balanced={balance_stables})")
 
-        return selected_flippable, reinforce_indices, idx_to_pred, entropy_all, flippable_subset, stable_selected, stable_labels
+        return selected_flippable, reinforce_indices, idx_to_pred, entropy_all, flippable_subset, stable_selected, stable_labels, probs_all     
 
 
 
@@ -3098,6 +3354,147 @@ class Trainer(Basic):
             stable_selected,
             stable_labels,
         )
+
+    def compute_dynamic_percent(
+        self,
+        base_percent: float,
+        epoch: int,
+        n_epochs_step: int = 2,
+        growth_factor: float = 2.0,
+        max_percent: float = 1.0
+        ):
+        """
+        Ex : base=0.10, step=2 → epochs 1-2: 0.10, 3-4: 0.20, 5-6: 0.40, ...
+        """
+        step_id = epoch // n_epochs_step
+        percent = base_percent * (growth_factor ** step_id)
+        percent = min(percent, max_percent)  
+        return percent
+
+    
+    @torch.no_grad()
+    def select_by_entropy_balanced(
+        self,
+        model,
+        loader,
+        percent=0.10,
+    ):
+
+
+        model.eval()
+
+        per_class_entropies = {c: [] for c in range(self.args.num_classes)}
+        per_class_indices   = {c: [] for c in range(self.args.num_classes)}
+        per_class_meta      = {c: [] for c in range(self.args.num_classes)}
+
+
+        all_image_ids = []
+        all_preds = []
+        all_gts = []
+        all_entropies = []
+
+        for batch_idx, (images, targets, p_glabel, image_ids,
+                        raw_imgs, std_cams, masks, views, _) in tqdm(
+                            enumerate(loader), ncols=80, total=len(loader)
+                        ):
+
+            images = images.cuda(self.args.c_cudaid)
+            logits = model(images)
+            probs  = F.softmax(logits, dim=1)
+
+            batch_entropy = -(probs * probs.log()).sum(dim=1)   # [B]
+            pred = torch.argmax(probs, dim=1)                   # [B]
+
+            for i in range(len(image_ids)):
+                cls = int(pred[i].item())
+                ent = float(batch_entropy[i].item())
+                img_id = image_ids[i]
+
+                per_class_entropies[cls].append(ent)
+                per_class_indices[cls].append(img_id)
+                per_class_meta[cls].append({
+                    "img_id": img_id,
+                    "entropy": ent,
+                    "pred": cls,
+                    "gt": int(targets[i].item())
+                })
+
+                all_image_ids.append(img_id)
+                all_preds.append(cls)
+                all_gts.append(int(targets[i].item()))
+                all_entropies.append(ent)
+
+
+        sorted_per_class = {}
+        sorted_meta = {}
+
+        for cls in range(self.args.num_classes):
+            ent_list  = torch.tensor(per_class_entropies[cls], dtype=torch.float32)
+            idx_list  = per_class_indices[cls]
+            meta_list = per_class_meta[cls]
+
+            if len(ent_list) == 0:
+                sorted_per_class[cls] = []
+                sorted_meta[cls] = []
+                continue
+
+            sorted_entropy, sorted_idx = torch.sort(ent_list)
+            sorted_img_ids = [idx_list[j] for j in sorted_idx.tolist()]
+            sorted_meta_cls = [meta_list[j] for j in sorted_idx.tolist()]
+
+            sorted_per_class[cls] = sorted_img_ids
+            sorted_meta[cls] = sorted_meta_cls
+
+
+        per_class_selected = {}
+        per_class_meta_sel = {}
+        counts = {}
+
+        for cls in range(self.args.num_classes):
+            total_cls = len(sorted_per_class[cls])
+
+            if total_cls == 0:
+                per_class_selected[cls] = []
+                per_class_meta_sel[cls] = []
+                counts[cls] = 0
+                continue
+
+            num_cls = max(int(total_cls * percent), 1)
+
+            per_class_selected[cls] = sorted_per_class[cls][:num_cls]
+            per_class_meta_sel[cls] = sorted_meta[cls][:num_cls]
+            counts[cls] = num_cls
+
+        n_min = min(counts.values()) if len(counts) > 0 else 0
+
+        final_selected_ids = []
+        final_selected_meta = []
+
+        for cls in range(self.args.num_classes):
+            final_selected_ids.extend(per_class_selected[cls][:n_min])
+            final_selected_meta.extend(per_class_meta_sel[cls][:n_min])
+
+
+        if len(final_selected_meta) > 0:
+            acc = sum(m["pred"] == m["gt"] for m in final_selected_meta) / len(final_selected_meta)
+            print(f"[Entropy Balanced] Accuracy of selected subset = {acc:.4f}")
+        else:
+            acc = None
+
+
+        out_dict = {}
+
+        selected_set = set(final_selected_ids)
+
+        for img_id, pred in zip(all_image_ids, all_preds):
+            if img_id in selected_set:
+                out_dict[img_id] = pred
+            else:
+                out_dict[img_id] = -255     
+
+        return final_selected_ids, out_dict, acc
+
+
     
 
     def train(self, split: str, epoch: int) -> dict:
@@ -3473,7 +3870,7 @@ class Trainer(Basic):
         num_correct = 0
         num_images = 0
 
-        for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+        for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)
             with torch.no_grad():
@@ -4685,8 +5082,8 @@ class Trainer(Basic):
         accuracy = 0.0
         precision, recall, f1 = 0.0, 0.0, 0.0
         if self.args.task != constants.SEG:
-            #accuracy = self._compute_accuracy(loader=self.loaders[splitcl])
-            accuracy,precision, recall, f1 = self._compute_accuracy_binary_metrics(loader=self.loaders[splitcl])
+            accuracy = self._compute_accuracy(loader=self.loaders[splitcl])
+            #accuracy,precision, recall, f1 = self._compute_accuracy_binary_metrics(loader=self.loaders[splitcl])
 
         self.performance_meters[
             splitcl][constants.CLASSIFICATION_MTR].update(accuracy)
@@ -4752,7 +5149,7 @@ class Trainer(Basic):
             #cam_computer.draw_some_best_pred()
 
         avg = self.args.multi_iou_eval
-        avg |= self.args.dataset in [constants.OpenImages, constants.GLAS,
+        avg |= self.args.dataset in [constants.OpenImages,constants.OpenImagesSrc, constants.OpenImagesTrgt, constants.GLAS,
                                      constants.CAMELYON512, constants.CAMELYON17_512]
         if avg:
             loc_score = np.average(cam_performance)

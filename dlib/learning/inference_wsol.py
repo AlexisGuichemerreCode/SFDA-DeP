@@ -131,6 +131,8 @@ class CAMComputer(object):
         cam_threshold_list = list(np.arange(0, 1, cam_curve_interval))
 
         self.evaluator = {constants.OpenImages: MaskEvaluator,
+                          constants.OpenImagesSrc: MaskEvaluator,
+                          constants.OpenImagesTrgt: MaskEvaluator,
                           constants.CUB: BoxEvaluator,
                           constants.ILSVRC: BoxEvaluator,
                           constants.GLAS: MaskEvaluator,
