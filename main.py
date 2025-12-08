@@ -103,33 +103,57 @@ def main():
         DLLogger.flush()
 
 
+    splits = [constants.TRAINSET, constants.CLVALIDSET]
+    if args.ds_to_compute_acc_trainset_source_target and args.esfda == True:
+        PLOT_TASKS = [
+            "cl",
+            "silhouette",
+            "DBI",
+            "CH",
+            "J_index",
+            "f1",
+            "precision",
+            "recall",
+            "image_entropy",
+            "acc_normal",
+            "acc_cancer",
+            "acc_flip",
+            "acc_stable",
+            "kl_uniform",
+        ]
 
-    if args.ds_to_compute_acc_trainset_source_target:
-        #dar curves for source and target clas acc in trainer.source_acc and trainer.target_acc
-        trainer.save_curves(task = "cl", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "cl", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "silhouette", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "DBI", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "CH", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "J_index", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "loc", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "f1", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "precision", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "recall", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "image_entropy", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "acc_normal", cmpt_epoch = args.cmpt_epoch)
-        trainer.plot_target_acc_curves(task = "acc_cancer", cmpt_epoch = args.cmpt_epoch)
+        for split in splits:
+            for task in PLOT_TASKS:
+                trainer.plot_target_acc_curves(
+                    task        = task,
+                    cmpt_epoch  = args.cmpt_epoch,
+                    split       = split
+                )
+
+            # trainer.save_curves(task = "cl", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "cl", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "silhouette", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "DBI", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "CH", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "J_index", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "loc", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "f1", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "precision", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "recall", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "image_entropy", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "acc_normal", cmpt_epoch = args.cmpt_epoch)
+            # trainer.plot_target_acc_curves(task = "acc_cancer", cmpt_epoch = args.cmpt_epoch)
 
 
         #trainer.plot_source_target_loc_curves(cmpt_epoch = args.cmpt_epoch)  
 
-    if args.esfda:
-        trainer.save_metrics(filename="metrics_history.pickle")
-        trainer.save_loss(filename="loss_history.pickle")
-        trainer.save_loss_esfda()
-        trainer.save_unlearning_acc(filename="unlearning_acc_history.pickle")
-        #trainer.plot_unlearning_acc()
-        trainer.plot_losses()
+    # if args.esfda:
+    #     trainer.save_metrics(filename="metrics_history.pickle")
+    #     trainer.save_loss(filename="loss_history.pickle")
+    #     trainer.save_loss_esfda()
+    #     trainer.save_unlearning_acc(filename="unlearning_acc_history.pickle")
+    #     #trainer.plot_unlearning_acc()
+    #     trainer.plot_losses()
 
         
     if args.sf_uda:

@@ -556,7 +556,7 @@ class Trainer(Basic):
 
         if self.args.sf_uda:
 
-            self.metrics = KLConsistencyMetrics(device="cuda")
+            #self.metrics = KLConsistencyMetrics(device="cuda")
 
             #self._sf_uda_before_epoch_process()
 
@@ -1617,7 +1617,7 @@ class Trainer(Basic):
                             align_corners=False
                         )
 
-                    if args.pixel_wise_classification:
+                    if args.pixel_wise_classification and args.ece_adapt:
                         _, _, h, w = self.model.encoder_last_features.shape
                         interpolation_mode = 'bilinear'
                         if std_cams is None:
@@ -1643,6 +1643,10 @@ class Trainer(Basic):
                                         align_corners=False)
 
                             seeds = self.sl_mask_builder(cams_inter, class_idx=y_pred_batch)
+
+                    else:
+                        fcams = None
+                        seeds = None
 
 
                     loss = self.loss(epoch=self.epoch,
@@ -2136,7 +2140,9 @@ class Trainer(Basic):
                 self.all_selected, 
                 self.stable_selected, 
                 self.stable_labels,
-                self.KL_global  
+                self.probs_all,
+                self.KL_global,
+                self.assigned_labels_map     
                 ) = self.select_flippable_indices_entropy(model=self.model,
                                 loader=self.loaders_notransform,
                                 select_imgs_ratio=self.args.esfda_select_imgs_ratio,
@@ -2753,38 +2759,49 @@ class Trainer(Basic):
         out_txt = os.path.join(self.args.outd, "results_unlearning_acc.txt")
         out_pkl = os.path.join(self.args.outd, "results__unlearning_acc.pkl")
 
-        with open(out_txt, "w") as f:
+        with open(out_txt, "a") as f:
+            f.write(f"Epoch {self.epoch}\n")
             f.write(f"Nb retain : {len(stable_selected)}\n")
             f.write(f"retain acc : {flip_acc:.4f}\n")
             f.write(f"Nb forget : {len(flippable_subset)}\n")
             f.write(f"forget acc : {stable_acc:.4f}\n")
+            f.write("\n")
+
+        # Load previous results if exists
+        if os.path.exists(out_pkl):
+            with open(out_pkl, "rb") as f:
+                history = pkl.load(f)
+        else:
+            history = []
+
+        history.append(results)
 
         with open(out_pkl, "wb") as f:
-            pkl.dump(results, f)
+            pkl.dump(history, f)
 
         Forget_labels = [assigned_labels_map[idx] for idx in selected_flippable]
         Retain_labels = [assigned_labels_map[idx] for idx in stable_selected]
 
 
-        return (
-            selected_flippable,       
-            stable_selected,           
-            assigned_labels_map,       
-            KL_global 
-            )
-
         # return (
-        #     selected_flippable,
-        #     reinforce_indices,
-        #     idx_to_pred,
-        #     entropy_all,
-        #     flippable_subset,
-        #     stable_selected,
-        #     stable_labels,
-        #     probs_all,
-        #     KL_global,
-        #     assigned_labels_map
-        # )
+        #     selected_flippable,       
+        #     stable_selected,           
+        #     assigned_labels_map,       
+        #     KL_global 
+        #     )
+
+        return (
+            selected_flippable,
+            reinforce_indices,
+            idx_to_pred,
+            entropy_all,
+            flippable_subset,
+            stable_selected,
+            stable_labels,
+            probs_all,
+            KL_global,
+            assigned_labels_map
+        )
 
 
     @torch.no_grad()
@@ -3725,11 +3742,12 @@ class Trainer(Basic):
 
                 self.model.eval()
                 with torch.no_grad():
-                    self.compute_acc_on_target_came(self.epoch)
+                    self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.CLVALIDSET)
+                    self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.TRAINSET)
                     #self.compute_loc_on_target(self.epoch)
 
                     if self.args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and self.args.cl_train_models:
-                        self.update_best_cl_train_model_came(epoch, split=constants.TRAINSET)
+                        self.update_best_cl_train_model_came(epoch=self.epoch)
                 self.model.train()
                 
 
@@ -4033,47 +4051,35 @@ class Trainer(Basic):
     #     plt.close()
 
     def _plot_entropy_hist_per_class(self, ent_correct, ent_incorrect, class_name, out_path, num_classes, bins=60, figsize=(16, 10)):
-        """
-        Histogramme empilé Correct vs Incorrect avec totaux et pourcentages.
-
-        Args:
-            ent_correct (list/array): entropies des images correctement classées
-            ent_incorrect (list/array): entropies des images mal classées
-            class_name (str): nom de la classe (pour le titre)
-            out_path (str): chemin du fichier de sortie
-            num_classes (int): nombre de classes
-            bins (int): nb de bins
-            figsize (tuple): taille de la figure
-        """
         h_max = math.log(max(2, num_classes))
         bin_edges = np.linspace(0.0, h_max, bins)
 
         plt.figure(figsize=figsize)
 
-        # Comptage des bins
+
         counts_correct, _ = np.histogram(ent_correct, bins=bin_edges)
         counts_incorrect, _ = np.histogram(ent_incorrect, bins=bin_edges)
 
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
         total_counts = counts_correct + counts_incorrect
 
-        # Barres empilées
+
         plt.bar(bin_centers, counts_correct, width=np.diff(bin_edges), 
                 alpha=0.8, label="Correctly Predicted", align="center", color="#4C9AFF")
         plt.bar(bin_centers, counts_incorrect, width=np.diff(bin_edges), 
                 bottom=counts_correct, alpha=0.8, label="Incorrectly Predicted", align="center", color="#FF9933")
 
-        # Ajouter totaux + pourcentages
+
         for total, correct, incorrect, x in zip(total_counts, counts_correct, counts_incorrect, bin_centers):
             if total > 0:
-                # Total (au-dessus de la barre)
+                # Total 
                 plt.text(x, total + 0.5, f"{total}", rotation=90, ha="center", va="bottom", fontsize=8)
 
-                # % correct centré
+
                 if correct > 0:
                     plt.text(x, correct / 2, f"{100 * correct / total:.1f}%", 
                             ha="center", va="center", fontsize=8, color="white")
-                # % incorrect centré
+
                 if incorrect > 0:
                     plt.text(x, correct + incorrect / 2, f"{100 * incorrect / total:.1f}%", 
                             ha="center", va="center", fontsize=8, color="black")
@@ -4105,7 +4111,14 @@ class Trainer(Basic):
             intra += np.sum((feats_c - mu_c) ** 2)
         return inter / intra if intra > 0 else 0.0
     
-    def _compute_accuracy_f1(self, loader, compute_kl = True):
+    def compute_kl_uniform(self, preds, num_classes):
+        hist = torch.bincount(preds, minlength=num_classes).float()
+        p = hist / hist.sum()          
+        u = torch.ones_like(p) / num_classes  
+        kl = (p * (p / u).log()).sum()
+        return float(kl.item())
+    
+    def _compute_accuracy_f1(self, loader, split = constants.CLVALIDSET, compute_kl = True):
         torch.cuda.empty_cache()
 
         num_correct = 0
@@ -4122,8 +4135,8 @@ class Trainer(Basic):
         pixel_total_entropy = 0
 
         # --- Entropy buckets for plotting (per class & correctness)
-        ent_correct_by_class = {0: [], 1: []}
-        ent_incorrect_by_class = {0: [], 1: []}
+        ent_correct_by_class = {c: [] for c in range(self.args.num_classes)}
+        ent_incorrect_by_class = {c: [] for c in range(self.args.num_classes)}
 
         y_pred = []
         y_true = []
@@ -4148,7 +4161,7 @@ class Trainer(Basic):
         correct_flip, total_flip = 0, 0
         correct_stable, total_stable = 0, 0
 
-        for i, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views, _) in enumerate(loader):
+        for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views, _) in enumerate(loader):
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)
 
@@ -4205,14 +4218,20 @@ class Trainer(Basic):
                     for b in range(images.size(0)):
                         true_cls = int(targets[b].item())
                         pred_cls = int(pred[b].item())
-                        corr = int(pred[b].item() == true_cls)
+                        #corr = int(pred[b].item() == true_cls)
                         h = float(ent_per_img[b].item())
 
-                        if true_cls in (0, 1):  # adapté à ton binaire normal/cancer
-                            if corr:
-                                ent_correct_by_class[pred_cls].append(h)
-                            else:
-                                ent_incorrect_by_class[pred_cls].append(h)
+                        if pred_cls == true_cls:
+                            ent_correct_by_class[true_cls].append(h)
+                        else:
+                            ent_incorrect_by_class[true_cls].append(h)
+
+
+                        # if true_cls in (0, 1):  
+                        #     if corr:
+                        #         ent_correct_by_class[pred_cls].append(h)
+                        #     else:
+                        #         ent_incorrect_by_class[pred_cls].append(h)
 
 
                 # accumulate for marginal entropy
@@ -4241,19 +4260,19 @@ class Trainer(Basic):
                 idx_b = index[b]
                 pred_b = pred[b].item()
 
-                # # Flip
-                # if idx_b in self.flipped_indices:
-                #     init_cls = self.assigned_labels_map[idx_b]
-                #     #tgt_flip = 0
-                #     correct_flip += int(pred_b == init_cls)
-                #     total_flip += 1
+                # Forget
+                if idx_b in self.flipped_indices:
+                    init_cls = self.assigned_labels_map[idx_b]
+                    #tgt_flip = 0
+                    correct_flip += int(pred_b == init_cls)
+                    total_flip += 1
 
-                # # Stable
-                # if idx_b in self.stable_selected:
-                #     #pos = self.stable_selected.index(idx_b)
-                #     tgt_stable = int(self.assigned_labels_map[idx_b])
-                #     correct_stable += int(pred_b == tgt_stable)
-                #     total_stable += 1
+                # Retain
+                if idx_b in self.stable_selected:
+                    #pos = self.stable_selected.index(idx_b)
+                    tgt_stable = int(self.assigned_labels_map[idx_b])
+                    correct_stable += int(pred_b == tgt_stable)
+                    total_stable += 1
                 
 
             num_correct += (pred == targets).sum().detach()
@@ -4290,47 +4309,66 @@ class Trainer(Basic):
         self.J_index.append(J_index)
 
 
-        fig_outd = os.path.join(self.args.outd, "entropy_hist")
+        fig_outd = os.path.join(self.args.outd, "entropy_hist", split)
         os.makedirs(fig_outd, exist_ok=True)
 
         #fig_outd = os.path.join(self.args.outd, "entropy_hist")
 
 
-        if self.args.target_domain_ds_to_compute_stats == constants.GLAS:
-            # on trace par epoch (pas par batch)
-            CLASS_NORMAL_NAME = f"entropy_hist_normal_ep{self.epoch:03d}.png"
-            CLASS_CANCER_NAME = f"entropy_hist_cancer_ep{self.epoch:03d}.png"
-            out_normal = os.path.join(fig_outd, CLASS_NORMAL_NAME)
-            out_cancer = os.path.join(fig_outd, CLASS_CANCER_NAME)
-        else:
-            # CAMELYON : on trace tous les N batchs -> inclure batch_idx
-            # (suppose que tu appelles ici à l'intérieur de la boucle batch)
-            if self.batch_idx == None:
-                self.batch_idx = 0
-            CLASS_NORMAL_NAME = f"entropy_hist_normal_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
-            CLASS_CANCER_NAME = f"entropy_hist_cancer_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
-            out_normal = os.path.join(fig_outd, CLASS_NORMAL_NAME)
-            out_cancer = os.path.join(fig_outd, CLASS_CANCER_NAME)
+
+        # After loop — plotting
+        for c in range(self.args.num_classes):
+
+            if self.args.target_domain_ds_to_compute_stats == constants.GLAS:
+                CLASS_NAME = f"entropy_hist_class{c}_ep{self.epoch:03d}.png"
+            else:
+                if self.batch_idx is None:
+                    self.batch_idx = 0
+                CLASS_NAME = f"entropy_hist_class{c}_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
+
+            out_path = os.path.join(fig_outd, CLASS_NAME)
+
+            self._plot_entropy_hist_per_class(
+                ent_correct_by_class[c],
+                ent_incorrect_by_class[c],
+                class_name=f"Class {c}",
+                out_path=out_path,
+                num_classes=self.args.num_classes
+            )
+
+
+        # if self.args.target_domain_ds_to_compute_stats == constants.GLAS:
+        #     CLASS_NORMAL_NAME = f"entropy_hist_normal_ep{self.epoch:03d}.png"
+        #     CLASS_CANCER_NAME = f"entropy_hist_cancer_ep{self.epoch:03d}.png"
+        #     out_normal = os.path.join(fig_outd, CLASS_NORMAL_NAME)
+        #     out_cancer = os.path.join(fig_outd, CLASS_CANCER_NAME)
+        # else:
+        #     if self.batch_idx == None:
+        #         self.batch_idx = 0
+        #     CLASS_NORMAL_NAME = f"entropy_hist_normal_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
+        #     CLASS_CANCER_NAME = f"entropy_hist_cancer_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
+        #     out_normal = os.path.join(fig_outd, CLASS_NORMAL_NAME)
+        #     out_cancer = os.path.join(fig_outd, CLASS_CANCER_NAME)
 
 
 
-        # Classe 0 : Normal
-        self._plot_entropy_hist_per_class(
-            ent_correct_by_class[0],
-            ent_incorrect_by_class[0],
-            class_name="Normal (label=0)",
-            out_path=out_normal,
-            num_classes=self.args.num_classes
-        )
+        # # Classe 0 : Normal
+        # self._plot_entropy_hist_per_class(
+        #     ent_correct_by_class[0],
+        #     ent_incorrect_by_class[0],
+        #     class_name="Normal (label=0)",
+        #     out_path=out_normal,
+        #     num_classes=self.args.num_classes
+        # )
 
-        # Classe 1 : Cancer
-        self._plot_entropy_hist_per_class(
-            ent_correct_by_class[1],
-            ent_incorrect_by_class[1],
-            class_name="Cancer (label=1)",
-            out_path=out_cancer,
-            num_classes=self.args.num_classes
-        )
+        # # Classe 1 : Cancer
+        # self._plot_entropy_hist_per_class(
+        #     ent_correct_by_class[1],
+        #     ent_incorrect_by_class[1],
+        #     class_name="Cancer (label=1)",
+        #     out_path=out_cancer,
+        #     num_classes=self.args.num_classes
+        # )
 
 
         self.store_master_loss.append(master_loss) 
@@ -4350,15 +4388,22 @@ class Trainer(Basic):
 
         cm = confusion_matrix(y_true_np, y_pred_np, labels=labels)
 
-        # Handle binary and multi-class
-        if len(labels) == 2:
-            tn, fp, fn, tp = cm.ravel()
-        else:
-            tn = fp = fn = tp = np.nan  # for safety
+        if self.args.num_classes == 2:
+            try:
+                tn, fp, fn, tp = cm.ravel()
+            except ValueError:
+                tn = fp = fn = tp = np.nan
 
-        f1 = f1_score(y_true, y_pred, average='binary')
-        precision = precision_score(y_true, y_pred, average='binary')
-        recall = recall_score(y_true, y_pred, average='binary')
+            f1 = f1_score(y_true_np, y_pred_np, average="binary")
+            precision = precision_score(y_true_np, y_pred_np, average="binary")
+            recall = recall_score(y_true_np, y_pred_np, average="binary")
+
+        else:
+            tn = fp = fn = tp = np.nan   
+
+            f1 = f1_score(y_true_np, y_pred_np, average="macro")
+            precision = precision_score(y_true_np, y_pred_np, average="macro")
+            recall = recall_score(y_true_np, y_pred_np, average="macro")
 
         # === Build row for CSV ===
         row = {
@@ -4388,32 +4433,59 @@ class Trainer(Basic):
                 writer.writeheader()
             writer.writerow(row)
 
+        preds_all = pred
         #KL consistency (mean over all images)
-        mean_kl = sum(kl_vals) / len(kl_vals) if len(kl_vals) > 0 else 0.0
-        self.metrics.hist.append(mean_kl)
+        kl_uniform = self.compute_kl_uniform(preds_all, num_classes= self.args.num_classes)
+        #self.metrics.hist.append(kl_uniform)
 
         #Marginal entropy
         pbar = sum_probs / num_samples
         Hm = -(pbar * (pbar + 1e-8).log()).sum().item()
         Htilde = max(0.0, math.log(self.args.num_classes) - Hm)
 
-        self.metrics.hm_hist.append(Hm)
-        self.metrics.htilde_hist.append(Htilde)
+        #self.metrics.hm_hist.append(Hm)
+        #self.metrics.htilde_hist.append(Htilde)
 
-        # #Store accuracy unlearned and not unlearned ---
-        # acc_flip = correct_flip / total_flip if total_flip > 0 else 0.0
-        # acc_stable = correct_stable / total_stable if total_stable > 0 else 0.0
+        #Store accuracy unlearned and not unlearned ---
+        acc_flip = correct_flip / total_flip if total_flip > 0 else 0.0
+        acc_stable = correct_stable / total_stable if total_stable > 0 else 0.0
 
-        # if not hasattr(self, "history_acc_flip"):
-        #     self.history_acc_flip = []
-        # if not hasattr(self, "history_acc_stable"):
-        #     self.history_acc_stable = []
+        total_correct = correct_flip + correct_stable
+        total_samples = total_flip + total_stable
 
-        # self.history_acc_flip.append(acc_flip)
-        # self.history_acc_stable.append(acc_stable)
+        acc_global = total_correct / total_samples if total_samples > 0 else 0.0
+
+
+        if not hasattr(self, "history_acc_flip"):
+            self.history_acc_flip = []
+        if not hasattr(self, "history_acc_stable"):
+            self.history_acc_stable = []
+
+        self.history_acc_flip.append(acc_flip)
+        self.history_acc_stable.append(acc_stable)
+
+        results = {
+            "classification_acc": classification_acc.item(),
+            "classification_acc_normal": classification_acc_normal,
+            "classification_acc_cancer": classification_acc_cancer,
+            "images_entropy": images_entropy,
+            "f1": f1,
+            "precision": precision,
+            "recall": recall,
+            "silhouette": silhouette,
+            "DBI": dbi,
+            "CH": CH,
+            "J_index": J_index,
+            "kl_uniform": kl_uniform,
+            "Hm": Hm,
+            "Htilde": Htilde,
+            "acc_flip": acc_flip,
+            "acc_stable": acc_stable,
+        }
 
         torch.cuda.empty_cache()
-        return classification_acc.item(), classification_acc_normal, classification_acc_cancer, images_entropy, f1, precision, recall
+        return results
+        #return classification_acc.item(), classification_acc_normal, classification_acc_cancer, images_entropy, f1, precision, recall
     
 
     def compute_entropy(self, probs):
@@ -4464,6 +4536,7 @@ class Trainer(Basic):
         self.model.eval()
         with torch.no_grad():
             target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[constants.CLVALIDSET], compute_kl = True)
+            
             self.target_train_acc_cl.append(target_train_acc)
             self.target_train_f1.append(f1)
             self.target_train_precision.append(precision)
@@ -4499,41 +4572,129 @@ class Trainer(Basic):
                     print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {target_train_acc:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
 
 
-    def compute_acc_on_target_came(self, epoch, compute_kl= False, split=constants.CLVALIDSET):
+    def compute_acc_on_target_came(self, epoch, split, compute_kl= False):
+
+        if not hasattr(self, "metrics"):
+            self.metrics = {
+                "train": {
+                    "acc_cl": [],
+                    "acc_normal": [],
+                    "acc_cancer": [],
+                    "f1": [],
+                    "precision": [],
+                    "recall": [],
+                    "entropy": [],
+                    "silhouette": [],
+                    "DBI": [],
+                    "CH": [],
+                    "J_index": [],
+                    "kl_uniform": [],
+                    "Hm": [],
+                    "Htilde": [],
+                    "acc_flip": [],
+                    "acc_stable": [],
+                },
+                "valcl": {
+                    "acc_cl": [],
+                    "acc_normal": [],
+                    "acc_cancer": [],
+                    "f1": [],
+                    "precision": [],
+                    "recall": [],
+                    "entropy": [],
+                    "silhouette": [],
+                    "DBI": [],
+                    "CH": [],
+                    "J_index": [],
+                    "kl_uniform": [],
+                    "Hm": [],
+                    "Htilde": [],
+                    "acc_flip": [],
+                    "acc_stable": [],
+                }
+            }
+
+
+
         self.model.eval()
         with torch.no_grad():
-            target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[split], compute_kl = True)
-            self.target_train_acc_cl.append(target_train_acc)
-            self.target_train_f1.append(f1)
-            self.target_train_precision.append(precision)
-            self.target_train_recall.append(recall)
-            self.target_train_image_entropy.append(images_entropy)
-            self.target_train_acc_normal.append(target_train_acc_normal)
-            self.target_train_acc_cancer.append(target_train_acc_cancer)
-            self.current_acc_cl = target_train_acc
+            #target_train_acc, target_train_acc_normal, target_train_acc_cancer,  images_entropy, f1, precision, recall = self._compute_accuracy_f1(self.target_domain_loaders[split], compute_kl = True)
+            stats = self._compute_accuracy_f1(self.target_domain_loaders[split], split = split, compute_kl = True)
+            
+            acc_cl         = stats["classification_acc"]
+            acc_n          = stats["classification_acc_normal"]
+            acc_c          = stats["classification_acc_cancer"]
+            f1             = stats["f1"]
+            precision      = stats["precision"]
+            recall         = stats["recall"]
+            images_entropy = stats["images_entropy"]
+            silhouette     = stats["silhouette"]
+            DBI            = stats["DBI"]
+            CH             = stats["CH"]
+            J_index        = stats["J_index"]
+            kl_uniform     = stats["kl_uniform"]
+            Hm             = stats["Hm"]
+            Htilde         = stats["Htilde"]
+            acc_flip       = stats["acc_flip"]
+            acc_stable     = stats["acc_stable"]
 
-        with torch.no_grad():
-            accuracy = 0.0
-            # if self.args.task != constants.SEG:
-            #     accuracy = self._compute_accuracy(loader=self.loaders[split])
 
-            torch.cuda.empty_cache()
+            self.metrics[split]["acc_cl"].append(acc_cl)
+            self.metrics[split]["acc_normal"].append(acc_n)
+            self.metrics[split]["acc_cancer"].append(acc_c)
 
-            model_cl = deepcopy(self.model).to(self.cpu_device).eval()
-            #model_state = model_entropy.state_dict()
+            self.metrics[split]["f1"].append(f1)
+            self.metrics[split]["precision"].append(precision)
+            self.metrics[split]["recall"].append(recall)
 
-            if not hasattr(self, "best_accuracy"):
-                self.cl_train_model = None
-                self.best_accuracy = -1.0
-                self.best_epoch = -1
+            self.metrics[split]["entropy"].append(images_entropy)
 
-            if target_train_acc > self.best_accuracy:
-                self.best_accuracy = target_train_acc
-                self.cl_train_model = deepcopy(model_cl)
-                self.best_epoch = epoch
-                print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {target_train_acc:.2f}%")
-            else:
-                print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {target_train_acc:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
+            self.metrics[split]["silhouette"].append(silhouette)
+            self.metrics[split]["DBI"].append(DBI)
+            self.metrics[split]["CH"].append(CH)
+            self.metrics[split]["J_index"].append(J_index)
+
+            self.metrics[split]["kl_uniform"].append(kl_uniform)
+            self.metrics[split]["Hm"].append(Hm)
+            self.metrics[split]["Htilde"].append(Htilde)
+
+            self.metrics[split]["acc_flip"].append(acc_flip)
+            self.metrics[split]["acc_stable"].append(acc_stable)
+
+
+
+            # self.target_train_acc_cl.append(target_train_acc)
+            # self.target_train_f1.append(f1)
+            # self.target_train_precision.append(precision)
+            # self.target_train_recall.append(recall)
+            # self.target_train_image_entropy.append(images_entropy)
+            # self.target_train_acc_normal.append(target_train_acc_normal)
+            # self.target_train_acc_cancer.append(target_train_acc_cancer)
+            # self.current_acc_cl = target_train_acc
+
+        # if split == constants.CLVALIDSET:
+        #     with torch.no_grad():
+        #         accuracy = 0.0
+        #         # if self.args.task != constants.SEG:
+        #         #     accuracy = self._compute_accuracy(loader=self.loaders[split])
+
+        #         torch.cuda.empty_cache()
+
+        #         model_cl = deepcopy(self.model).to(self.cpu_device).eval()
+        #         #model_state = model_entropy.state_dict()
+
+        #         if not hasattr(self, "best_accuracy"):
+        #             self.cl_train_model = None
+        #             self.best_accuracy = -1.0
+        #             self.best_epoch = -1
+
+        #         if acc_cl > self.best_accuracy:
+        #             self.best_accuracy = acc_cl
+        #             self.cl_train_model = deepcopy(model_cl)
+        #             self.best_epoch = epoch
+        #             print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {acc_cl:.2f}%")
+        #         else:
+        #             print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {acc_cl:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
 
 
     def compute_loc_on_target(self, epoch, split=constants.TRAINSET):
@@ -4767,11 +4928,11 @@ class Trainer(Basic):
             metrics: your metrics object (with .hist, .hm, .h_tilde attributes)
             filename: output pickle file name
         """
-        data_to_save = {
-            "kl": self.metrics.hist,
-            "hm": self.metrics.hm_hist,
-            "h_tilde": self.metrics.htilde_hist
-        }
+        #data_to_save = {
+        #    "kl": self.metrics.hist,
+        #    "hm": self.metrics.hm_hist,
+        #    "h_tilde": self.metrics.htilde_hist
+        #}
 
         pickle_path = os.path.join(self.args.outd,filename)
 
@@ -4837,79 +4998,163 @@ class Trainer(Basic):
         with open(pickle_path, 'wb') as f:
             pkl.dump(curves_data, f)
 
-    def plot_target_acc_curves(self, task, cmpt_epoch):
-        if task == "cl":
-            target_data = self.target_train_acc_cl
-            ylabel = 'Classification'
+    # def plot_target_acc_curves(self, task, cmpt_epoch):
+    #     if task == "cl":
+    #         target_data = self.target_train_acc_cl
+    #         ylabel = 'Classification'
 
-        elif task == "silhouette":
-            target_data = self.silhouette
-            ylabel = 'Silhouette'
+    #     elif task == "silhouette":
+    #         target_data = self.silhouette
+    #         ylabel = 'Silhouette'
         
-        elif task == "DBI":
-            target_data = self.DBI
-            ylabel = 'DBI'
+    #     elif task == "DBI":
+    #         target_data = self.DBI
+    #         ylabel = 'DBI'
         
-        elif task == "CH":
-            target_data = self.CH
-            ylabel = 'CH'
+    #     elif task == "CH":
+    #         target_data = self.CH
+    #         ylabel = 'CH'
         
-        elif task == "J_index":
-            target_data = self.J_index
-            ylabel = 'J_index'
+    #     elif task == "J_index":
+    #         target_data = self.J_index
+    #         ylabel = 'J_index'
 
-        elif task == "f1":
-            target_data = self.target_train_f1
-            ylabel = 'F1 Score'
+    #     elif task == "f1":
+    #         target_data = self.target_train_f1
+    #         ylabel = 'F1 Score'
 
-        elif task == "precision":
-            target_data = self.target_train_precision
-            ylabel = 'Precision'
+    #     elif task == "precision":
+    #         target_data = self.target_train_precision
+    #         ylabel = 'Precision'
 
-        elif task == "recall":
-            target_data = self.target_train_recall
-            ylabel = 'Recall'
+    #     elif task == "recall":
+    #         target_data = self.target_train_recall
+    #         ylabel = 'Recall'
 
-        elif task == "image_entropy":
-            target_data = self.target_train_image_entropy
-            ylabel = 'Image Entropy'
+    #     elif task == "image_entropy":
+    #         target_data = self.target_train_image_entropy
+    #         ylabel = 'Image Entropy'
 
-        elif task == "acc_normal":
-            target_data = self.target_train_acc_normal
-            ylabel = 'Normal Classification'
+    #     elif task == "acc_normal":
+    #         target_data = self.target_train_acc_normal
+    #         ylabel = 'Normal Classification'
             
-        elif task == "acc_cancer":
-            target_data = self.target_train_acc_cancer
-            ylabel = 'Cancer Classification'
+    #     elif task == "acc_cancer":
+    #         target_data = self.target_train_acc_cancer
+    #         ylabel = 'Cancer Classification'
             
-        else:
-            target_data = self.target_train_pxap
-            ylabel = 'Localization'
+    #     else:
+    #         target_data = self.target_train_pxap
+    #         ylabel = 'Localization'
 
+    #     plt.figure(figsize=(12, 3))
+    #     #plt.plot(np.arange(cmpt_epoch, len(source_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch), source_data, label='Source')
+    #     plt.plot(np.arange(cmpt_epoch, len(target_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch), target_data, label='Target')
+    #     plt.xlabel('Epoch')
+    #     plt.ylabel(ylabel)
+    #     plt.legend()
+    #     #set y axis labels only in integer with max value to len of source and target acc
+    #     #epochs = np.arange(0, len(source_data) * cmpt_epoch + 1, cmpt_epoch)
+    #     plt.xticks(np.arange(cmpt_epoch, len(target_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch))
+    #     plt.tight_layout()
+    #     #plt.savefig(os.path.join(self.args.outd, 'Classification accuracy curve on test set between source and target dataset.png'))
+    #     file_prefix = f"{ylabel}_Accuracy"
+    #     output_path = os.path.join(self.args.outd, f'{file_prefix}_curve_on_test_set_on_target_dataset.png')
+    #     plt.savefig(output_path)
+    #     plt.close()
+
+    #     #Store data in a pickle
+    #     curves_data = {
+    #         'target_acc_cl': target_data
+    #     }
+
+    #     pickle_path = os.path.join(self.args.outd, f'{file_prefix}_results_target_data.pickle')
+    #     with open(pickle_path, 'wb') as f:
+    #         pkl.dump(curves_data, f)
+
+    def plot_target_acc_curves(self, task, cmpt_epoch, split):
+        """
+        task : str in {
+            'cl', 'silhouette', 'DBI', 'CH', 'J_index',
+            'f1', 'precision', 'recall',
+            'image_entropy', 'acc_normal', 'acc_cancer',
+            'acc_flip', 'acc_stable'
+        }
+        split : constants.TRAINSET ou constants.CLVALIDSET
+        """
+
+        # --- Mapping task -> (clé dans self.metrics[split], label, prefix fichier)
+        task_map = {
+            "cl":           ("acc_cl",           "Classification",          "Classification"),
+            "silhouette":   ("silhouette",    "Silhouette",              "Silhouette"),
+            "DBI":          ("DBI",           "DBI",                     "DBI"),
+            "CH":           ("CH",            "CH",                      "CH"),
+            "J_index":      ("J_index",       "J_index",                 "J_index"),
+            "f1":           ("f1",            "F1 Score",                "F1"),
+            "precision":    ("precision",     "Precision",               "Precision"),
+            "recall":       ("recall",        "Recall",                  "Recall"),
+            "image_entropy":("entropy",       "Image Entropy",           "Image_Entropy"),
+            "acc_normal":   ("acc_normal",    "Normal Classification",   "Acc_Normal"),
+            "acc_cancer":   ("acc_cancer",    "Cancer Classification",   "Acc_Cancer"),
+            "acc_flip":     ("acc_flip",      "Flip Accuracy",           "Acc_Flip"),
+            "acc_stable":   ("acc_stable",    "Stable Accuracy",         "Acc_Stable"),
+            "kl_uniform":   ("kl_uniform",    "KL Divergence (Uniform)", "KL_Uniform"),
+        }
+
+        if task not in task_map:
+            raise ValueError(f"Unknown task '{task}'. Available: {list(task_map.keys())}")
+
+        metric_key, ylabel, file_prefix = task_map[task]
+
+        if not hasattr(self, "metrics"):
+            raise RuntimeError("self.metrics is not initialized.")
+
+        if split not in self.metrics:
+            raise RuntimeError(f"Split '{split}' not found in self.metrics. Available: {list(self.metrics.keys())}")
+
+        if metric_key not in self.metrics[split]:
+            raise RuntimeError(f"Metric '{metric_key}' not found in self.metrics['{split}'].")
+
+        target_data = self.metrics[split][metric_key]
+
+        if len(target_data) == 0:
+            print(f"[plot_target_acc_curves] No data for metric '{metric_key}' on split '{split}'.")
+            return
+
+        base_dir = os.path.join(self.args.outd, "unlearning_metrics", str(split))
+        os.makedirs(base_dir, exist_ok=True)
+
+        epochs = np.arange(cmpt_epoch, len(target_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch)
+
+        # --- Plot
         plt.figure(figsize=(12, 3))
-        #plt.plot(np.arange(cmpt_epoch, len(source_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch), source_data, label='Source')
-        plt.plot(np.arange(cmpt_epoch, len(target_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch), target_data, label='Target')
+        plt.plot(epochs, target_data, label=f'{split}')
         plt.xlabel('Epoch')
         plt.ylabel(ylabel)
         plt.legend()
-        #set y axis labels only in integer with max value to len of source and target acc
-        #epochs = np.arange(0, len(source_data) * cmpt_epoch + 1, cmpt_epoch)
-        plt.xticks(np.arange(cmpt_epoch, len(target_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch))
+        plt.xticks(epochs)
         plt.tight_layout()
-        #plt.savefig(os.path.join(self.args.outd, 'Classification accuracy curve on test set between source and target dataset.png'))
-        file_prefix = f"{ylabel}_Accuracy"
-        output_path = os.path.join(self.args.outd, f'{file_prefix}_curve_on_test_set_on_target_dataset.png')
+
+        png_name = f"{file_prefix}_curve_{split}.png"
+        output_path = os.path.join(base_dir, png_name)
         plt.savefig(output_path)
         plt.close()
 
-        #Store data in a pickle
         curves_data = {
-            'target_acc_cl': target_data
+            "epochs": epochs.tolist(),
+            "values": target_data,
+            "metric_key": metric_key,
+            "ylabel": ylabel,
+            "split": split,
         }
-
-        pickle_path = os.path.join(self.args.outd, f'{file_prefix}_results_target_data.pickle')
-        with open(pickle_path, 'wb') as f:
+        pickle_name = f"{file_prefix}_results_{split}.pickle"
+        pickle_path = os.path.join(base_dir, pickle_name)
+        with open(pickle_path, "wb") as f:
             pkl.dump(curves_data, f)
+
+        all_metrics_path = os.path.join(base_dir, f"all_metrics_{split}.pickle")
+        with open(all_metrics_path, "wb") as f:
+            pkl.dump(self.metrics[split], f)
 
     def plot_unlearning_acc(self):
         """
@@ -5713,9 +5958,13 @@ class Trainer(Basic):
         else:
             print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {accuracy:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
 
-    def update_best_cl_train_model_came(self, epoch, split):
+    def update_best_cl_train_model_came(self, epoch):
         torch.cuda.empty_cache()
         self.model.eval()
+        # if self.args.task != constants.SEG:
+        #     accuracy = self._compute_accuracy(loader=self.loaders[split])
+
+        accuracy = 0.0
         # if self.args.task != constants.SEG:
         #     accuracy = self._compute_accuracy(loader=self.loaders[split])
 
@@ -5724,18 +5973,21 @@ class Trainer(Basic):
         model_cl = deepcopy(self.model).to(self.cpu_device).eval()
         #model_state = model_entropy.state_dict()
 
+        acc_cl = self.metrics[constants.CLVALIDSET]['acc_cl'][-1]
+
         if not hasattr(self, "best_accuracy"):
             self.cl_train_model = None
             self.best_accuracy = -1.0
             self.best_epoch = -1
 
-        if self.current_acc_cl > self.best_accuracy:
-            self.best_accuracy = self.current_acc_cl
+        if acc_cl > self.best_accuracy:
+            self.best_accuracy = acc_cl
             self.cl_train_model = deepcopy(model_cl)
             self.best_epoch = epoch
-            print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {self.current_acc_cl:.2f}%")
+            print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {acc_cl:.2f}%")
         else:
-            print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {self.current_acc_cl:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
+            print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {acc_cl:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
+
 
 
 

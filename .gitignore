@@ -13,3 +13,5 @@ data_staining/*
 visualization/*
 tmp_outd/*
 scripts/*
+metrics_separability/*
+metrics_domain_shift/*

@@ -12,6 +12,7 @@ from dlib.sf_uda import adadsa
 import torch.nn as nn
 
 import numpy as np
+import json
 import numpy
 from tqdm import tqdm
 # import pretrainedmodels.utils
@@ -611,22 +612,41 @@ def compute_energy(logits):
     return -torch.logsumexp(logits, dim=1)
 
 class IgnoreKeyLoader(yaml.SafeLoader):
-    def ignore_keys(self, node):
-        ignore_key = 'best_valid_tau_cl'
-        if isinstance(node, yaml.MappingNode):
-            i = 0
-            while i < len(node.value):
-                if node.value[i][0].value == ignore_key:
-                    del node.value[i]
-                else:
-                    i += 1
-        return self.construct_yaml_map(node)
+    pass
 
-    def ignore_numpy_scalars(self, node):
-        return None  # or any other dummy value
+# --- Ignore une clé spécifique ---
+def ignore_keys(loader, node):
+    ignore_key = 'best_valid_tau_cl'
+    if isinstance(node, yaml.MappingNode):
+        i = 0
+        while i < len(node.value):
+            if node.value[i][0].value == ignore_key:
+                del node.value[i]
+            else:
+                i += 1
+    return loader.construct_mapping(node)
 
-IgnoreKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, IgnoreKeyLoader.ignore_keys)
-IgnoreKeyLoader.add_constructor('tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar', IgnoreKeyLoader.ignore_numpy_scalars)
+# --- Ignore les scalaires NumPy (float32, int64, etc.) ---
+def ignore_numpy_scalars(loader, node):
+    try:
+        value = loader.construct_scalar(node)
+        return float(value)
+    except Exception:
+        return None
+
+# --- Enregistre les constructeurs ---
+IgnoreKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    ignore_keys
+)
+IgnoreKeyLoader.add_constructor(
+    'tag:yaml.org,2002:python/object/apply:numpy._core.multiarray.scalar',
+    ignore_numpy_scalars
+)
+IgnoreKeyLoader.add_constructor(
+    'tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar',
+    ignore_numpy_scalars
+)
 
 
 def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_draw_target, checkpoint_type, dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None, target_method=None):
@@ -811,14 +831,14 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     ####################################################################################
     DLLogger.flush()
     
-    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{args.fold}")
+    source_metadata_root = join(constants.RELATIVE_META_ROOT, parsedargs.source_dataset, f"fold-{parsedargs.fold_src_dataset}")
     #read sys var DATASETSH
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
-    target_domain_data_paths = config.configure_data_paths(args_dict, dataset)
+    source_domain_data_paths = config.configure_data_paths(args_dict, parsedargs.source_dataset)
 
-    metadata_root_CAME = join('./folds/wsol-done-right-splits', 'CAMELYON512', f"fold-{args.fold}")
-    args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
-    target_domain_data_paths_CAME = config.configure_data_paths(args_dict, 'CAMELYON512')
+    target_metadata_root = join('./folds/wsol-done-right-splits', parsedargs.target_dataset, f"fold-{parsedargs.fold_trg_dataset}")
+    #args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
+    target_domain_data_paths = config.configure_data_paths(args_dict, parsedargs.target_dataset)
 
     # loaders = get_data_loader(
     #         data_roots=target_domain_data_paths,
@@ -836,9 +856,9 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     #         eval_batch_size = 32#args.eval_batch_size,
     #     )
     
-    loaders = get_data_loader(
-            data_roots=target_domain_data_paths,
-            metadata_root=metadata_root,
+    source_loaders = get_data_loader(
+            data_roots=source_domain_data_paths,
+            metadata_root=source_metadata_root,
             batch_size=32,#args.batch_size,
             workers=args.num_workers,
             resize_size=args.resize_size,
@@ -847,7 +867,23 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             num_val_sample_per_class=args.num_val_sample_per_class,
             std_cams_folder=args.std_cams_folder,
             # distributed_eval=False,
-            get_splits_eval=['train'],
+            get_splits_eval=[parsedargs.split],
+            #constants.TRAINSET
+            eval_batch_size = 32#args.eval_batch_size,
+        )
+    
+    target_loaders = get_data_loader(
+            data_roots=target_domain_data_paths,
+            metadata_root=target_metadata_root,
+            batch_size=32,#args.batch_size,
+            workers=args.num_workers,
+            resize_size=args.resize_size,
+            crop_size=args.crop_size,
+            proxy_training_set=args.proxy_training_set,
+            num_val_sample_per_class=args.num_val_sample_per_class,
+            std_cams_folder=args.std_cams_folder,
+            # distributed_eval=False,
+            get_splits_eval=[parsedargs.split],
             #constants.TRAINSET
             eval_batch_size = 32#args.eval_batch_size,
         )
@@ -939,11 +975,16 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     input_images = {}
     gt_masks = {}
 
-    domain_shift_measure = da_metrics.FeatureShiftCalculator()
+    if "deit" in encoder_name:
+        num_filters = 192
+    else:
+        num_filters = 2048
 
-    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
-        enumerate(loaders[split]), ncols=constants.NCOLS,
-        total=len(loaders[split])):
+    domain_shift_measure = da_metrics.FeatureShiftCalculator(num_filters=num_filters)
+
+    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views, _) in tqdm(
+        enumerate(source_loaders[split]), ncols=constants.NCOLS,
+        total=len(source_loaders[split])):
         image_size = images.shape[2:]
         images = images.to(device)
         targets = targets.to(device)
@@ -951,18 +992,49 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         out = model(images)
         
         with torch.no_grad():
-            pixel_features = model.encoder_last_features
-            gap_features = pixel_features.mean(dim=[2, 3])
+            src_img_features = model.lin_ft
 
-        domain_shift_measure.accumulate(gap_features, domain='source')
-        domain_shift_measure.accumulate(gap_features, domain='target')
-        #print(batch_idx)
-        #with torch.no_grad():
-        #    out = model(images.cuda())
-        #    pixel_features = model.encoder_last_features
+        domain_shift_measure.accumulate(src_img_features, domain='source')
+
+    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views, _) in tqdm(
+        enumerate(target_loaders[split]), ncols=constants.NCOLS,
+        total=len(target_loaders[split])):
+        image_size = images.shape[2:]
+        images = images.to(device)
+        targets = targets.to(device)
+
+        out = model(images)
+        
+        with torch.no_grad():
+            trg_img_features = model.lin_ft
+
+        domain_shift_measure.accumulate(trg_img_features, domain='target')
+
+
+    ############################################################
+    # === Build output directory structure ===
+    ############################################################
+    root_dir = "metrics_domain_shift"
+
+    dataset_dir = os.path.join(root_dir, parsedargs.source_dataset, str(parsedargs.fold_src_dataset),parsedargs.wsol_method)
+    os.makedirs(dataset_dir, exist_ok=True)
+
+
+
+    ############################################################
+    # === Build output filename dynamically ===
+    ############################################################
+
+    filename = f"{parsedargs.target_dataset}__fold{parsedargs.fold_trg_dataset}__{method_name}__{parsedargs.sfda_method}__{parsedargs.split}.json"
+    output_path = os.path.join(dataset_dir, filename)
     
     
     shift_score=domain_shift_measure.domain_shift()
+
+    with open(output_path, "w") as f:
+        json.dump(shift_score, f, indent=4)
+
+
     return 0
     
 def fast_eval():
@@ -975,16 +1047,20 @@ def fast_eval():
     parser.add_argument("--encoder_name", type=str, default=None)
     parser.add_argument("--dataset_type", type=str, default=None)
     # parser.add_argument("--exp_path", type=str, default=None)
+    parser.add_argument('--image_ids_to_draw', nargs='+', type=str, default=None)
+    parser.add_argument('--image_ids_to_draw_target', nargs='+', type=str, default=None)
     parser.add_argument("--tmp_outd", type=str, default='tmp_outd')
     parser.add_argument('--noise_level_for_eval_with_noisy_bbox', nargs='+',
                         type=int, default=[5, 10, 15, 20, 25, 30, 35 ,40, 45, 50])
-    #parser.add_argument("--target_dataset", type=str, default=None,
-    #                    help="Name of the dataset.", required=True, choices=[constants.CAMELYON512, constants.GLAS])
-    parser.add_argument('--image_ids_to_draw', nargs='+', type=str, default=None)
-    parser.add_argument('--image_ids_to_draw_target', nargs='+', type=str, default=None)
+    parser.add_argument("--fold_src_dataset", type=int, default=0, help="fold.")
+    parser.add_argument("--fold_trg_dataset", type=int, default=0, help="fold.")
+    parser.add_argument("--target_dataset", type=str, default=None,
+                       help="Name of the dataset.")
     parser.add_argument("--source_dataset", type=str, default=None, help="Source dataset")
     #parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
-    parser.add_argument("--path_pre_trained_source", type=json.loads, default={})
+    parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
+    parser.add_argument("--sfda_method", type=str, default=0, help="fold.")
+    parser.add_argument("--wsol_method", type=str, default='wsol', help="fold.")
     
 
     parsedargs = parser.parse_args()
@@ -1006,13 +1082,13 @@ def fast_eval():
     DLLogger.init_arb(backends=log_backends, master_pid=os.getpid())
     ##########
 
-    base_checkpoint_types = [constants.BEST_LOC]
+    base_checkpoint_types = [parsedargs.checkpoint_type]
         
     for checkpoint_type_extended in base_checkpoint_types:
         checkpoint_type = checkpoint_type_extended
         
-        #split = parsedargs.split
-        split = "train"
+        split = parsedargs.split
+        #split = "train"
         # exp_path = parsedargs.exp_path
         # # checkpoint_type = parsedargs.checkpoint_type
         # # tmp_outd = join(parsedargs.tmp_outd, os.path.split(exp_path)[-1])#, 'split_'+split+'_'+checkpoint_type)
@@ -1029,7 +1105,7 @@ def fast_eval():
         #target_methods = ['DeepMIL','GradCAMpp','LayerCAM','SAT']
         #target_methods = ['GradCAMpp']
 
-        target_methods = ['PixelCAM LC']
+        target_methods = ['SOURCE']
 
         method_name_lst = []
         for ind_method, target_method in enumerate(target_methods):

@@ -671,7 +671,7 @@ def compute_energy_distributions_img(model, loader, cam_computer, dataset_name, 
     }
 
     model.eval()
-    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views) in tqdm(
+    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views, _) in tqdm(
         enumerate(loader[split]), ncols=constants.NCOLS, total=len(loader[split])
     ):
         images = images.to(device)
@@ -1673,7 +1673,7 @@ def _compute_accuracy(args, model, loader):
     num_correct_cancer = 0
     num_images_cancer = 0
 
-    for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+    for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
         images = images.cuda()
         targets = targets.cuda()
         with torch.no_grad():
@@ -1830,22 +1830,41 @@ def show_cam_on_image(img: np.ndarray,
     return np.uint8(255 * cam)
 
 class IgnoreKeyLoader(yaml.SafeLoader):
-    def ignore_keys(self, node):
-        ignore_key = 'best_valid_tau_cl'
-        if isinstance(node, yaml.MappingNode):
-            i = 0
-            while i < len(node.value):
-                if node.value[i][0].value == ignore_key:
-                    del node.value[i]
-                else:
-                    i += 1
-        return self.construct_yaml_map(node)
+    pass
 
-    def ignore_numpy_scalars(self, node):
-        return None  # or any other dummy value
+# --- Ignore une clé spécifique ---
+def ignore_keys(loader, node):
+    ignore_key = 'best_valid_tau_cl'
+    if isinstance(node, yaml.MappingNode):
+        i = 0
+        while i < len(node.value):
+            if node.value[i][0].value == ignore_key:
+                del node.value[i]
+            else:
+                i += 1
+    return loader.construct_mapping(node)
 
-IgnoreKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, IgnoreKeyLoader.ignore_keys)
-IgnoreKeyLoader.add_constructor('tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar', IgnoreKeyLoader.ignore_numpy_scalars)
+# --- Ignore les scalaires NumPy (float32, int64, etc.) ---
+def ignore_numpy_scalars(loader, node):
+    try:
+        value = loader.construct_scalar(node)
+        return float(value)
+    except Exception:
+        return None
+
+# --- Enregistre les constructeurs ---
+IgnoreKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    ignore_keys
+)
+IgnoreKeyLoader.add_constructor(
+    'tag:yaml.org,2002:python/object/apply:numpy._core.multiarray.scalar',
+    ignore_numpy_scalars
+)
+IgnoreKeyLoader.add_constructor(
+    'tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar',
+    ignore_numpy_scalars
+)
 
 
 
@@ -1930,21 +1949,34 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
     checkpoint_type = 'best_classification'
 
+    tag = get_tag(args, checkpoint_type=checkpoint_type)
+    path_cl = join(exp_path, tag)
     with open(join(path_cl, 'config_model.yaml'), 'r') as fy:
         args_dict = yaml.load(fy, Loader=IgnoreKeyLoader)
         # args_dict = yaml.safe_load(fy)
         # args_dict['model']['freeze_encoder'] = False
-        args_dict['model']['folder_pre_trained_cl'] = None
-        args_dict['pixel_wise_classification'] = False
-        args_dict['multiple_layer_pixel_classifier'] = False
-        args_dict['anchors_ortogonal'] = False
-        args_dict['detach_pixel_classifier'] = False
-        args_dict['batch_norm_pixel_classifier'] = False
-        args_dict['one_layer_pixel_classifier'] = False
+        if 'PixelCAM' in args.method:
+            args_dict['pixel_wise_classification'] = True
+            args_dict['anchors_ortogonal'] = False
+            args_dict['batch_norm_pixel_classifier'] = False
+            args_dict['low_res'] = False
+            args_dict['multiple_layer_pixel_classifier'] = False
+            args_dict['detach_pixel_classifier'] = False
+            args_dict['one_layer_pixel_classifier'] = False
+            args_dict['cpt_cam_entropy'] = False
+        else:
+            args_dict['pixel_wise_classification'] = False
+            args_dict['anchors_ortogonal'] = False
+            args_dict['batch_norm_pixel_classifier'] = False
+            args_dict['low_res'] = False
+            args_dict['multiple_layer_pixel_classifier'] = False
+            args_dict['detach_pixel_classifier'] = False
+            args_dict['one_layer_pixel_classifier'] = False
         args = Dict2Obj(args_dict)
         args.outd = tmp_outd
         args.distributed = False
         args.eval_checkpoint_type = checkpoint_type
+        args.model['folder_pre_trained_cl'] = None
 
     args.sf_uda = False
 
@@ -2032,7 +2064,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     source_domain_data_paths = config.configure_data_paths(args_dict, source_dataset)
 
-    target_metadata_root = join('./folds/wsol-done-right-splits', target_dataset, f"fold-{args.fold}")
+    target_metadata_root = join('./folds/wsol-done-right-splits', target_dataset, f"fold-{3}")
     # args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
     target_domain_data_paths = config.configure_data_paths(args_dict, target_dataset)
 
@@ -2127,20 +2159,16 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     features = target_energy["img_ft"]   # Shape: (N, D)
     labels = target_energy["label_images"]
 
-    J_img = separability_J(target_energy["img_ft"], target_energy["label_images"])
-    print(f"Separability J = {J_img:.4f}")
-    DBI = davies_bouldin_score(features, labels)
-    print(f"Davies–Bouldin index = {DBI:.4f}")
-
     sub_features, sub_labels = sample_balanced(features, labels, n_per_class=2000)
 
 
-    image_anchor_weights = model.classification_head.fc.weight[1:] 
+    #image_anchor_weights = model.classification_head.fc.weight[1:] 
 
-    anchor_weights = image_anchor_weights.cpu().detach().numpy()
+    #anchor_weights = image_anchor_weights.cpu().detach().numpy()
 
-    X_umap = np.vstack([sub_features, anchor_weights])
+    #X_umap = np.vstack([sub_features, anchor_weights])
 
+    X_umap = sub_features
 
     # reducer = umap.UMAP(n_components=2, n_neighbors=100, min_dist=0.05,metric="cosine",random_state=42)
     # embedding = reducer.fit_transform(X_umap) 
@@ -2158,7 +2186,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
 
             embedding_features = embedding[:len(sub_features)]
-            embedding_anchors = embedding[len(sub_features):]
+            #embedding_anchors = embedding[len(sub_features):]
 
             labels = np.array(sub_labels)
             unique_labels = np.unique(labels)
@@ -2172,8 +2200,8 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                             label=f"Classe {label}", alpha=0.7, s=10)
 
             # Plot anchors (poids du classifieur)
-            plt.scatter(embedding_anchors[:,0], embedding_anchors[:,1],
-                        c='black', marker='*', s=180, label='Anchors (weights)', edgecolor='white')
+            #plt.scatter(embedding_anchors[:,0], embedding_anchors[:,1],
+                        #c='black', marker='*', s=180, label='Anchors (weights)', edgecolor='white')
 
             plt.legend()
             #plt.title("")
