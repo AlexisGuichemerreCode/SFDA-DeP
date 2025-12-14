@@ -2074,7 +2074,7 @@ class Trainer(Basic):
 
         elif self.args.esfda:
             # =====================================================
-            # DYNAMIC RE-SAMPLING OF Xforget / Xretain
+            # DYNAMIC RE-SAMPLING OF Dforget / Dretain
             # =====================================================
             if (self.epoch == 1):
                 # Static mode → one-time precomputation
@@ -2114,7 +2114,7 @@ class Trainer(Basic):
                 #  BUILD RETAIN SETS : overpred and underpred
                 # ------------------------------------------------------------
 
-                # 1) Xretain = all images not in Xforget
+                # 1) Xretain = all images not in Dforget
                 all_seen = list(self.idx_to_pred.keys())
 
                 self.Xretain = [idx for idx in all_seen if idx not in self.flipped_indices]
@@ -2152,7 +2152,7 @@ class Trainer(Basic):
                                 retain_all_others=self.args.retain_all_others
                             )
 
-                print(f"[Dynamic] Resampled Xforget / Xretain at epoch {self.epoch}.")
+                print(f"[Dynamic] Resampled Dforget / Dretain at epoch {self.epoch}.")
 
 
 
@@ -2540,7 +2540,7 @@ class Trainer(Basic):
         pred_count = torch.zeros(K)        # accumulate class frequencies
         total_samples = 0                  # count total images
 
-        # Classes that are over-predicted and from which we will select Xforget
+        # Classes that are over-predicted and from which we will select Dforget
         freeze_classes = [c for c, _ in self.overpred_class]
         if len(freeze_classes) == 0:
             # Fallback: freeze all classes that appear in predictions
@@ -4051,8 +4051,12 @@ class Trainer(Basic):
     #     plt.close()
 
     def _plot_entropy_hist_per_class(self, ent_correct, ent_incorrect, class_name, out_path, num_classes, bins=60, figsize=(16, 10)):
+
+        eps = 1e-4
+
+
         h_max = math.log(max(2, num_classes))
-        bin_edges = np.linspace(0.0, h_max, bins)
+        bin_edges = np.linspace(0.0, h_max + eps, bins)
 
         plt.figure(figsize=figsize)
 
@@ -4161,6 +4165,16 @@ class Trainer(Basic):
         correct_flip, total_flip = 0, 0
         correct_stable, total_stable = 0, 0
 
+
+        all_probs = []
+        all_logits = []
+        all_labels = []
+
+
+        ece_vals = []
+        nll_vals = []
+        brier_vals = []
+
         for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views, _) in enumerate(loader):
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)
@@ -4214,6 +4228,10 @@ class Trainer(Basic):
 
                 ent_per_img = -(images_probs.clamp(min=1e-8) * images_probs.clamp(min=1e-8).log()).sum(dim=1)
 
+                all_probs.append(images_probs.detach().cpu())
+                all_logits.append(cl_logits.detach().cpu())
+                all_labels.append(targets.detach().cpu())
+
                 with torch.no_grad():
                     for b in range(images.size(0)):
                         true_cls = int(targets[b].item())
@@ -4222,9 +4240,9 @@ class Trainer(Basic):
                         h = float(ent_per_img[b].item())
 
                         if pred_cls == true_cls:
-                            ent_correct_by_class[true_cls].append(h)
+                            ent_correct_by_class[pred_cls].append(h)
                         else:
-                            ent_incorrect_by_class[true_cls].append(h)
+                            ent_incorrect_by_class[pred_cls].append(h)
 
 
                         # if true_cls in (0, 1):  
@@ -4302,6 +4320,16 @@ class Trainer(Basic):
         dbi = davies_bouldin_score(features_np, labels_np)
         CH = calinski_harabasz_score(features_np, labels_np)
         J_index = self.compute_J_index(features_np, labels_np)
+
+
+        all_probs = torch.cat(all_probs, dim=0)     
+        all_logits = torch.cat(all_logits, dim=0)  
+        all_labels = torch.cat(all_labels, dim=0)   
+
+        ECE_global = self.compute_ece(all_probs, all_labels, n_bins=15)
+        NLL_global = self.compute_nll(all_logits, all_labels)
+        Brier_global = self.compute_brier(all_probs, all_labels, num_classes=self.args.num_classes)
+
 
         self.silhouette.append(silhouette)
         self.DBI.append(dbi)
@@ -4420,6 +4448,9 @@ class Trainer(Basic):
             "FP": fp,
             "TN": tn,
             "FN": fn,
+            "ECE": ECE_global,
+            "NLL": NLL_global,
+            "Brier": Brier_global,
         }
 
         cm_file = os.path.join(self.args.outd, "confusion_evolution.csv")
@@ -4481,6 +4512,10 @@ class Trainer(Basic):
             "Htilde": Htilde,
             "acc_flip": acc_flip,
             "acc_stable": acc_stable,
+            "acc_global": acc_global,
+            "ECE": ECE_global,
+            "NLL": NLL_global,
+            "Brier": Brier_global,
         }
 
         torch.cuda.empty_cache()
@@ -4571,6 +4606,42 @@ class Trainer(Basic):
                 else:
                     print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {target_train_acc:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
 
+    def save_unlearn_models(self, epoch, max_epochs, milestones=[0.10, 0.25, 0.50, 0.75, 1.00]):
+        """
+        Return True if the current epoch matches one of the milestone percentages.
+        """
+        # Convert milestones into exact epoch numbers
+        milestone_epochs = {max(1, round(max_epochs * m)) for m in milestones}
+
+        return epoch in milestone_epochs
+
+
+
+    def compute_ece(self, probs, labels, n_bins=15):
+        bin_boundaries = torch.linspace(0, 1, n_bins+1)
+        ece = 0.0
+
+        confidences, predictions = torch.max(probs, dim=1)
+        accuracies = (predictions == labels).float()
+
+        for i in range(n_bins):
+            low = bin_boundaries[i]
+            high = bin_boundaries[i+1]
+            mask = (confidences > low) & (confidences <= high)
+            if mask.sum() > 0:
+                accuracy_in_bin  = accuracies[mask].mean()
+                avg_conf_in_bin  = confidences[mask].mean()
+                ece += (mask.float().mean() * torch.abs(avg_conf_in_bin - accuracy_in_bin))
+        return float(ece)
+
+
+    def compute_nll(self, logits, labels):
+        return float(F.cross_entropy(logits, labels).item())
+
+
+    def compute_brier(self, probs, labels, num_classes):
+        one_hot = torch.nn.functional.one_hot(labels, num_classes=num_classes).float()
+        return float(((probs - one_hot)**2).mean().item())
 
     def compute_acc_on_target_came(self, epoch, split, compute_kl= False):
 
@@ -4593,6 +4664,10 @@ class Trainer(Basic):
                     "Htilde": [],
                     "acc_flip": [],
                     "acc_stable": [],
+                    "acc_global": [],
+                    "ece": [],
+                    "nll": [],
+                    "brier": [],
                 },
                 "valcl": {
                     "acc_cl": [],
@@ -4611,9 +4686,12 @@ class Trainer(Basic):
                     "Htilde": [],
                     "acc_flip": [],
                     "acc_stable": [],
-                }
+                    "acc_global": [],
+                    "ece": [],
+                    "nll": [],
+                    "brier": [],
             }
-
+        }
 
 
         self.model.eval()
@@ -4637,6 +4715,10 @@ class Trainer(Basic):
             Htilde         = stats["Htilde"]
             acc_flip       = stats["acc_flip"]
             acc_stable     = stats["acc_stable"]
+            acc_global     = stats["acc_global"]
+            ece            = stats["ECE"]
+            nll            = stats["NLL"]
+            brier          = stats["Brier"]
 
 
             self.metrics[split]["acc_cl"].append(acc_cl)
@@ -4660,7 +4742,65 @@ class Trainer(Basic):
 
             self.metrics[split]["acc_flip"].append(acc_flip)
             self.metrics[split]["acc_stable"].append(acc_stable)
+            self.metrics[split]["acc_global"].append(acc_global)
 
+            self.metrics[split]["ece"].append(ece)
+            self.metrics[split]["nll"].append(nll)
+            self.metrics[split]["brier"].append(brier)
+
+
+            if self.args.save_multiple_unlearn_models:
+                if self.save_unlearn_models(self.epoch, self.args.max_epochs):
+                    current_unlearn_model = deepcopy(self.model).to(self.cpu_device).eval()
+
+                    unlearning_log_path = os.path.join(self.args.outd, "best_models_unlearning.txt")
+            
+                    checkpoint_type = f"B-Unlearning-epoch{self.epoch}"
+                    tag = get_tag(self.args, checkpoint_type=checkpoint_type)
+                    path = os.path.join(self.args.outd, tag)
+
+                    if not os.path.isdir(path):
+                        os.makedirs(path)
+                    if self.args.task == constants.STD_CL:
+                        if self.args.method in [constants.METHOD_ACOL,
+                                                constants.METHOD_ADL,
+                                                constants.METHOD_SPG,
+                                                constants.METHOD_TSCAM,
+                                                constants.METHOD_SAT]:
+                            torch.save(current_unlearn_model.state_dict(),
+                                    join(path, 'model.pt'))
+
+                        elif self.args.method == constants.METHOD_MAXMIN:
+                            torch.save(current_unlearn_model.encoder.state_dict(),
+                                    join(path, 'encoder.pt'))
+                            torch.save(current_unlearn_model.classification_head1.state_dict(),
+                                    join(path, 'classification_head1.pt'))
+                            torch.save(current_unlearn_model.classification_head2.state_dict(),
+                                    join(path, 'classification_head2.pt'))
+                            if current_unlearn_model.mask_head is not None:
+                                torch.save(current_unlearn_model.mask_head.state_dict(),
+                                        join(path, 'mask_head.pt'))
+
+                        elif self.args.method == constants.METHOD_PIXELCAM:
+                            if "deit" in self.args.model['encoder_name']:
+                                torch.save(current_unlearn_model.state_dict(),
+                                    join(path, 'model.pt'))
+                            else:
+                                torch.save(current_unlearn_model.encoder.state_dict(),
+                                        join(path, 'encoder.pt'))
+                                torch.save(current_unlearn_model.classification_head.state_dict(),
+                                        join(path, 'classification_head.pt')),
+                                torch.save(current_unlearn_model.pixel_wise_classification_head.state_dict(),
+                                            join(path, 'pixel_wise_classification_head.pt'))
+                        else:
+                            torch.save(current_unlearn_model.encoder.state_dict(),
+                                    join(path, 'encoder.pt'))
+                            torch.save(current_unlearn_model.classification_head.state_dict(),
+                                    join(path, 'classification_head.pt'))
+                        
+                    self._save_args(path=join(path, 'config_model.yaml'))
+                    DLLogger.log(message="Stored Model [CP: {} \t EPOCH: {} \t TAG: {}]:"
+                                        " {}".format(checkpoint_type, epoch, tag, path))
 
 
             # self.target_train_acc_cl.append(target_train_acc)
@@ -5072,18 +5212,34 @@ class Trainer(Basic):
     #     with open(pickle_path, 'wb') as f:
     #         pkl.dump(curves_data, f)
 
+    def fmt(self,x):
+        """Format number/string to be filename-safe."""
+        s = str(x)
+        s = s.replace('.', 'p')
+        s = s.replace('-', 'm')
+        return s
+
     def plot_target_acc_curves(self, task, cmpt_epoch, split):
         """
         task : str in {
             'cl', 'silhouette', 'DBI', 'CH', 'J_index',
             'f1', 'precision', 'recall',
             'image_entropy', 'acc_normal', 'acc_cancer',
-            'acc_flip', 'acc_stable'
+            'acc_flip', 'acc_stable', 'kl_uniform', 'acc_global'
         }
-        split : constants.TRAINSET ou constants.CLVALIDSET
+        split : constants.TRAINSET or constants.CLVALIDSET
         """
 
-        # --- Mapping task -> (clé dans self.metrics[split], label, prefix fichier)
+        lr = self.fmt(self.args.optimizer.get("opt__lr", "NA"))
+        step_size = self.fmt(self.args.optimizer.get("opt__step_size", "NA"))
+        Resample = self.fmt(getattr(self.args, "resample_every", "NA"))
+        imgs_ratio = self.fmt(getattr(self.args, "esfda_select_imgs_ratio", "NA"))
+        Retain_lambda = self.fmt(getattr(self.args, "CERetain_lambda", "NA"))
+        Forget_lambda = self.fmt(getattr(self.args, "CEForget_lambda", "NA"))
+
+        hp_suffix = f"LR{lr}_STEP{step_size}_K{Resample}_P{imgs_ratio}_LRETAIN{Retain_lambda}_LFORGET{Forget_lambda}"
+
+
         task_map = {
             "cl":           ("acc_cl",           "Classification",          "Classification"),
             "silhouette":   ("silhouette",    "Silhouette",              "Silhouette"),
@@ -5099,6 +5255,10 @@ class Trainer(Basic):
             "acc_flip":     ("acc_flip",      "Flip Accuracy",           "Acc_Flip"),
             "acc_stable":   ("acc_stable",    "Stable Accuracy",         "Acc_Stable"),
             "kl_uniform":   ("kl_uniform",    "KL Divergence (Uniform)", "KL_Uniform"),
+            "acc_global":   ("acc_global",    "Global Accuracy",         "Acc_Global"),
+            "ECE":          ("ece",    "ECE",         "ECE"),
+            "NLL":          ("nll",    "NLL",         "NLL"),
+            "Brier":        ("brier",    "Brier",         "Brier"),
         }
 
         if task not in task_map:
@@ -5135,7 +5295,7 @@ class Trainer(Basic):
         plt.xticks(epochs)
         plt.tight_layout()
 
-        png_name = f"{file_prefix}_curve_{split}.png"
+        png_name = f"{file_prefix}_curve_{split}_{hp_suffix}.png"
         output_path = os.path.join(base_dir, png_name)
         plt.savefig(output_path)
         plt.close()
@@ -5147,22 +5307,19 @@ class Trainer(Basic):
             "ylabel": ylabel,
             "split": split,
         }
-        pickle_name = f"{file_prefix}_results_{split}.pickle"
+        pickle_name = f"{file_prefix}_results_{split}_{hp_suffix}.pickle"
         pickle_path = os.path.join(base_dir, pickle_name)
         with open(pickle_path, "wb") as f:
             pkl.dump(curves_data, f)
 
-        all_metrics_path = os.path.join(base_dir, f"all_metrics_{split}.pickle")
+        all_metrics_path = os.path.join(base_dir, f"all_metrics_{split}_{hp_suffix}.pickle")
         with open(all_metrics_path, "wb") as f:
             pkl.dump(self.metrics[split], f)
 
     def plot_unlearning_acc(self):
-        """
-        Plot accuracies (flip & stable) au cours des batches pendant l'unlearning.
-        """
         plt.figure(figsize=(8, 5))
 
-        # On suppose que self.acc_flip et self.acc_stable sont remplis batch par batch
+        
         batches = range(1, len(self.history_acc_flip) + 1)
 
         plt.plot(batches, self.history_acc_flip, label="Accuracy Flip", linewidth=2, color="red")
@@ -5171,7 +5328,7 @@ class Trainer(Basic):
         plt.title("Unlearning Accuracies per Batch")
         plt.xlabel("Batch")
         plt.ylabel("Accuracy")
-        plt.ylim(0, 1)  # accuracies en [0,1]
+        plt.ylim(0, 1) 
         plt.legend()
         plt.grid(True)
 
@@ -5184,7 +5341,7 @@ class Trainer(Basic):
     def plot_losses(self):
         plt.figure(figsize=(8,5))
 
-        # On suppose que chaque liste a une valeur par epoch
+
         epochs = range(1, len(self.store_master_loss) + 1)
 
         plt.plot(epochs, self.store_master_loss, label="Master Loss", linewidth=2)
@@ -5642,7 +5799,7 @@ class Trainer(Basic):
                         torch.save(_model.encoder.state_dict(),
                                 join(path, 'encoder.pt'))
                         torch.save(_model.classification_head.state_dict(),
-                                join(path, 'classification_head.pt')),
+                                join(path, 'classification_head.pt'))
                         torch.save(_model.pixel_wise_classification_head.state_dict(),
                                     join(path, 'pixel_wise_classification_head.pt'))
                 else:

@@ -19,7 +19,7 @@ root_dir = dirname(dirname(dirname(abspath(__file__))))
 sys.path.append(root_dir)
 
 
-CONST1 = 1000  # used to generate random numbers.
+CONST1 = 1000  
 
 
 def str2bool(v):

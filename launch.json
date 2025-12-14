@@ -610,10 +610,10 @@
 
 
             "--esfda_flip_labels", "True",
-            "--CEFlipLoss_lambda", "0.3",
+            "--CEForget_lambda", "0.3",
 
             "--esfda_notflip_labels", "True",
-            "--CENotFlipLoss_lambda", "0.7",
+            "--CERetain_lambda", "0.7",
 
             "--esfda_flip_labels_weight", "False",
 

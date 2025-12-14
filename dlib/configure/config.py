@@ -902,15 +902,18 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'esfda_distance_normal': 4.0,
 
         'esfda_flip_labels': False,  # flip labels of the images
-        'CEFlipLoss_lambda': 0.1,  # lambda of this term. >= 0.
+        'CEForget_lambda': 0.1,  # lambda of this term. >= 0.
 
         'esfda_notflip_labels': False,  # do not flip labels of the images
-        'CENotFlipLoss_lambda': 0.1,  # lambda of this term. >= 0.
+        'CERetain_lambda': 0.1,  # lambda of this term. >= 0.
         'esfda_flip_labels_weight': False,  # not flip labels of the images with weight
 
         "esfda_loc": False,  # use or not ECE.
         "esfda_loc_lambda": 1.,  # lambda for ECE.
         "esfda_loc_mode": 'mse',  # lambda for ECE.
+
+
+        "save_multiple_unlearn_models": False,  # Save or not multiple unlearning models.
         
 
         'measure_loc': False,

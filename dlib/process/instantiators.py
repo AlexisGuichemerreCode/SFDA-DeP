@@ -469,7 +469,7 @@ def get_loss_target(args):
                         cuda_id=args.c_cudaid,
                         support_background=support_background,
                         multi_label_flag=multi_label_flag)
-                    CEFlipLoss.set_it(lambda_=args.CEFlipLoss_lambda)
+                    CEFlipLoss.set_it(lambda_=args.CEForget_lambda)
                     masterloss.add(CEFlipLoss)
 
                 if args.esfda_notflip_labels:
@@ -477,7 +477,7 @@ def get_loss_target(args):
                         cuda_id=args.c_cudaid,
                         support_background=support_background,
                         multi_label_flag=multi_label_flag)
-                    CENotFlipLoss.set_it(lambda_=args.CENotFlipLoss_lambda, esfda_flip_labels_weight = args.esfda_flip_labels_weight, esfda_weight_entropy = args.esfda_weight_entropy)
+                    CENotFlipLoss.set_it(lambda_=args.CERetain_lambda, esfda_flip_labels_weight = args.esfda_flip_labels_weight, esfda_weight_entropy = args.esfda_weight_entropy)
                     masterloss.add(CENotFlipLoss)
             
             if args.esfda_loc:

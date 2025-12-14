@@ -677,7 +677,7 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--gmm_source_model', type=str2bool, default=None,
                         help='Use gmm source model to perform the alignment in the pixel feature space between source and target.')
     
-    # 6- EnergySFDA
+    # 6- UnlearningSFDA
     parser.add_argument('--esfda', type=str2bool, default=None, help='USE/NOT ESFDA method for SFUDA.')
     parser.add_argument('--freeze_classifier_sfda', type=str2bool, default=None,)
     parser.add_argument('--freeze_encoder_sfda', type=str2bool, default=None,)
@@ -711,11 +711,11 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_distance_normal', type=float, default=None,)
 
     parser.add_argument('--esfda_flip_labels', type=str2bool, default=None,)
-    parser.add_argument('--CEFlipLoss_lambda', type=float, default=None,)
+    parser.add_argument('--CEForget_lambda', type=float, default=None,)
 
 
     parser.add_argument('--esfda_notflip_labels', type=str2bool, default=None,)
-    parser.add_argument('--CENotFlipLoss_lambda', type=float, default=None,)
+    parser.add_argument('--CERetain_lambda', type=float, default=None,)
     parser.add_argument('--esfda_flip_labels_weight', type=str2bool, default=None,)
 
 
@@ -724,6 +724,9 @@ def get_args(args: dict, eval: bool = False):
                         help='ECE: lambda value for loss .')
     parser.add_argument('--esfda_loc_mode', type=str, default=None, 
                         help='ECE: lambda value for loss .')
+
+    parser.add_argument('--save_multiple_unlearn_models', type=str2bool, default=None, 
+                        help='Save multiple Unlearn models during unlearning.')
 
     parser.add_argument('--sfda_aug_transform', type=str2bool, default=None)
 

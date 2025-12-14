@@ -101,7 +101,7 @@ plt.figure(figsize=(8, 5))
 plt.bar([str(t) for t in thresholds], num_images, color='steelblue', edgecolor='black')
 
 # Titres et axes
-plt.title("Number of images in Xforget per unlearning ratio", fontsize=14, weight='bold')
+plt.title("Number of images in Dforget per unlearning ratio", fontsize=14, weight='bold')
 plt.xlabel("Unlearning ratio", fontsize=12)
 plt.ylabel("Number of Images", fontsize=12)
 

@@ -120,6 +120,9 @@ def main():
             "acc_flip",
             "acc_stable",
             "kl_uniform",
+            "ECE",
+            "NLL",
+            "Brier",
         ]
 
         for split in splits:
