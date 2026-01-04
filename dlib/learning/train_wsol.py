@@ -453,7 +453,7 @@ class Trainer(Basic):
             self.target_train_acc_cancer = []
 
 
-            self.target_train_pxap = []
+            self.target_valpx_pxap = []
             self.target_train_dice_bg = []
             self.target_train_dice_fg = []
             self.target_train_miou = []
@@ -472,7 +472,7 @@ class Trainer(Basic):
             # self.source_test_pixel_entropy = []
             # self.source_train_pixel_entropy = []
 
-            # self.target_train_pxap = []
+            # self.target_valpx_pxap = []
             # self.target_test_pxap = []
             # self.source_test_pxap = []
             # self.source_train_pxap = []
@@ -526,6 +526,18 @@ class Trainer(Basic):
         if args.task == constants.TCAM:
             self.tcam_extractor = self._build_tcam_extractor(
                 classifier=classifier, args=self.args)
+
+
+        if args.task in [constants.STD_CL]:
+            if args.sf_uda == True and args.esfda == True:
+                args_source = deepcopy(args)
+                args_source.method = args.sf_uda_source_wsol_method
+
+                self.std_cam_extractor = self._build_std_cam_extractor(
+                    classifier=classifier,
+                    args=args_source
+                )
+
 
 
         self.fcam_argmax = False
@@ -1011,6 +1023,41 @@ class Trainer(Basic):
         cams = None
         for idx, (image, target) in enumerate(zip(images, targets)):
             cl_logits = self.classifier(image.unsqueeze(0))
+            cam = self.std_cam_extractor(
+                class_idx=target.item(), scores=cl_logits, normalized=True)
+            # h`, w`
+            # todo: set to false (normalize).
+
+            cam = cam.detach().unsqueeze(0).unsqueeze(0)
+
+            if cams is None:
+                cams = cam
+            else:
+                cams = torch.vstack((cams, cam))
+
+        # cams: (bsz, 1, h, w)
+        assert cams.ndim == 4
+        cams = torch.nan_to_num(cams, nan=0.0, posinf=1., neginf=0.0)
+        cams = F.interpolate(cams,
+                             image_size,
+                             mode='bilinear',
+                             align_corners=False)  # (bsz, 1, h, w)
+        cams = torch.nan_to_num(cams, nan=0.0, posinf=1., neginf=0.0)
+
+        return cams
+
+    def get_pseudo_cams_minibatch(self, images, targets) -> torch.Tensor:
+        assert images.ndim == 4
+        image_size = images.shape[2:]
+
+        cams = None
+
+        for idx, (image, target) in enumerate(zip(images, targets)):
+            if self.args.sf_uda_source_wsol_method == constants.METHOD_SAT:
+                cl_logits = self.classifier(image.unsqueeze(0), labels = target)
+            else:
+                cl_logits = self.classifier(image.unsqueeze(0))
+                
             cam = self.std_cam_extractor(
                 class_idx=target.item(), scores=cl_logits, normalized=True)
             # h`, w`
@@ -1617,12 +1664,12 @@ class Trainer(Basic):
                             align_corners=False
                         )
 
-                    if args.pixel_wise_classification and args.ece_adapt:
+                    if args.pixel_wise_classification and args.ece:
                         _, _, h, w = self.model.encoder_last_features.shape
                         interpolation_mode = 'bilinear'
                         if std_cams is None:
-                            cams_inter = self.get_std_cams_minibatch(images=images,
-                                                                    targets=z_label)
+                            cams_inter = self.get_pseudo_cams_minibatch(images=images,
+                                                                    targets=y_pred_batch)
                         else:
                             cams_inter = std_cams
 
@@ -1656,6 +1703,7 @@ class Trainer(Basic):
                                      cl_logits=cl_logits,
                                      glabel=y_global,
                                      pseudo_glabel=y_pl_global,
+                                     raw_img=raw_imgs,
                                      cutmix_holder=cutmix_holder,
                                      seeds=seeds,
                                      key_arg=key_arg
@@ -3731,13 +3779,13 @@ class Trainer(Basic):
                 # self.optimizer.step()
 
 
-            if self.args.target_domain_ds_to_compute_stats in [constants.CAMELYON512, constants.CAMELYON17_512] and batch_idx % self.args.cmpt_batch == 0:
+            if self.args.target_domain_ds_to_compute_stats in [constants.CAMELYON512, constants.CAMELYON17_512, constants.OpenImagesTrgt, constants.GLAS] and batch_idx % self.args.cmpt_batch == 0:
                 # self.model.eval()
                 # with torch.no_grad():
                 #     self.compute_acc_on_source_and_target(self.epoch)
                 #     self.compute_loc_on_source_and_target(self.epoch)
                 if self.args.measure_loc:
-                    self.compute_loc_on_target(self.epoch)
+                    self.compute_loc_on_target(self.epoch, split = constants.CLVALIDSET)
                 # self.model.train()
 
                 self.model.eval()
@@ -3746,7 +3794,7 @@ class Trainer(Basic):
                     self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.TRAINSET)
                     #self.compute_loc_on_target(self.epoch)
 
-                    if self.args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and self.args.cl_train_models:
+                    if self.args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512, constants.OpenImagesTrgt, constants.GLAS] and self.args.cl_train_models:
                         self.update_best_cl_train_model_came(epoch=self.epoch)
                 self.model.train()
                 
@@ -4300,17 +4348,18 @@ class Trainer(Basic):
             y_pred.extend(pred.cpu().tolist())
             y_true.extend(targets.cpu().tolist())
 
-            for j in range(len(targets)):
-                if targets[j] == 0:
-                    num_images_normal += 1
-                    if pred[j] == targets[j]:
-                        num_correct_normal += 1
-                elif targets[j] == 1:
-                    num_images_cancer += 1
-                    if pred[j] == targets[j]:
-                        num_correct_cancer += 1
-                else:
-                    raise ValueError("Unknown class label")
+            if self.args.num_classes == 2:
+                for j in range(len(targets)):
+                    if targets[j] == 0:
+                        num_images_normal += 1
+                        if pred[j] == targets[j]:
+                            num_correct_normal += 1
+                    elif targets[j] == 1:
+                        num_images_cancer += 1
+                        if pred[j] == targets[j]:
+                            num_correct_cancer += 1
+                    else:
+                        raise ValueError("Unknown class label")
 
         features_np = np.concatenate(features_list, axis=0)
         labels_np = np.concatenate(labels_list, axis=0)
@@ -4859,7 +4908,7 @@ class Trainer(Basic):
 
         cam_performance_target_train = cam_computer_target_train.compute_and_evaluate_cams()
 
-        self.target_train_pxap.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_PXAP])
+        self.target_valpx_pxap.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_PXAP])
         #self.source_test_pxap.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_PXAP])
         #self.source_train_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
 
@@ -4969,7 +5018,7 @@ class Trainer(Basic):
   
         cam_performance_source_train = cam_computer_source_train.compute_and_evaluate_cams()
 
-        self.target_train_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
+        self.target_valpx_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
 
         self.target_train_dice_bg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
 
@@ -4989,7 +5038,7 @@ class Trainer(Basic):
             'target_train_acc_normal': self.target_train_acc_normal,
             'target_train_acc_cancer': self.target_train_acc_cancer,
 
-            'target_train_pxap': self.target_train_pxap,
+            'target_valpx_pxap': self.target_valpx_pxap,
             'target_train_dice_bg': self.target_train_dice_bg,
             'target_train_dice_fg': self.target_train_dice_fg,
             'target_train_miou': self.target_train_miou,
@@ -5184,7 +5233,7 @@ class Trainer(Basic):
     #         ylabel = 'Cancer Classification'
             
     #     else:
-    #         target_data = self.target_train_pxap
+    #         target_data = self.target_valpx_pxap
     #         ylabel = 'Localization'
 
     #     plt.figure(figsize=(12, 3))
@@ -5881,53 +5930,153 @@ class Trainer(Basic):
                                 " {}".format(checkpoint_type, epoch, tag, path))
             
 
-    def save_best_cl_train_models(self):
+    # def save_best_cl_train_models(self):
 
-        model = self.cl_train_model  
-        epoch = self.best_epoch      
-        acc = self.best_accuracy    
+    #     model = self.cl_train_model  
+    #     epoch = self.best_epoch      
+    #     acc = self.best_accuracy    
 
-        save_dir = os.path.join(self.args.outd, "best_model_cl")
-        os.makedirs(save_dir, exist_ok=True)
+    #     save_dir = os.path.join(self.args.outd, "best_model_cl")
+    #     os.makedirs(save_dir, exist_ok=True)
 
-        # Save in  .txt
-        with open(os.path.join(self.args.outd, "best_model_info.txt"), "w") as f:
-            f.write(f"Best classification model at epoch {epoch} with accuracy {acc:.2f}%\n")
+    #     # Save in  .txt
+    #     with open(os.path.join(self.args.outd, "best_model_info.txt"), "w") as f:
+    #         f.write(f"Best classification model at epoch {epoch} with accuracy {acc:.2f}%\n")
 
-        # Sauvegarde du modèle selon la méthode utilisée
+    #     # Sauvegarde du modèle selon la méthode utilisée
+    #     if self.args.task == constants.STD_CL:
+    #         method = self.args.method
+
+    #         if method in [constants.METHOD_ACOL,
+    #                     constants.METHOD_ADL,
+    #                     constants.METHOD_SPG,
+    #                     constants.METHOD_TSCAM,
+    #                     constants.METHOD_SAT]:
+    #             torch.save(model.state_dict(), os.path.join(save_dir, 'model.pt'))
+
+    #         elif method == constants.METHOD_MAXMIN:
+    #             torch.save(model.encoder.state_dict(), os.path.join(save_dir, 'encoder.pt'))
+    #             torch.save(model.classification_head1.state_dict(), os.path.join(save_dir, 'classification_head1.pt'))
+    #             torch.save(model.classification_head2.state_dict(), os.path.join(save_dir, 'classification_head2.pt'))
+    #             if model.mask_head is not None:
+    #                 torch.save(model.mask_head.state_dict(), os.path.join(save_dir, 'mask_head.pt'))
+
+    #         elif method == constants.METHOD_PIXELCAM:
+    #             if "deit" in self.args.model['encoder_name']:
+    #                 torch.save(model.state_dict(), os.path.join(save_dir, 'model.pt'))
+    #             else:
+    #                 torch.save(model.encoder.state_dict(), os.path.join(save_dir, 'encoder.pt'))
+    #                 torch.save(model.classification_head.state_dict(), os.path.join(save_dir, 'classification_head.pt'))
+    #                 torch.save(model.pixel_wise_classification_head.state_dict(), os.path.join(save_dir, 'pixel_wise_classification_head.pt'))
+
+    #         else:  
+    #             torch.save(model.encoder.state_dict(), os.path.join(save_dir, 'encoder.pt'))
+    #             torch.save(model.classification_head.state_dict(), os.path.join(save_dir, 'classification_head.pt'))
+
+        
+    #     self._save_args(path=os.path.join(save_dir, 'config_model.yaml'))
+
+    #     DLLogger.log(message=f"[SAVE] Best classification model (Epoch {epoch}, Acc {acc:.2f}%) saved to: {save_dir}")
+
+    def save_best_cl_train_models(self, criterion=constants.CLVALIDSET):
+        """
+        criterion: "valcl" or "valpx"
+        """
+
+        # --------------------------------------------------
+        # 1. Select best model & metrics depending on criterion
+        # --------------------------------------------------
+        if criterion == constants.CLVALIDSET:
+            model = self.cl_train_model
+            epoch = self.best_epoch
+            acc = self.best_accuracy
+            metric_name = "Accuracy"
+            metric_value = acc
+            save_suffix = "valcl"
+
+        elif criterion == constants.PXVALIDSET:
+            model = self.pxap_train_model
+            epoch = self.best_epoch_pxap
+            acc = self.best_accuracy_pxap
+            metric_name = "PxAP"
+            metric_value = acc
+            save_suffix = "valpx"
+
+        else:
+            raise ValueError(f"Unknown criterion: {criterion}")
+
+        # --------------------------------------------------
+        # 2. Create save directory
+        # --------------------------------------------------
+        #save_dir = os.path.join(self.args.outd, f"best_model_{save_suffix}")
+        #os.makedirs(save_dir, exist_ok=True)
+
+        checkpoint_type = f"B-UNLEARNING_{save_suffix}"
+        tag = get_tag(self.args, checkpoint_type=checkpoint_type)
+        save_dir = os.path.join(self.args.outd, tag)
+
+        if not os.path.isdir(save_dir):
+            os.makedirs(save_dir)
+
+        # --------------------------------------------------
+        # 3. Save info file
+        # --------------------------------------------------
+        with open(os.path.join(save_dir, "best_model_info.txt"), "w") as f:
+            f.write(
+                f"Best model selected by {metric_name}\n"
+                f"Epoch: {epoch}\n"
+                f"{metric_name}: {metric_value:.4f}\n"
+            )
+
+        # --------------------------------------------------
+        # 4. Save model weights (method-aware)
+        # --------------------------------------------------
         if self.args.task == constants.STD_CL:
             method = self.args.method
 
-            if method in [constants.METHOD_ACOL,
-                        constants.METHOD_ADL,
-                        constants.METHOD_SPG,
-                        constants.METHOD_TSCAM,
-                        constants.METHOD_SAT]:
-                torch.save(model.state_dict(), os.path.join(save_dir, 'model.pt'))
+            if method in [
+                constants.METHOD_ACOL,
+                constants.METHOD_ADL,
+                constants.METHOD_SPG,
+                constants.METHOD_TSCAM,
+                constants.METHOD_SAT,
+            ]:
+                torch.save(model.state_dict(), os.path.join(save_dir, "model.pt"))
 
             elif method == constants.METHOD_MAXMIN:
-                torch.save(model.encoder.state_dict(), os.path.join(save_dir, 'encoder.pt'))
-                torch.save(model.classification_head1.state_dict(), os.path.join(save_dir, 'classification_head1.pt'))
-                torch.save(model.classification_head2.state_dict(), os.path.join(save_dir, 'classification_head2.pt'))
+                torch.save(model.encoder.state_dict(), os.path.join(save_dir, "encoder.pt"))
+                torch.save(model.classification_head1.state_dict(), os.path.join(save_dir, "classification_head1.pt"))
+                torch.save(model.classification_head2.state_dict(), os.path.join(save_dir, "classification_head2.pt"))
                 if model.mask_head is not None:
-                    torch.save(model.mask_head.state_dict(), os.path.join(save_dir, 'mask_head.pt'))
+                    torch.save(model.mask_head.state_dict(), os.path.join(save_dir, "mask_head.pt"))
 
             elif method == constants.METHOD_PIXELCAM:
-                if "deit" in self.args.model['encoder_name']:
-                    torch.save(model.state_dict(), os.path.join(save_dir, 'model.pt'))
+                if "deit" in self.args.model["encoder_name"]:
+                    torch.save(model.state_dict(), os.path.join(save_dir, "model.pt"))
                 else:
-                    torch.save(model.encoder.state_dict(), os.path.join(save_dir, 'encoder.pt'))
-                    torch.save(model.classification_head.state_dict(), os.path.join(save_dir, 'classification_head.pt'))
-                    torch.save(model.pixel_wise_classification_head.state_dict(), os.path.join(save_dir, 'pixel_wise_classification_head.pt'))
+                    torch.save(model.encoder.state_dict(), os.path.join(save_dir, "encoder.pt"))
+                    torch.save(model.classification_head.state_dict(), os.path.join(save_dir, "classification_head.pt"))
+                    torch.save(
+                        model.pixel_wise_classification_head.state_dict(),
+                        os.path.join(save_dir, "pixel_wise_classification_head.pt"),
+                    )
 
-            else:  
-                torch.save(model.encoder.state_dict(), os.path.join(save_dir, 'encoder.pt'))
-                torch.save(model.classification_head.state_dict(), os.path.join(save_dir, 'classification_head.pt'))
+            else:
+                torch.save(model.encoder.state_dict(), os.path.join(save_dir, "encoder.pt"))
+                torch.save(model.classification_head.state_dict(), os.path.join(save_dir, "classification_head.pt"))
 
-        
-        self._save_args(path=os.path.join(save_dir, 'config_model.yaml'))
+        # --------------------------------------------------
+        # 5. Save config
+        # --------------------------------------------------
+        self._save_args(path=os.path.join(save_dir, "config_model.yaml"))
 
-        DLLogger.log(message=f"[SAVE] Best classification model (Epoch {epoch}, Acc {acc:.2f}%) saved to: {save_dir}")
+        DLLogger.log(
+            message=(
+                f"[SAVE] Best model ({criterion}) | "
+                f"Epoch {epoch} | {metric_name}: {metric_value:.4f} | "
+                f"Saved to {save_dir}"
+            )
+        )
 
     def save_best_epoch(self):
         if self.args.localization_avail:
@@ -6144,6 +6293,23 @@ class Trainer(Basic):
             print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {acc_cl:.2f}%")
         else:
             print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {acc_cl:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
+
+        if self.args.measure_loc:
+            acc_pxap = self.target_valpx_pxap[-1]
+
+            if not hasattr(self, "best_loc_accuracy"):
+                self.pxap_train_model = None
+                self.best_accuracy_pxap = -1.0
+                self.best_epoch_pxap = -1
+            if acc_pxap > self.best_accuracy_pxap:
+                self.best_accuracy_pxap = acc_pxap
+                self.pxap_train_model = deepcopy(model_cl)
+                self.best_epoch_pxap = epoch
+                print(f"[PXAP Update] New best PXAP model at epoch {epoch} with PXAP {acc_pxap:.2f}%")
+            else:
+                print(f"[PXAP Skip] PXAP model at epoch {epoch} with PXAP {acc_pxap:.2f}% was not better than best ({self.best_accuracy_pxap:.2f}%)")
+
+
 
 
 

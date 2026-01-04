@@ -44,13 +44,15 @@ __all__ = [
     'MaxSizePositiveNegev',
     'NegativeSamplesNegev',
     'EnergyCEloss',
+    'ForgetEntropyLoss',
     'CalLoss',
     'CalPxLoss',
     'PartialEntropy',
     'PxOrtognalityloss',
     'Energy_Marginal',
     'CENotFlipLoss',
-    'CEFlipLoss'
+    'CEFlipLoss',
+    'EntropyFcamsLoss',
 ]
 
 
@@ -1616,8 +1618,11 @@ class EnergyCEloss(SelfLearningFcams):
 
     def set_it(self,ece_lambda, apply_negative_samples: bool, negative_c: int):
         assert isinstance(apply_negative_samples, bool)
-        assert isinstance(negative_c, int)
-        assert negative_c >= 0
+
+        if apply_negative_samples:
+            assert negative_c is not None
+            assert isinstance(negative_c, int)
+            assert negative_c >= 0
 
         self.ece_lambda = ece_lambda
         self.negative_c = negative_c
@@ -1717,6 +1722,163 @@ class EnergyCEloss(SelfLearningFcams):
         seeds = seeds[ind_non_neg]
         return self.loss(input=fcams, target=seeds) * self.ece_lambda
     
+
+class EntropyFcamsLoss(SelfLearningFcams):
+    def __init__(self, **kwargs):
+        super(EntropyFcamsLoss, self).__init__(**kwargs)
+
+        self.entropy_lambda = 0.0
+        self._is_already_set = False
+
+    def set_it(self, entropy_lambda: float):
+        self.entropy_lambda = entropy_lambda
+        self._is_already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+        super(SelfLearningFcams, self).forward(epoch=epoch)
+
+        assert self._is_already_set
+        if not self.is_on():
+            return self._zero
+        assert not self.multi_label_flag
+
+        # -------------------------------------------------
+        # Handle masks exactly like in EnergyCEloss
+        # -------------------------------------------------
+        cal_mask_forget = None
+        cal_mask_retain = None
+
+        key_arg = None
+
+        if key_arg is not None:
+            cal_mask_forget = key_arg.get("cal_mask_forget", None)
+            cal_mask_retain = key_arg.get("cal_mask_retain", None)
+
+        if cal_mask_forget is not None or cal_mask_retain is not None:
+            if cal_mask_forget is None:
+                cal_mask_forget = torch.zeros_like(
+                    torch.tensor(cal_mask_retain, device=fcams.device, dtype=torch.bool)
+                )
+            if cal_mask_retain is None:
+                cal_mask_retain = torch.zeros_like(
+                    torch.tensor(cal_mask_forget, device=fcams.device, dtype=torch.bool)
+                )
+
+            if not torch.is_tensor(cal_mask_forget):
+                cal_mask_forget = torch.tensor(cal_mask_forget, device=fcams.device, dtype=torch.bool)
+            if not torch.is_tensor(cal_mask_retain):
+                cal_mask_retain = torch.tensor(cal_mask_retain, device=fcams.device, dtype=torch.bool)
+
+            cal_mask_final = cal_mask_forget | cal_mask_retain
+            ind_selected = cal_mask_final.nonzero(as_tuple=True)[0]
+
+            if ind_selected.numel() == 0:
+                return self._zero
+
+            fcams = fcams[ind_selected]
+
+        # -------------------------------------------------
+        # Entropy computation
+        # -------------------------------------------------
+        # fcams: [N, C, H, W] or [N, C]
+        p = torch.softmax(fcams, dim=1)
+        entropy = -(p * torch.log(p + 1e-8)).sum(dim=1)
+
+        # mean over pixels
+        loss = entropy.mean()
+
+        return loss * self.entropy_lambda
+
+class ForgetEntropyLoss(SelfLearningFcams):
+    def __init__(self, **kwargs):
+        super(ForgetEntropyLoss, self).__init__(**kwargs)
+        self.forget_lambda = 0.0
+        self._is_already_set = False
+
+    def set_it(self, forget_lambda: float):
+        self.forget_lambda = forget_lambda
+        self._is_already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None):
+
+        super(SelfLearningFcams, self).forward(epoch=epoch)
+
+        assert self._is_already_set
+        if not self.is_on():
+            return self._zero
+
+        if seeds is None:
+            return self._zero
+        
+
+        cal_mask_forget = key_arg.get("cal_mask_forget", None)
+
+        bg_seed_mask = (seeds == 0)  # [B, H, W]
+
+        if cal_mask_forget is None:
+            return self._zero
+
+        if not torch.is_tensor(cal_mask_forget):
+            cal_mask_forget = torch.tensor(
+                cal_mask_forget, device=fcams.device, dtype=torch.bool)
+
+        ind_forget = cal_mask_forget.nonzero(as_tuple=True)[0]
+        bg_seed_mask = bg_seed_mask[ind_forget]  # [Bf, H, W]
+
+        if ind_forget.numel() == 0:
+            return self._zero
+
+        logits = fcams[ind_forget]
+
+        p_fg = logits[:, 1]            # [Bf, H, W]
+
+        valid_mask = (~bg_seed_mask)  
+
+       
+        p_fg_valid = p_fg[valid_mask]   # [N_valid]
+        p_fg_valid = p_fg_valid.float()
+
+        if p_fg_valid.numel() == 0:
+            return self._zero
+
+        eps = 1e-4
+        p_fg_valid = torch.clamp(p_fg_valid, eps, 1 - eps)
+
+        entropy = -(p_fg_valid * torch.log(p_fg_valid)
+                    + (1 - p_fg_valid) * torch.log(1 - p_fg_valid))
+
+        return self.forget_lambda * entropy.mean()
 
 
 class EnergyCEAdaptloss(SelfLearningFcams):

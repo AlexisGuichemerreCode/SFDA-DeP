@@ -533,9 +533,14 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         "sl_pc_equalize": False,  # use or not equalize the number of positive and negative samples.
         "ece": False,  # use or not ECE.
         "ece_lambda": 1.,  # lambda for ECE.
+        "forget_el": False,  # use or not ECE.
+        "forget_lambda": 1.,  # lambda for ECE.
 
         "ece_adapt": False,  # use or not ECE.
         "ece_adapt_lambda": 1.,  # lambda for ECE.
+
+        "epx": False,  # use or not ECE.
+        "epx_lambda": 1.,  # lambda for ECE.
         
         "cal": False,  # use or not CAL.
         "cal_lambda": 1.,  # lambda for CAL.

@@ -737,6 +737,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
 
     with open(join(exp_path, 'config_obj_final.yaml'), 'r') as fy:
+    #with open(join(exp_path, 'OpenImagesSrc-0-deit_sat_base_patch16_224-SAT-GAP-cp_best_classification', 'config_model.yaml'), 'r') as fy:
         args_dict = yaml.load(fy, Loader=IgnoreKeyLoader)
         # args_dict = yaml.safe_load(fy)
         args_dict['model']['freeze_encoder'] = False
@@ -971,8 +972,8 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     
 
     acc_cl = _compute_accuracy(args, model, loaders[parsedargs.split])
-    cam_performance = cam_computer.compute_and_evaluate_cams()
-    cam_perf_pxap = cam_computer.evaluator.perf_gist[constants.MTR_PXAP]
+    #cam_performance = cam_computer.compute_and_evaluate_cams()
+    #cam_perf_pxap = cam_computer.evaluator.perf_gist[constants.MTR_PXAP]
  
     entropies = []
     preds = []
@@ -992,6 +993,24 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         
 
         GroundTruth = []
+
+        with torch.no_grad():
+           out = model(images.cuda())
+        #    pixel_features = model.encoder_last_features
+        GroundTruth = []
+        for image, target, image_id in zip(images, targets, index):
+            #if image_id == "Warwick_QU_Dataset_(Released_2016_07_08)/train_2.bmp":
+                #print("wait")
+
+            #print(image_id)
+
+            image_size = images.shape[2:]
+            if target.item() == 1:
+                with torch.set_grad_enabled(cam_computer.req_grad):
+
+                    cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image, target, image_id, image_size)
+                    cam_perf_pxap = cam_computer.evaluator.perf_gist[constants.MTR_PXAP]
+                    print(f"Image ID: {image_id} - PxAP: {cam_perf_pxap}")
 
         with torch.no_grad():
             out = model(images.cuda())

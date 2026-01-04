@@ -308,7 +308,7 @@ class PixelWise(_BasicPooler):
         self.one_layer = kwargs['one_layer']
         self.anchors_ortogonal = kwargs['anchors_ortogonal']
         self.detach_pixel_classifier = kwargs['detach_pixel_classifier']
-        classes = self.classes
+        classes = 2
         #if self.support_background:
         #    classes = classes + 1
 

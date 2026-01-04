@@ -5,6 +5,7 @@ from copy import deepcopy
 from dlib.process.parseit import parse_input
 
 from dlib.process.instantiators import get_model
+from dlib.process.instantiators import get_model_source
 from dlib.utils.tools import log_device
 from dlib.utils.tools import bye
 
@@ -41,6 +42,13 @@ def main():
             inter_classifier.cuda(args.c_cudaid)
         else:
             inter_classifier = model
+
+    if args.task in [constants.STD_CL]:
+        if args.esfda == True:
+            model_src_init = get_model_source(args)
+            model_src_init.cuda(args.c_cudaid)
+            inter_classifier = model_src_init
+
             
     if args.sf_uda and args.sdda:
         main_trainer = TrainerSdda
@@ -166,11 +174,13 @@ def main():
     if args.entropy_models:
         trainer.save_best_entropy_models()
     
-    if args.unlearning_models:
-        trainer.save_unlearning_models()
+    # if args.unlearning_models:
+    #     trainer.save_unlearning_models()
 
     if args.cl_train_models:
-        trainer.save_best_cl_train_models()
+        trainer.save_best_cl_train_models(criterion=constants.CLVALIDSET)
+    if args.measure_loc:
+        trainer.save_best_cl_train_models(criterion=constants.PXVALIDSET)
 
     trainer.save_checkpoints()
 

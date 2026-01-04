@@ -425,7 +425,7 @@ def get_visaualization(exp_path, target_method, sf_uda_source_folder, checkpoint
     ####################################################################################
     DLLogger.flush()
     
-    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{args.fold}")
+    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{3}")
     #read sys var DATASETSH
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     target_domain_data_paths = config.configure_data_paths(args_dict, dataset)
@@ -568,7 +568,7 @@ def fast_eval():
     parser.add_argument('--noise_level_for_eval_with_noisy_bbox', nargs='+',
                         type=int, default=[5, 10, 15, 20, 25, 30, 35 ,40, 45, 50])
     parser.add_argument("--target_dataset", type=str, default=None,
-                        help="Name of the dataset.", required=True, choices=[constants.CAMELYON512, constants.GLAS])
+                        help="Name of the dataset.", required=True, choices=[constants.CAMELYON512, constants.GLAS, constants.CAMELYON17_512])
     parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
     parser.add_argument('--target_domain_exp_path', type=json.loads, default={})
     parser.add_argument('--image_ids_to_draw', nargs='+', type=str, default=None)
@@ -618,7 +618,8 @@ def fast_eval():
         _CODE_FUNCTION = 'fast_eval_{}'.format(split)
 
         #target_methods = ['DeepMIL', 'EnergyCAM DL', 'GradCAMpp', 'EnergyCAM GC', 'LayerCAM', 'EnergyCAM LC', 'SAT', 'EnergyCAM SAT']
-        target_methods = ['SFDE', 'SFDE UL', 'CDCL', 'CDCL UL', 'ERL', 'ERL UL']
+        #target_methods = ['SFDE', 'SFDE UL', 'CDCL', 'CDCL UL', 'ERL', 'ERL UL']
+        target_methods = ['SFDE']
         #target_methods = ['GradCAMpp']
         #'CAM', 'GradCAMpp', 'NEGEV',
         # target_methods = ['ADADSA']GradCAMpp'EnergyCAM', 'NEGEV', 

@@ -544,7 +544,7 @@ RMODE_SEARCH = 'search-mode'
 RMODE_FINAL = 'final-mode'
 
 # nbr folds: all datasets have 5 folds.
-FOLDS_NBR = 6
+FOLDS_NBR = 200
 FOLD_SEARCH = 0  # fold used for hyper-prama search.
 
 # folder
@@ -581,7 +581,10 @@ DS_HAS_NEG_SAM = {
 DS_NEG_CL = {
     CAMELYON512: 0,
     CAMELYON17_512: 0,
-    GLAS: 0
+    GLAS: 0,
+    OpenImages : None,
+    OpenImagesSrc : None,
+    OpenImagesTrgt : None,
 }
 
 # plot orientation.

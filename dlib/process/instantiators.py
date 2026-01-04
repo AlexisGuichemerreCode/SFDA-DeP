@@ -628,6 +628,57 @@ def get_loss_target(args):
             
             EnergyCEAdapt_loss.set_it(ece_adapt_lambda=args.ece_adapt_lambda, apply_negative_samples=negative_samples, negative_c=constants.DS_NEG_CL[args.dataset])
             masterloss.add(EnergyCEAdapt_loss)
+
+        if args.ece:
+            EnergyCEloss = losses.EnergyCEloss(
+                    cuda_id=args.c_cudaid,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag,
+                    dataset=args.dataset)
+            
+            if args.dataset == constants.GLAS or args.dataset in [constants.OpenImagesSrc, constants.OpenImagesTrgt]:
+                negative_samples = False
+            elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and args.neg_samples_partial:
+                negative_samples = False
+            elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512]:
+                negative_samples = True
+            
+            EnergyCEloss.set_it(ece_lambda=args.ece_lambda, apply_negative_samples=negative_samples, negative_c=constants.DS_NEG_CL[args.dataset])
+            masterloss.add(EnergyCEloss)
+
+        if args.epx:
+            EntropyLoss = losses.EntropyFcamsLoss(
+                cuda_id=args.c_cudaid,
+                support_background=support_background,
+                multi_label_flag=multi_label_flag,
+                dataset=args.dataset
+            )
+
+            EntropyLoss.set_it(entropy_lambda=args.epx_lambda)
+
+            masterloss.add(EntropyLoss)
+
+        if args.crf_fc:
+            masterloss.add(losses.ConRanFieldPxcams(
+                cuda_id=args.c_cudaid,
+                lambda_=args.crf_lambda,
+                sigma_rgb=args.crf_sigma_rgb, sigma_xy=args.crf_sigma_xy,
+                scale_factor=args.crf_scale,
+                support_background=support_background,
+                multi_label_flag=multi_label_flag,
+                start_epoch=args.crf_start_ep, end_epoch=args.crf_end_ep,
+            ))
+
+        if args.forget_el:
+            ForgetEntropyloss = losses.ForgetEntropyLoss(
+                    cuda_id=args.c_cudaid,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag,
+                    dataset=args.dataset)
+            
+            
+            ForgetEntropyloss.set_it(forget_lambda=args.forget_lambda)
+            masterloss.add(ForgetEntropyloss)
             
             
         if args.erl:
@@ -1756,6 +1807,22 @@ def get_model(args, eval=False, eval_path_weights=''):
 
 
     return model, model_src
+
+def get_model_source(args):
+    src_args = deepcopy(args)
+    src_args.method = args.sf_uda_source_wsol_method
+    src_args.sf_uda = False
+    src_args.eval = True
+
+    if src_args.sf_uda_source_wsol_method != constants.METHOD_PIXELCAM:
+        src_args.pixel_wise_classification = False
+
+    model_src, _ = get_model(src_args, eval=False)
+    model_src.eval()
+    freeze_all_params(model_src)
+
+    return model_src
+
 
 
 def sfuda_get_gan_sdda_model(args,

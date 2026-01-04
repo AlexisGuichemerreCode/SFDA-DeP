@@ -537,9 +537,17 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--ece', type=str2bool, default=None)
     parser.add_argument('--ece_lambda', type=float, default=None, 
                         help='ECE: lambda value for loss .')
+
+    parser.add_argument('--forget_el', type=str2bool, default=None)
+    parser.add_argument('--forget_lambda', type=float, default=None, 
+                        help='ECE: lambda value for loss .')
     
     parser.add_argument('--ece_adapt', type=str2bool, default=None)
     parser.add_argument('--ece_adapt_lambda', type=float, default=None, 
+                        help='ECE: lambda value for loss .')
+
+    parser.add_argument('--epx', type=str2bool, default=None)
+    parser.add_argument('--epx_lambda', type=float, default=None, 
                         help='ECE: lambda value for loss .')
     
     parser.add_argument('--cal', type=str2bool, default=None)
@@ -1215,7 +1223,7 @@ def get_args(args: dict, eval: bool = False):
         pre = constants.FORMAT_DEBUG.split('_')[0]
         if dsname_target_domain.startswith(pre):
             dsname_target_domain = dsname_target_domain.replace('{}_'.format(pre), '')
-        assert dsname_target_domain in [constants.CAMELYON512, constants.GLAS, constants.CAMELYON17_512]
+        assert dsname_target_domain in [constants.CAMELYON512, constants.GLAS, constants.CAMELYON17_512, constants.OpenImagesTrgt]
         args['target_domain_data_paths'] = config.configure_data_paths(args, dsname_target_domain)
 
         args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'],
@@ -1576,7 +1584,7 @@ def get_args(args: dict, eval: bool = False):
     if args.dataset == constants.BREAKHIS:
         assert args.magnification in constants.MAGNIFICATIONSBHIS
 
-    assert args.fold in list(range(6))
+    #assert args.fold in list(range(6))
     if args.task == constants.SEG:
         assert args.dataset in [constants.GLAS, constants.CAMELYON512, constants.CAMELYON17_512]
 

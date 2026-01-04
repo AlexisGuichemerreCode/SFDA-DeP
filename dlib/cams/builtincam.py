@@ -679,6 +679,59 @@ class PixelCAM:
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.extra_repr()})"
+    
+class SATCam:
+    """
+    CAM extractor for SAT models.
+    Uses the pre-computed attention mask stored in model.cams.
+    """
+
+    def __init__(self, model):
+        self.model = model
+        self.support_backgr = False  # class-agnostic CAM
+
+    @staticmethod
+    def _normalize(cam: torch.Tensor) -> torch.Tensor:
+        cam = cam - cam.min()
+        cam = cam / (cam.max() + 1e-8)
+        return cam
+
+    def __call__(self,
+                 class_idx: int = None,
+                 normalized: bool = True,
+                 reshape: tuple = None,
+                 argmax: bool = False) -> torch.Tensor:
+
+        cam = self.compute_cams(normalized=normalized)
+
+        if reshape is not None:
+            cam = F.interpolate(
+                cam.unsqueeze(0).unsqueeze(0),
+                reshape,
+                mode='bilinear',
+                align_corners=False
+            ).squeeze(0).squeeze(0)
+
+        return cam
+
+    def compute_cams(self, normalized: bool = True) -> torch.Tensor:
+        """
+        Returns a SAT CAM of shape (H, W)
+        """
+
+        cams = self.model.cams
+        assert cams is not None, "SAT CAMs not computed. Forward with labels first."
+        assert cams.ndim == 4          # [B, 1, H, W]
+        assert cams.shape[0] == 1
+        assert cams.shape[1] == 1
+
+        cam = cams.squeeze(0).squeeze(0)  # (H, W)
+
+        if normalized:
+            cam = self._normalize(cam)
+
+        return cam
+
 
 
 if __name__ == "__main__":
