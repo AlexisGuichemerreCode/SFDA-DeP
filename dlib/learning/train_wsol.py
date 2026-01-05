@@ -6297,7 +6297,7 @@ class Trainer(Basic):
         if self.args.measure_loc:
             acc_pxap = self.target_valpx_pxap[-1]
 
-            if not hasattr(self, "best_loc_accuracy"):
+            if not hasattr(self, "best_accuracy_pxap"):
                 self.pxap_train_model = None
                 self.best_accuracy_pxap = -1.0
                 self.best_epoch_pxap = -1
