@@ -529,7 +529,8 @@ class Trainer(Basic):
 
 
         if args.task in [constants.STD_CL]:
-            if args.sf_uda == True and args.esfda == True:
+            if args.sf_uda == True:
+            #if args.sf_uda == True and args.esfda == True:
                 args_source = deepcopy(args)
                 args_source.method = args.sf_uda_source_wsol_method
 
@@ -1138,7 +1139,7 @@ class Trainer(Basic):
         if self.model.support_background:
             weights = self.model.classification_head.fc.weight[1:]
         else:
-            weights = self.model.classification_head.fc.weight
+            weights = self.model.get_linear_weights
 
 
         aug_imgs = aug_images.to(self.device)
@@ -1189,36 +1190,37 @@ class Trainer(Basic):
 
         if args.sf_uda:
 
-            # if args.pixel_wise_classification and args.ece_adapt:
-            #     _, _, h, w = self.model.encoder_last_features.shape
-            #     interpolation_mode = 'bilinear'
-            #     if std_cams is None:
-            #         cams_inter = self.get_std_cams_minibatch(images=images,
-            #                                                 targets=z_label)
-            #     else:
-            #         cams_inter = std_cams
+            if args.pixel_wise_classification and args.ece_adapt:
+                out = self.model(images) 
+                _, _, h, w = self.model.encoder_last_features.shape
+                interpolation_mode = 'bilinear'
+                if std_cams is None:
+                    cams_inter = self.get_pseudo_cams_minibatch(images=images,
+                                                            targets=z_label)
+                else:
+                    cams_inter = std_cams
 
-            #     if self.args.low_res:
-            #         fcams=self.model.cams
-            #     else:
-            #         _, _, i, x = cams_inter.shape
-            #         fcams= F.interpolate(self.model.cams,
-            #                     (i, x),
-            #                     mode=interpolation_mode,
-            #                     align_corners=False)
+                if self.args.low_res:
+                    fcams=self.model.cams
+                else:
+                    _, _, i, x = cams_inter.shape
+                    fcams= F.interpolate(self.model.cams,
+                                (i, x),
+                                mode=interpolation_mode,
+                                align_corners=False)
 
-            #     with torch.no_grad():
-            #         if self.args.low_res:
-            #             cams_inter = F.interpolate(cams_inter,
-            #                     (h, w),
-            #                     mode=interpolation_mode,
-            #                     align_corners=False)
+                with torch.no_grad():
+                    if self.args.low_res:
+                        cams_inter = F.interpolate(cams_inter,
+                                (h, w),
+                                mode=interpolation_mode,
+                                align_corners=False)
 
-            #         seeds = seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
+                    seeds = seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
 
-            # else:
-            #     seeds = None
-            #     fcams = None
+            else:
+                seeds = None
+                fcams = None
 
             if args.task == constants.STD_CL:
                 if args.faust:
@@ -1254,37 +1256,37 @@ class Trainer(Basic):
                     out = self.model(images)
                     features = self.model.lin_ft
 
-                    if args.pixel_wise_classification and args.ece_adapt:
-                        _, _, h, w = self.model.encoder_last_features.shape
-                        interpolation_mode = 'bilinear'
+                    # if args.pixel_wise_classification and args.ece_adapt:
+                    #     _, _, h, w = self.model.encoder_last_features.shape
+                    #     interpolation_mode = 'bilinear'
 
-                        if std_cams is None:
-                            cams_inter = self.get_std_cams_minibatch(images=images, targets=z_label)
-                        else:
-                            cams_inter = std_cams
+                    #     if std_cams is None:
+                    #         cams_inter = self.get_pseudo_cams_minibatch(images=images, targets=z_label)
+                    #     else:
+                    #         cams_inter = std_cams
 
-                        if self.args.low_res:
-                            fcams = self.model.cams
-                        else:
-                            _, _, i, x = cams_inter.shape
-                            fcams = F.interpolate(
-                                self.model.cams, (i, x),
-                                mode=interpolation_mode,
-                                align_corners=False
-                            )
+                    #     if self.args.low_res:
+                    #         fcams = self.model.cams
+                    #     else:
+                    #         _, _, i, x = cams_inter.shape
+                    #         fcams = F.interpolate(
+                    #             self.model.cams, (i, x),
+                    #             mode=interpolation_mode,
+                    #             align_corners=False
+                    #         )
 
-                        with torch.no_grad():
-                            if self.args.low_res:
-                                cams_inter = F.interpolate(
-                                    cams_inter, (h, w),
-                                    mode=interpolation_mode,
-                                    align_corners=False
-                                )
+                    #     with torch.no_grad():
+                    #         if self.args.low_res:
+                    #             cams_inter = F.interpolate(
+                    #                 cams_inter, (h, w),
+                    #                 mode=interpolation_mode,
+                    #                 align_corners=False
+                    #             )
 
-                            seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
-                    else:
-                        seeds = None
-                        fcams = None
+                    #         seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
+                    # else:
+                    #     seeds = None
+                    #     fcams = None
                     
                     with torch.no_grad():
                             output = self.model(images)
@@ -1308,37 +1310,37 @@ class Trainer(Basic):
                     out = self.model(images)
                     features = self.model.lin_ft
 
-                    if args.pixel_wise_classification and args.ece_adapt:
-                        _, _, h, w = self.model.encoder_last_features.shape
-                        interpolation_mode = 'bilinear'
+                    # if args.pixel_wise_classification and args.ece_adapt:
+                    #     _, _, h, w = self.model.encoder_last_features.shape
+                    #     interpolation_mode = 'bilinear'
 
-                        if std_cams is None:
-                            cams_inter = self.get_std_cams_minibatch(images=images, targets=z_label)
-                        else:
-                            cams_inter = std_cams
+                    #     if std_cams is None:
+                    #         cams_inter = self.get_pseudo_cams_minibatch(images=images, targets=z_label)
+                    #     else:
+                    #         cams_inter = std_cams
 
-                        if self.args.low_res:
-                            fcams = self.model.cams
-                        else:
-                            _, _, i, x = cams_inter.shape
-                            fcams = F.interpolate(
-                                self.model.cams, (i, x),
-                                mode=interpolation_mode,
-                                align_corners=False
-                            )
+                    #     if self.args.low_res:
+                    #         fcams = self.model.cams
+                    #     else:
+                    #         _, _, i, x = cams_inter.shape
+                    #         fcams = F.interpolate(
+                    #             self.model.cams, (i, x),
+                    #             mode=interpolation_mode,
+                    #             align_corners=False
+                    #         )
 
-                        with torch.no_grad():
-                            if self.args.low_res:
-                                cams_inter = F.interpolate(
-                                    cams_inter, (h, w),
-                                    mode=interpolation_mode,
-                                    align_corners=False
-                                )
+                    #     with torch.no_grad():
+                    #         if self.args.low_res:
+                    #             cams_inter = F.interpolate(
+                    #                 cams_inter, (h, w),
+                    #                 mode=interpolation_mode,
+                    #                 align_corners=False
+                    #             )
 
-                            seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
-                    else:
-                        seeds = None
-                        fcams = None
+                    #         seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
+                    # else:
+                    #     seeds = None
+                    #     fcams = None
                     
                     with torch.no_grad():
                             output = self.model(images)
@@ -1360,8 +1362,6 @@ class Trainer(Basic):
                     logits = cl_logits
 
                 elif self.args.rgv:
-
-                    out = self.model(images)
                     
                     with torch.no_grad():
                             output = self.model(images)
@@ -1377,6 +1377,38 @@ class Trainer(Basic):
 
 
                     certainty_SA, mask_SA, y_tilde_SA, aug_feats_SA, weights = self.rgv_refine_and_align(images, aug_images, index)
+
+                    if args.pixel_wise_classification and args.ece_adapt:
+                        out = self.model(images) 
+                        _, _, h, w = self.model.encoder_last_features.shape
+                        interpolation_mode = 'bilinear'
+                        if std_cams is None:
+                            cams_inter = self.get_pseudo_cams_minibatch(images=images,
+                                                                    targets=y_tilde_SA)
+                        else:
+                            cams_inter = std_cams
+
+                        if self.args.low_res:
+                            fcams=self.model.cams
+                        else:
+                            _, _, i, x = cams_inter.shape
+                            fcams= F.interpolate(self.model.cams,
+                                        (i, x),
+                                        mode=interpolation_mode,
+                                        align_corners=False)
+
+                        with torch.no_grad():
+                            if self.args.low_res:
+                                cams_inter = F.interpolate(cams_inter,
+                                        (h, w),
+                                        mode=interpolation_mode,
+                                        align_corners=False)
+
+                            seeds = self.sl_mask_builder(cams_inter, class_idx=y_tilde_SA)
+
+                    else:
+                        seeds = None
+                        fcams = None
 
                     key_arg = {}
 
@@ -1399,14 +1431,11 @@ class Trainer(Basic):
                     
 
                     #cl_logits = output
-                    loss = self.loss(epoch=self.epoch,
-                                     model=self.model,
-                                     cl_logits=cl_logits,
-                                     glabel=y_global,
-                                     pseudo_glabel=pseudo_labels,
-                                     cutmix_holder=cutmix_holder,
-                                     key_arg = key_arg 
-                                     )
+                    loss = self.loss(epoch=self.epoch,model=self.model,
+                                    fcams=fcams,cl_logits=cl_logits,
+                                    glabel=y_global,pseudo_glabel=pseudo_labels,
+                                    cutmix_holder=cutmix_holder,seeds=seeds,    
+                                    key_arg = key_arg)
                     logits = cl_logits
 
 

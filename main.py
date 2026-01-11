@@ -44,7 +44,7 @@ def main():
             inter_classifier = model
 
     if args.task in [constants.STD_CL]:
-        if args.esfda == True:
+        if args.sf_uda == True:
             model_src_init = get_model_source(args)
             model_src_init.cuda(args.c_cudaid)
             inter_classifier = model_src_init
