@@ -59,6 +59,19 @@ class MemoryBank:
         return F.softmax(refined, dim=1)
     
 
+def infer_feat_dim(model):
+    # Case ViT / DeiT (timm-style)
+    if hasattr(model, "head") and hasattr(model.head, "in_channels"):
+        return model.head.in_channels
+
+    # Case CNN / WSOL heads (WGAP, etc.)
+    if hasattr(model, "classification_head") and hasattr(model.classification_head, "in_channels"):
+        return model.classification_head.in_channels
+
+    raise ValueError(
+        f"Cannot infer feature dimension from model of type {type(model)}"
+    )
+
 
 class Rgv(object):
     def __init__(self, model_trg, train_loader_trg, num_classes, device= None,
@@ -69,7 +82,13 @@ class Rgv(object):
         self.num_classes = num_classes
         self.sigma = sigma
         self.topk_ratio = topk_ratio
-        self.memory = MemoryBank(feat_dim=2048, logit_dim=self.num_classes, device=self.device)
+        feat_dim = infer_feat_dim(self.model)
+
+        self.memory = MemoryBank(
+            feat_dim=feat_dim,
+            logit_dim=self.num_classes,
+            device=self.device
+        )
 
 
     # ------------------------------------------------------

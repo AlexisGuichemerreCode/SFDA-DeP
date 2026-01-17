@@ -1136,7 +1136,7 @@ class Trainer(Basic):
 
 
 
-        if self.model.support_background:
+        if hasattr(self.model, "classification_head") and hasattr(self.model.classification_head, "support_background") and self.model.classification_head.support_background:
             weights = self.model.classification_head.fc.weight[1:]
         else:
             weights = self.model.get_linear_weights
