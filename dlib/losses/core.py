@@ -1894,10 +1894,10 @@ class EnergyCEAdaptloss(SelfLearningFcams):
 
         self._is_already_set = False
 
-    def set_it(self,ece_adapt_lambda, apply_negative_samples: bool, negative_c: int):
+    def set_it(self,ece_adapt_lambda, apply_negative_samples: bool, negative_c: int | None = None,):
         assert isinstance(apply_negative_samples, bool)
-        assert isinstance(negative_c, int)
-        assert negative_c >= 0
+        #assert isinstance(negative_c, int)
+        #assert negative_c >= 0
 
         self.ece_lambda = ece_adapt_lambda
         self.negative_c = negative_c
