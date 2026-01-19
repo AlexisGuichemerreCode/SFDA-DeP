@@ -75,6 +75,9 @@ from sklearn.neighbors import KNeighborsClassifier
 import shutil
 import random
 
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
+
 
 
 def cl_forward(args, model, images):
@@ -178,6 +181,147 @@ def _compute_accuracy(args, model, loader):
     return classification_acc
 
 
+@dataclass
+class BiasPools:
+    biased_class: int
+    clean_class: int
+    clean_pool: List[str]   # GT=clean_class AND pred=clean_class
+    bias_good: List[str]    # GT=biased_class AND pred=biased_class
+    bias_bad: List[str]     # GT=biased_class AND pred!=biased_class
+
+
+def compute_bias_pools(
+    imgid_to_gt: Dict[str, int],
+    imgid_to_pred: Dict[str, int],
+) -> BiasPools:
+    # détecter la classe "biaisée" = plus fort taux d'erreur
+    err_rate = {}
+    for c in [0, 1]:
+        ids_c = [i for i, g in imgid_to_gt.items() if g == c]
+        if len(ids_c) == 0:
+            raise ValueError(f"No samples for class {c}")
+        err_rate[c] = sum(imgid_to_pred[i] != c for i in ids_c) / len(ids_c)
+
+    biased_class = max(err_rate, key=err_rate.get)
+    clean_class = 1 - biased_class
+
+    clean_pool = [
+        i for i, g in imgid_to_gt.items()
+        if g == clean_class and imgid_to_pred[i] == clean_class
+    ]
+    bias_good = [
+        i for i, g in imgid_to_gt.items()
+        if g == biased_class and imgid_to_pred[i] == biased_class
+    ]
+    bias_bad = [
+        i for i, g in imgid_to_gt.items()
+        if g == biased_class and imgid_to_pred[i] != biased_class
+    ]
+
+    return BiasPools(
+        biased_class=biased_class,
+        clean_class=clean_class,
+        clean_pool=clean_pool,
+        bias_good=bias_good,
+        bias_bad=bias_bad,
+    )
+
+
+def compute_fixed_n_per_class(
+    pools: BiasPools,
+    bias_levels_percent: List[int],
+) -> int:
+    """
+    Taille commune faisable pour TOUS les biais.
+    Avec la définition: bias = n_bad / N (dans la classe biaisée).
+    """
+    max_bias = max(bias_levels_percent) / 100.0
+
+    # Contraintes:
+    # - clean class: on impose "clean bien prédit" -> N <= len(clean_pool)
+    # - biased class: n_good=(1-max_bias)N <= len(bias_good)
+    #                n_bad=max_bias*N <= len(bias_bad)
+    if max_bias <= 0:
+        raise ValueError("max_bias must be > 0")
+
+    n1 = len(pools.clean_pool)
+    n2 = int(len(pools.bias_good) / (1.0 - max_bias)) if (1.0 - max_bias) > 0 else 10**9
+    n3 = int(len(pools.bias_bad)  / max_bias)
+
+    n_fixed = min(n1, n2, n3)
+
+    if n_fixed <= 0:
+        raise ValueError(
+            f"No feasible N_FIXED. "
+            f"clean_pool={len(pools.clean_pool)}, bias_good={len(pools.bias_good)}, "
+            f"bias_bad={len(pools.bias_bad)}, max_bias={max_bias}"
+        )
+    return n_fixed
+
+def build_balanced_biased_dataset_fixed(
+    imgid_to_gt,
+    imgid_to_pred,
+    biased_class,
+    clean_class,
+    clean_pool,
+    bias_good,
+    bias_bad,
+    bias,          # ex: 0.01, 0.1, 0.2, 0.5
+    N_FIXED,
+    seed=0
+):
+    import random
+    random.seed(seed)
+
+    n_bad  = int(round(bias * N_FIXED))
+    n_good = N_FIXED - n_bad
+
+    if n_good > len(bias_good):
+        raise ValueError(f"Not enough bias_good: {len(bias_good)} < {n_good}")
+    if n_bad > len(bias_bad):
+        raise ValueError(f"Not enough bias_bad: {len(bias_bad)} < {n_bad}")
+    if N_FIXED > len(clean_pool):
+        raise ValueError(f"Not enough clean_pool: {len(clean_pool)} < {N_FIXED}")
+
+    sel_clean = random.sample(clean_pool, N_FIXED)
+    sel_bias  = (
+        random.sample(bias_good, n_good) +
+        random.sample(bias_bad,  n_bad)
+    )
+
+    selected_ids = sel_clean + sel_bias
+    random.shuffle(selected_ids)
+
+    return selected_ids
+
+
+def print_initial_distribution(imgid_to_gt, imgid_to_pred):
+    print("\n[INITIAL DISTRIBUTION]")
+    for c in [0, 1]:
+        gt = sum(v == c for v in imgid_to_gt.values())
+        pr = sum(v == c for v in imgid_to_pred.values())
+        print(f"Class {c} | GT={gt} | Pred={pr}")
+
+# ============================================================
+# 1. ANALYSE DU BIAIS PREDICTIF INITIAL (AVANT FOLDS)
+# ============================================================
+
+def print_global_stats(imgid_to_gt, imgid_to_pred):
+    gt0 = sum(v == 0 for v in imgid_to_gt.values())
+    gt1 = sum(v == 1 for v in imgid_to_gt.values())
+
+    p0 = sum(v == 0 for v in imgid_to_pred.values())
+    p1 = sum(v == 1 for v in imgid_to_pred.values())
+
+    print("\n[GLOBAL TRAINSET STATS]")
+    print(f"GT    -> normal={gt0} | cancer={gt1}")
+    print(f"PRED  -> normal={p0} | cancer={p1}")
+    print(f"PRED bias ratio = {abs(p1 - p0) / (p1 + p0):.4f}\n")
+
+
+
+
+
 
 def compute_kl_uniform(preds, num_classes):
     # p(y) estimé empiriquement
@@ -189,41 +333,123 @@ def compute_kl_uniform(preds, num_classes):
 
 
 
-def build_biased_image_ids(imgid_to_pred, bias_percent, seed=42):
-    np.random.seed(seed)
+# ============================================================
+# 2. CONSTRUCTION D'UN DATASET GT-EQUILIBRE AVEC BIAIS CONTROLE
+# ============================================================
 
-    # split par prédiction
-    ids_0 = [k for k, v in imgid_to_pred.items() if v == 0]
-    ids_1 = [k for k, v in imgid_to_pred.items() if v == 1]
+def build_balanced_biased_dataset(
+    imgid_to_gt,
+    imgid_to_pred,
+    bias,
+    n_per_class,
+    seed=42
+):
+    """
+    Construit un train set GT-équilibré (n_per_class par classe),
+    avec un biais contrôlé dans la classe la plus difficile
+    (erreurs de prédiction).
+    """
+    random.seed(seed)
 
-    bias = bias_percent / 100.0
-    p_major = 0.5 + bias
-    p_minor = 0.5 - bias
+    classes = [0, 1]
+    assert set(imgid_to_gt.values()) == {0, 1}
 
-    # classe dominante
-    if len(ids_1) >= len(ids_0):
-        major_ids, minor_ids = ids_1, ids_0
-        major_label = 1
-    else:
-        major_ids, minor_ids = ids_0, ids_1
-        major_label = 0
+    # --------------------------------------------------
+    # 1) détecter automatiquement la classe biaisée
+    # --------------------------------------------------
+    err_rate = {}
+    for c in classes:
+        ids_c = [i for i in imgid_to_gt if imgid_to_gt[i] == c]
+        err_rate[c] = sum(imgid_to_pred[i] != c for i in ids_c) / len(ids_c)
 
-    N = len(imgid_to_pred)
-    n_major = int(N * p_major)
-    n_minor = int(N * p_minor)
+    biased_class = max(err_rate, key=err_rate.get)
+    clean_class  = 1 - biased_class
 
-    sel_major = np.random.choice(
-        major_ids, size=min(n_major, len(major_ids)), replace=False
+    # --------------------------------------------------
+    # 2) pools par GT
+    # --------------------------------------------------
+
+    # classe "clean" : on prend UNIQUEMENT bien prédits
+    clean_pool = [
+        i for i in imgid_to_gt
+        if imgid_to_gt[i] == clean_class
+        and imgid_to_pred[i] == clean_class
+    ]
+
+    # classe biaisée : bien et mal prédits
+    bias_good = [
+        i for i in imgid_to_gt
+        if imgid_to_gt[i] == biased_class
+        and imgid_to_pred[i] == biased_class
+    ]
+
+    bias_bad = [
+        i for i in imgid_to_gt
+        if imgid_to_gt[i] == biased_class
+        and imgid_to_pred[i] != biased_class
+    ]
+
+    # --------------------------------------------------
+    # 3) sélection classe clean (GT équilibré)
+    # --------------------------------------------------
+    if len(clean_pool) < n_per_class:
+        raise ValueError(
+            f"Not enough clean samples: {len(clean_pool)} < {n_per_class}"
+        )
+
+    sel_clean = random.sample(clean_pool, n_per_class)
+
+    # --------------------------------------------------
+    # 4) sélection classe biaisée (avec saturation)
+    # --------------------------------------------------
+    n_bad_desired = int(round(bias * n_per_class))
+
+    n_bad  = min(n_bad_desired, len(bias_bad))
+    n_good = min(n_per_class - n_bad, len(bias_good))
+
+    # compléter si nécessaire
+    if n_good + n_bad < n_per_class:
+        deficit = n_per_class - (n_good + n_bad)
+        extra_bad = min(deficit, len(bias_bad) - n_bad)
+        n_bad += extra_bad
+
+    if n_good + n_bad < n_per_class:
+        raise ValueError("Cannot reach target size for biased class")
+
+    sel_bias = (
+        random.sample(bias_good, n_good) +
+        random.sample(bias_bad,  n_bad)
     )
-    sel_minor = np.random.choice(
-        minor_ids, size=min(n_minor, len(minor_ids)), replace=False
-    )
 
-    selected_ids = list(sel_major) + list(sel_minor)
+    # --------------------------------------------------
+    # 5) dataset final
+    # --------------------------------------------------
+    selected_ids = sel_clean + sel_bias
     random.shuffle(selected_ids)
 
-    return selected_ids, major_label
+    stats = {
+        "biased_class": biased_class,
+        "clean_class": clean_class,
+        "n_per_class": n_per_class,
+        "bias_requested": bias,
+        "bias_effective": n_bad / n_per_class,
+        "counts": {
+            "clean_correct": len(sel_clean),
+            "biased_correct": n_good,
+            "biased_wrong": n_bad,
+        }
+    }
 
+    return selected_ids, stats
+
+
+
+
+
+
+# ============================================================
+# 3. ECRITURE DES FOLDS
+# ============================================================
 
 def write_biased_fold(
     selected_image_ids,
@@ -233,28 +459,22 @@ def write_biased_fold(
 ):
     import shutil
 
-
     for split in ["valcl", "valpx", "test"]:
         (dst_fold_root / split).mkdir(parents=True, exist_ok=True)
         for f in files:
             shutil.copy(src_fold_root / split / f, dst_fold_root / split / f)
 
-
     train_src = src_fold_root / "train"
     data = {f: open(train_src / f).readlines() for f in files}
 
-
     image_ids = [l.strip() for l in data["image_ids.txt"]]
-
     id_to_idx = {img_id: i for i, img_id in enumerate(image_ids)}
-
 
     missing = set(selected_image_ids) - set(id_to_idx.keys())
     assert len(missing) == 0, f"Missing image_ids: {list(missing)[:5]}"
 
     selected_indices = [id_to_idx[i] for i in selected_image_ids]
 
-    # écrire train biaisé
     train_dst = dst_fold_root / "train"
     train_dst.mkdir(parents=True, exist_ok=True)
 
@@ -262,6 +482,7 @@ def write_biased_fold(
         lines = [data[f][i] for i in selected_indices]
         with open(train_dst / f, "w") as fw:
             fw.writelines(lines)
+
 
 def build_balanced_biased_dataset_auto(
     imgid_to_gt,
@@ -620,14 +841,9 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     # ============================================================
     # Build image_id -> prediction mapping (TRAIN ONLY)
     # ============================================================
-
     image_ids_all = []
-
     for _, _, _, index, *_ in loaders[split]:
         image_ids_all.extend(index)
-
-    assert len(image_ids_all) == len(preds_all), \
-        f"Mismatch: {len(image_ids_all)} image_ids vs {len(preds_all)} preds"
 
     imgid_to_pred = {
         img_id: int(pred)
@@ -639,78 +855,114 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     # ============================================================
 
     imgid_to_gt = {}
-
     for _, targets, _, index, *_ in loaders[split]:
         for img_id, gt in zip(index, targets):
             imgid_to_gt[img_id] = int(gt.item())
 
-    assert set(imgid_to_gt.keys()) == set(imgid_to_pred.keys()), \
-        "GT / Pred image_id mismatch"
+    assert set(imgid_to_gt) == set(imgid_to_pred)
+
+    # ============================================================
+    # PRINT INITIAL IMBALANCE (AVANT BIAIS)
+    # ============================================================
+
+    print("\n[INITIAL DISTRIBUTION]")
+    for c in [0, 1]:
+        total = sum(imgid_to_gt[i] == c for i in imgid_to_gt)
+        pred  = sum(imgid_to_pred[i] == c for i in imgid_to_pred)
+        print(f"Class {c} | GT={total} | Pred={pred}")
 
 
     # ============================================================
-    # === CREATE BIASED TARGET FOLDS (TRAIN ONLY)
+    # GLOBAL BIAS ANALYSIS
     # ============================================================
 
+    BIAS_LEVELS = [1, 10, 20, 50]          # en %
+    b_min = min(BIAS_LEVELS) / 100.0      # 0.01
+
+    # 1) détecter automatiquement la classe biaisée
+    err_rate = {}
+    for c in [0, 1]:
+        ids_c = [i for i in imgid_to_gt if imgid_to_gt[i] == c]
+        err_rate[c] = sum(imgid_to_pred[i] != c for i in ids_c) / max(1, len(ids_c))
+
+    biased_class = max(err_rate, key=err_rate.get)
+    clean_class  = 1 - biased_class
+
+    # 2) pools
+    clean_pool = [
+        i for i in imgid_to_gt
+        if imgid_to_gt[i] == clean_class and imgid_to_pred[i] == clean_class
+    ]
+
+    bias_good = [
+        i for i in imgid_to_gt
+        if imgid_to_gt[i] == biased_class and imgid_to_pred[i] == biased_class
+    ]
+
+    bias_bad = [
+        i for i in imgid_to_gt
+        if imgid_to_gt[i] == biased_class and imgid_to_pred[i] != biased_class
+    ]
+
+    # 3) taille FIXE commune à TOUS les biais
+    N_FIXED = min(
+        len(clean_pool),
+        int(len(bias_good) / (1.0 - b_min))
+    )
+
+    assert N_FIXED > 0
+
+    print("\n[FIXED TRAIN SIZE (COMMON TO ALL BIASES)]")
+    print(f"biased_class={biased_class} | clean_class={clean_class}")
+    print(f"clean_pool={len(clean_pool)} | bias_good={len(bias_good)} | bias_bad={len(bias_bad)}")
+    print(f"==> N_FIXED={N_FIXED} per GT class\n")
+
+    # ============================================================
+    # 2) Créer folds biaisés (TRAIN ONLY)
+    # ============================================================
     if split == constants.TRAINSET:
-        from pathlib import Path
-        import shutil
 
         ROOT = Path("folds/wsol-done-right-splits") / dataset
         SRC_FOLD = ROOT / f"fold-{parsedargs.fold_dataset}"
 
-        BIAS_LEVELS = [1, 10, 20, 50]
-
-        image_ids_all = []
-        for _, _, _, index, *_ in loaders[split]:
-            image_ids_all.extend(index)
-
-        assert len(image_ids_all) == len(preds_all)
-
         for b in BIAS_LEVELS:
+            bias = b / 100.0
             fold_id = 300 + b
             fold_name = f"fold-{fold_id}"
             dst_fold = ROOT / fold_name
 
-            selected_ids, stats = build_balanced_biased_dataset_auto(
+            selected_ids = build_balanced_biased_dataset_fixed(
                 imgid_to_gt=imgid_to_gt,
                 imgid_to_pred=imgid_to_pred,
-                bias=b / 100.0,      
+                biased_class=biased_class,
+                clean_class=clean_class,
+                clean_pool=clean_pool,
+                bias_good=bias_good,
+                bias_bad=bias_bad,
+                bias=bias,
+                N_FIXED=N_FIXED,
                 seed=fold_id
             )
 
-            ratio = np.mean([imgid_to_pred[i] for i in selected_ids])
-
-            # ===== DEBUG / VERIFICATION DU BIAIS =====
-            n0 = sum(imgid_to_pred[i] == 0 for i in selected_ids)
-            n1 = sum(imgid_to_pred[i] == 1 for i in selected_ids)
-
-            print(
-                f"[BIAS-STATS] fold={fold_name} | "
-                f"total={len(selected_ids)} | "
-                f"normal={n0} | cancer={n1} | "
-                f"bias_ratio={abs(n1 - n0) / (n1 + n0):.4f}"
-            )
-
+            # ---- STATS ----
             gt0 = sum(imgid_to_gt[i] == 0 for i in selected_ids)
             gt1 = sum(imgid_to_gt[i] == 1 for i in selected_ids)
 
-            print(
-                f"[GT-STATS] fold={fold_name} | "
-                f"gt_normal={gt0} | gt_cancer={gt1}"
-            )
+            biased_ids = [i for i in selected_ids if imgid_to_gt[i] == biased_class]
+            eff_bias = sum(
+                imgid_to_pred[i] != biased_class
+                for i in biased_ids
+            ) / len(biased_ids)
 
-
-            # (optionnel) sanity check
-            assert n0 + n1 == len(selected_ids)
+            print(f"[FOLD {fold_name}]")
+            print(f"  GT   -> normal={gt0} cancer={gt1}")
+            print(f"  BIAS -> class={biased_class} | requested={bias:.2f} | effective={eff_bias:.3f}")
 
             write_biased_fold(
                 selected_image_ids=selected_ids,
                 src_fold_root=SRC_FOLD,
                 dst_fold_root=dst_fold,
-    )
-
-
+            )
     return 0
         
 def fast_eval():

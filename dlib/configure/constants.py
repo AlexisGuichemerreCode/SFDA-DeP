@@ -543,8 +543,8 @@ MTR_CL = 'Classification accuracy'
 RMODE_SEARCH = 'search-mode'
 RMODE_FINAL = 'final-mode'
 
-# nbr folds: all datasets have 5 folds.
-FOLDS_NBR = 200
+
+FOLDS_NBR = 1000
 FOLD_SEARCH = 0  # fold used for hyper-prama search.
 
 # folder
