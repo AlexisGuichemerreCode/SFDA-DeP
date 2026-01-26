@@ -545,6 +545,10 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--ece_adapt', type=str2bool, default=None)
     parser.add_argument('--ece_adapt_lambda', type=float, default=None, 
                         help='ECE: lambda value for loss .')
+    parser.add_argument('--entropy_filter_mode', type=str2bool, default=None, 
+                        help='ECE: activate filter .')
+    parser.add_argument('--keep_ratio', type=float, default=None, 
+                        help='ECE: ratio image we keep for loc based on entropy .')
 
     parser.add_argument('--epx', type=str2bool, default=None)
     parser.add_argument('--epx_lambda', type=float, default=None, 
@@ -697,6 +701,8 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--dynamic_selection', type=str2bool, default=None,)
     parser.add_argument('--resample_every', type=float, default=None,)
 
+    parser.add_argument('--select_best_on_train', type=str2bool, default=None,)
+    parser.add_argument('--smooth_selection', type=str2bool, default=None,)
     parser.add_argument('--balance_stable_to_flips', type=str2bool, default=None,)
     parser.add_argument('--stable_match_strategy', type=str2bool, default=None,)
     parser.add_argument('--measure_loc', type=str2bool, default=None,)

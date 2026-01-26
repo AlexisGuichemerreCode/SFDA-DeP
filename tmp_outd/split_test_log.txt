@@ -1,48 +1,39 @@
-DLLL 2025-12-23 16:07:49.739630 0:00:06.606365 
-=====================================================================================================
- TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: CAMELYON17_512 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
-=====================================================================================================
+DLLL 2026-01-26 04:34:34.877122 0:00:00.068266 
+=======================================================================================================
+ TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: GLAS 	 METHOD: SAT 	 ENCODER: DEIT_SAT_TINY_PATCH16_224 	
+=======================================================================================================
 
-DLLL 2025-12-23 16:07:50.296040 0:00:07.162775 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 24041030
-DLLL 2025-12-23 16:07:50.296154 0:00:07.162889 Arch: STDClassifier
-task: STD_CL
-encoder_name: resnet50
-encoder_weights: imagenet
-classes: 2
-aux_params: 
-	classes: 2
-	modalities: 5
-	kmax: 0.5
-	kmin: 0.1
-	alpha: 0.6
-	dropout: 0.0
-	support_background: False
-	freeze_cl: False
-	r: 10.0
-	mid_channels: 128
-	gated: True
-	prm_ks: 3
-	prm_st: 1
-	pixel_wise_classification: True
-	batch_norm: False
-	multiple_layer: False
-	one_layer: False
-	anchors_ortogonal: False
-	detach_pixel_classifier: False
-scale_in: 1.0
-freeze_cl: False
-im_rec: False
-img_range: tanh 
-
-DLLL 2025-12-23 16:07:50.298931 0:00:07.165666 u-resnet50. Task: STD_CL. 
- NBR-PARAMS: 
-	Encoder [resnet50]: 23508032. 
-	Classification head [DeepMIL]: 528900. 
-	Pixel Wise Classification head [PixelWise]: 4098. 
-	Total: 24041030. 
-
-DLLL 2025-12-23 16:07:50.367936 0:00:07.234671 
-========================================================================================================================
- MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/ENERGY_BASED_ADAPTATION/EXPS/CAMELYON17_512/RESNET50/STD_CL/PIXELCAM/ID_UNLEARNING_C17_33-TSK_STD_CL-DS_CAMELYON17_512-FOLD_3-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_PIXELCAM-SPOOLING_DEEPMIL-ARCH_STDCLASSIFIER-ECD_RESNET50/CAMELYON17_512-3-RESNET50-PIXELCAM-DEEPMIL-CP_BEST_LOCALIZATION
-========================================================================================================================
-
+DLLL 2026-01-26 04:34:44.058767 0:00:09.249911 `SAT(
+  (patch_embed): PatchEmbed(
+    (proj): Conv2d(3, 192, kernel_size=(16, 16), stride=(16, 16))
+  )
+  (pos_drop): Dropout(p=0.0, inplace=False)
+  (blocks): ModuleList(
+    (0): Block(
+      (norm1): LayerNorm((192,), eps=1e-06, elementwise_affine=True)
+      (attn): Attention(
+        (qkv): Linear(in_features=192, out_features=576, bias=True)
+        (attn_drop): Dropout(p=0.0, inplace=False)
+        (proj): Linear(in_features=192, out_features=192, bias=True)
+        (proj_drop): Dropout(p=0.0, inplace=False)
+      )
+      (drop_path): Identity()
+      (norm2): LayerNorm((192,), eps=1e-06, elementwise_affine=True)
+      (mlp): Mlp(
+        (fc1): Linear(in_features=192, out_features=768, bias=True)
+        (act): GELU(approximate='none')
+        (fc2): Linear(in_features=768, out_features=192, bias=True)
+        (drop): Dropout(p=0.0, inplace=False)
+      )
+    )
+    (1): Block(
+      (norm1): LayerNorm((192,), eps=1e-06, elementwise_affine=True)
+      (attn): Attention(
+        (qkv): Linear(in_features=192, out_features=576, bias=True)
+        (attn_drop): Dropout(p=0.0, inplace=False)
+        (proj): Linear(in_features=192, out_features=192, bias=True)
+        (proj_drop): Dropout(p=0.0, inplace=False)
+      )
+      (drop_path): DropPath(drop_prob=0.009)
+      (norm2): LayerNorm((192,), eps=1e-06, elementwise_affine=True)
+      (

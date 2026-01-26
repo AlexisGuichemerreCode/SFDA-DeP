@@ -9,6 +9,7 @@ import csv
 import math
 import datetime as dt
 import random as py_random
+from collections import deque
 
 import numpy as np
 import torch
@@ -1256,37 +1257,7 @@ class Trainer(Basic):
                     out = self.model(images)
                     features = self.model.lin_ft
 
-                    # if args.pixel_wise_classification and args.ece_adapt:
-                    #     _, _, h, w = self.model.encoder_last_features.shape
-                    #     interpolation_mode = 'bilinear'
-
-                    #     if std_cams is None:
-                    #         cams_inter = self.get_pseudo_cams_minibatch(images=images, targets=z_label)
-                    #     else:
-                    #         cams_inter = std_cams
-
-                    #     if self.args.low_res:
-                    #         fcams = self.model.cams
-                    #     else:
-                    #         _, _, i, x = cams_inter.shape
-                    #         fcams = F.interpolate(
-                    #             self.model.cams, (i, x),
-                    #             mode=interpolation_mode,
-                    #             align_corners=False
-                    #         )
-
-                    #     with torch.no_grad():
-                    #         if self.args.low_res:
-                    #             cams_inter = F.interpolate(
-                    #                 cams_inter, (h, w),
-                    #                 mode=interpolation_mode,
-                    #                 align_corners=False
-                    #             )
-
-                    #         seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
-                    # else:
-                    #     seeds = None
-                    #     fcams = None
+                    
                     
                     with torch.no_grad():
                             output = self.model(images)
@@ -1295,11 +1266,21 @@ class Trainer(Basic):
                     cdcl_out = self.sfuda_master.forward_data(features)
 
 
+                    probs = torch.softmax(cl_logits, dim=1)      # [B, C]
+                    pred_class = probs.argmax(dim=1)             # [B]
+                    entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1)  # [B]
+
+                    if args.pixel_wise_classification and args.ece_adapt:
+                        seeds = self.sl_mask_builder(cams_inter, class_idx=pred_class)
+                    else:
+                        seeds = None
 
                     if self.args.erl:
                         key_args = self.build_key_arg(cdcl_out, src_probs=y_bar_batch)
                     else:
                         key_args = cdcl_out
+
+                    key_args["entropy"] = entropy
 
                     #loss = self.loss(epoch=self.epoch,model=self.model,cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global,key_arg=cdcl_out)
                     loss = self.loss(epoch=self.epoch,model=self.model,fcams=fcams, cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global,seeds=seeds,key_arg=key_args)
@@ -5370,7 +5351,7 @@ class Trainer(Basic):
         plt.xlabel('Epoch')
         plt.ylabel(ylabel)
         plt.legend()
-        plt.xticks(epochs)
+        plt.xticks(epochs, rotation=45, ha='right')
         plt.tight_layout()
 
         png_name = f"{file_prefix}_curve_{split}_{hp_suffix}.png"
@@ -6296,33 +6277,98 @@ class Trainer(Basic):
     def update_best_cl_train_model_came(self, epoch):
         torch.cuda.empty_cache()
         self.model.eval()
-        # if self.args.task != constants.SEG:
-        #     accuracy = self._compute_accuracy(loader=self.loaders[split])
 
-        accuracy = 0.0
-        # if self.args.task != constants.SEG:
-        #     accuracy = self._compute_accuracy(loader=self.loaders[split])
 
-        torch.cuda.empty_cache()
+        if self.args.smooth_selection and not hasattr(self, "acc_cl_history"):
+            self.acc_cl_history = deque(maxlen=3)
 
+
+        # ------------------------------------------------------------
+        # RESAMPLE EPOCH
+        # ------------------------------------------------------------
+        if epoch % self.args.resample_every == 0:
+            if self.args.smooth_selection:
+                self.acc_cl_history.clear()
+                print(f"[Resample] Epoch {epoch}: skip selection (no model update yet)")
+            return
+
+
+        # ============================================================
+        # NON-RESAMPLE EPOCH → SELECTION LOGIC
+        # ============================================================
         model_cl = deepcopy(self.model).to(self.cpu_device).eval()
-        #model_state = model_entropy.state_dict()
 
-        acc_cl = self.metrics[constants.CLVALIDSET]['acc_cl'][-1]
+        if self.args.select_best_on_train:
+            acc_cl = self.metrics[constants.TRAINSET]['acc_global'][-1]
+            criterion_name = "TRAIN-ACC"
+        else:
+            acc_cl = self.metrics[constants.CLVALIDSET]['acc_cl'][-1]
+            criterion_name = "VALCL-ACC"
 
+        # ------------------------------------------------------------
+        # INIT BEST
+        # ------------------------------------------------------------
         if not hasattr(self, "best_accuracy"):
             self.cl_train_model = None
             self.best_accuracy = -1.0
             self.best_epoch = -1
 
-        if acc_cl > self.best_accuracy:
-            self.best_accuracy = acc_cl
-            self.cl_train_model = deepcopy(model_cl)
-            self.best_epoch = epoch
-            print(f"[Accuracy Update] New best model at epoch {epoch} with accuracy {acc_cl:.2f}%")
-        else:
-            print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {acc_cl:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
+        # ============================================================
+        # CASE 1: STANDARD SELECTION (UNCHANGED)
+        # ============================================================
+        if not self.args.smooth_selection:
 
+            if acc_cl > self.best_accuracy:
+                self.best_accuracy = acc_cl
+                self.cl_train_model = deepcopy(model_cl)
+                self.best_epoch = epoch
+                print(
+                    f"[Accuracy Update] ({criterion_name}) "
+                    f"New best model at epoch {epoch} "
+                    f"with accuracy {acc_cl:.2f}%"
+                )
+            else:
+                print(
+                    f"[Accuracy Skip] ({criterion_name}) "
+                    f"Model at epoch {epoch} with accuracy {acc_cl:.2f}% "
+                    f"was not better than best ({self.best_accuracy:.2f}%)"
+                )
+
+        # ============================================================
+        # CASE 2: SMOOTHED SELECTION (AVG OVER LAST 3)
+        # ============================================================
+        else:
+            self.acc_cl_history.append(acc_cl)
+
+            if len(self.acc_cl_history) < 3:
+                print(
+                    f"[Accuracy Buffering] ({criterion_name}) "
+                    f"Epoch {epoch}, acc={acc_cl:.2f}% "
+                    f"(buffer={len(self.acc_cl_history)}/3)"
+                )
+                return
+
+            acc_cl_avg = sum(self.acc_cl_history) / len(self.acc_cl_history)
+
+            if acc_cl_avg > self.best_accuracy:
+                self.best_accuracy = acc_cl_avg
+                self.cl_train_model = deepcopy(model_cl)
+                self.best_epoch = epoch
+                print(
+                    f"[Accuracy Update] ({criterion_name}, avg-3) "
+                    f"New best model at epoch {epoch} "
+                    f"with avg accuracy {acc_cl_avg:.2f}%"
+                )
+            else:
+                print(
+                    f"[Accuracy Skip] ({criterion_name}, avg-3) "
+                    f"Epoch {epoch} with avg accuracy {acc_cl_avg:.2f}% "
+                    f"was not better than best ({self.best_accuracy:.2f}%)"
+                )
+
+        # ============================================================
+        # PXAP PART (UNCHANGED)
+        # ============================================================
         if self.args.measure_loc:
             acc_pxap = self.target_valpx_pxap[-1]
 
@@ -6330,13 +6376,78 @@ class Trainer(Basic):
                 self.pxap_train_model = None
                 self.best_accuracy_pxap = -1.0
                 self.best_epoch_pxap = -1
+
             if acc_pxap > self.best_accuracy_pxap:
                 self.best_accuracy_pxap = acc_pxap
                 self.pxap_train_model = deepcopy(model_cl)
                 self.best_epoch_pxap = epoch
-                print(f"[PXAP Update] New best PXAP model at epoch {epoch} with PXAP {acc_pxap:.2f}%")
+                print(
+                    f"[PXAP Update] New best PXAP model at epoch {epoch} "
+                    f"with PXAP {acc_pxap:.2f}%"
+                )
             else:
-                print(f"[PXAP Skip] PXAP model at epoch {epoch} with PXAP {acc_pxap:.2f}% was not better than best ({self.best_accuracy_pxap:.2f}%)")
+                print(
+                    f"[PXAP Skip] PXAP model at epoch {epoch} "
+                    f"with PXAP {acc_pxap:.2f}% "
+                    f"was not better than best ({self.best_accuracy_pxap:.2f}%)"
+                )
+
+
+        # accuracy = 0.0
+
+        # torch.cuda.empty_cache()
+
+        # if epoch % self.args.resample_every != 0:
+        #     model_cl = deepcopy(self.model).to(self.cpu_device).eval()
+        #     #model_state = model_entropy.state_dict()
+
+        #     if self.args.select_best_on_train:
+        #         acc_cl = self.metrics[constants.TRAINSET]['acc_global'][-1]
+        #         criterion_name = "TRAIN-ACC"
+        #     else:
+        #         acc_cl = self.metrics[constants.CLVALIDSET]['acc_cl'][-1]
+        #         criterion_name = "VALCL-ACC"
+
+        #     #acc_cl = self.metrics[constants.CLVALIDSET]['acc_cl'][-1]
+            
+        #     if not hasattr(self, "best_accuracy"):
+        #         self.cl_train_model = None
+        #         self.best_accuracy = -1.0
+        #         self.best_epoch = -1
+
+        #     # ============================================================
+        #     # UPDATE
+        #     # ============================================================
+        #     if acc_cl > self.best_accuracy:
+        #         self.best_accuracy = acc_cl
+        #         self.cl_train_model = deepcopy(model_cl)
+        #         self.best_epoch = epoch
+        #         print(
+        #             f"[Accuracy Update] ({criterion_name}) "
+        #             f"New best model at epoch {epoch} "
+        #             f"with accuracy {acc_cl:.2f}%"
+        #         )
+        #     else:
+        #         print(
+        #             f"[Accuracy Skip] ({criterion_name}) "
+        #             f"Model at epoch {epoch} with accuracy {acc_cl:.2f}% "
+        #             f"was not better than best ({self.best_accuracy:.2f}%)"
+        #         )
+
+        #     if self.args.measure_loc:
+        #         acc_pxap = self.target_valpx_pxap[-1]
+
+        #         if not hasattr(self, "best_accuracy_pxap"):
+        #             self.pxap_train_model = None
+        #             self.best_accuracy_pxap = -1.0
+        #             self.best_epoch_pxap = -1
+        #         if acc_pxap > self.best_accuracy_pxap:
+        #             self.best_accuracy_pxap = acc_pxap
+        #             self.pxap_train_model = deepcopy(model_cl)
+        #             self.best_epoch_pxap = epoch
+        #             print(f"[PXAP Update] New best PXAP model at epoch {epoch} with PXAP {acc_pxap:.2f}%")
+        #         else:
+        #             print(f"[PXAP Skip] PXAP model at epoch {epoch} with PXAP {acc_pxap:.2f}% was not better than best ({self.best_accuracy_pxap:.2f}%)")
 
 
 

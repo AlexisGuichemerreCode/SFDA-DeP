@@ -917,7 +917,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     ####################################################################################
     DLLogger.flush()
     
-    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{args.fold}")
+    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{parsedargs.fold_dataset}")
     #read sys var DATASETSH
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     target_domain_data_paths = config.configure_data_paths(args_dict, dataset)
@@ -972,9 +972,12 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     
 
     acc_cl = _compute_accuracy(args, model, loaders[parsedargs.split])
-    #cam_performance = cam_computer.compute_and_evaluate_cams()
-    #cam_perf_pxap = cam_computer.evaluator.perf_gist[constants.MTR_PXAP]
+    cam_performance = cam_computer.compute_and_evaluate_cams()
+    cam_perf_pxap = cam_computer.evaluator.perf_gist[constants.MTR_PXAP]
  
+    print(f"Classification Accuracy on {parsedargs.split} set: {acc_cl:.2f}%")
+    print(f"CAM Performance PxAP on {parsedargs.split} set: {cam_perf_pxap:.2f}")
+
     entropies = []
     preds = []
     gts = []     
@@ -1103,7 +1106,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     # === Build output filename dynamically ===
     ############################################################
 
-    filename = f"{dataset}__fold{parsedargs.fold_dataset}__{method_name}__{parsedargs.sfda_method}__{parsedargs.split}.json"
+    filename = f"{dataset}__fold{parsedargs.fold_dataset}__{split}__{method_name}__{parsedargs.sfda_method}__{parsedargs.split}.json"
     output_path = os.path.join(dataset_dir, filename)
 
 

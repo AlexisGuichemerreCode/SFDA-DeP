@@ -127,6 +127,7 @@ def main():
             "acc_cancer",
             "acc_flip",
             "acc_stable",
+            "acc_global",
             "kl_uniform",
             "ECE",
             "NLL",

@@ -621,12 +621,14 @@ def get_loss_target(args):
             
             if args.dataset == constants.GLAS or args.dataset in [constants.OpenImagesSrc, constants.OpenImagesTrgt]:
                 negative_samples = False
-            # elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and args.neg_samples_partial:
-            #     negative_samples = False
+            elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and args.neg_samples_partial:
+                negative_samples = False
             elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512]:
                 negative_samples = True
             
-            EnergyCEAdapt_loss.set_it(ece_adapt_lambda=args.ece_adapt_lambda, apply_negative_samples=negative_samples, negative_c=constants.DS_NEG_CL[args.dataset])
+            EnergyCEAdapt_loss.set_it(ece_adapt_lambda=args.ece_adapt_lambda, apply_negative_samples=negative_samples, negative_c=constants.DS_NEG_CL[args.dataset], 
+                                     entropy_filter_mode=args.entropy_filter_mode,
+                                     keep_ratio=args.keep_ratio)
             masterloss.add(EnergyCEAdapt_loss)
 
         if args.ece:

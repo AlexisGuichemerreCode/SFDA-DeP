@@ -538,6 +538,8 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
 
         "ece_adapt": False,  # use or not ECE.
         "ece_adapt_lambda": 1.,  # lambda for ECE.
+        "entropy_filter_mode": False,
+        "keep_ratio": "0.2",  # keep ratio for entropy filtering
 
         "epx": False,  # use or not ECE.
         "epx_lambda": 1.,  # lambda for ECE.
@@ -885,7 +887,8 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'retain_all_others': False,  # retain all other samples not selected for unlearning
         'dynamic_selection': False,  # dynamically select samples based on entropy each epoch
         'resample_every': 5,  # resample every n epochs
-
+        'select_best_on_train' : False,  # select model for unlearning based on train set, fake label
+        'smooth_selection' : False,  # select model for unlearning based on train set using fakelabel and smooth approach
         'balance_stable_to_flips' : False,  # balance the number of stable and flips
         'stable_match_strategy': False,  # match the number of stable and flips
 

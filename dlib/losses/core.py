@@ -1894,7 +1894,9 @@ class EnergyCEAdaptloss(SelfLearningFcams):
 
         self._is_already_set = False
 
-    def set_it(self,ece_adapt_lambda, apply_negative_samples: bool, negative_c: int | None = None,):
+    def set_it(self,ece_adapt_lambda, apply_negative_samples: bool, negative_c: int | None = None, 
+               entropy_filter_mode: str = None,
+               keep_ratio: float = 0.2):
         assert isinstance(apply_negative_samples, bool)
         #assert isinstance(negative_c, int)
         #assert negative_c >= 0
@@ -1902,6 +1904,8 @@ class EnergyCEAdaptloss(SelfLearningFcams):
         self.ece_lambda = ece_adapt_lambda
         self.negative_c = negative_c
         self.apply_negative_samples = apply_negative_samples
+        self.entropy_filter_mode = entropy_filter_mode
+        self.keep_ratio = keep_ratio
 
         self._is_already_set = True
 
@@ -1932,7 +1936,66 @@ class EnergyCEAdaptloss(SelfLearningFcams):
         assert not self.multi_label_flag
 
         if not self.apply_negative_samples:
-            return self.loss(input=fcams, target=seeds) * self.ece_lambda
+            #return self.loss(input=fcams, target=seeds) * self.ece_lambda
+            # =========================
+            # 🔹 MODE 0 — baseline
+            # =========================
+            if self.entropy_filter_mode is None:
+                return self.loss(input=fcams, target=seeds) * self.ece_lambda
+
+
+            with torch.no_grad(): 
+                probs = torch.softmax(cl_logits, dim=1)
+                pred_class = probs.argmax(dim=1)
+                entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1)
+
+
+            #entropy = key_arg["entropy"]  # [B]
+            B = entropy.numel()
+            ind_keep_all = []
+            # =========================
+            # 🔹 MODE 2 — ratio (top-k%)
+            # =========================
+            # k = int(self.keep_ratio * B)
+            # if k == 0:
+            #     return self._zero
+
+            # _, ind_keep = torch.topk(entropy, k, largest=False)
+
+
+
+            # if ind_keep.numel() == 0:
+            #     return self._zero
+
+
+
+            # fcams_keep = fcams[ind_keep]
+            # seeds_keep = seeds[ind_keep]
+
+            for c in torch.unique(pred_class):
+                ind_c = (pred_class == c).nonzero(as_tuple=False).view(-1)
+
+                if ind_c.numel() == 0:
+                    continue
+
+                entropy_c = entropy[ind_c]
+                k_c = int(self.keep_ratio * ind_c.numel())
+
+                if k_c == 0:
+                    continue
+
+                _, ind_sorted_c = torch.topk(entropy_c, k_c, largest=False)
+                ind_keep_all.append(ind_c[ind_sorted_c])
+
+            if len(ind_keep_all) == 0:
+                return self._zero
+
+            ind_keep = torch.cat(ind_keep_all)
+
+            fcams_keep = fcams[ind_keep]
+            seeds_keep = seeds[ind_keep]
+
+            return self.loss(input=fcams_keep, target=seeds_keep) * self.ece_lambda
 
         #ind_non_neg = (pseudo_glabel != -255) & (pseudo_glabel != self.negative_c)
         #ind_non_neg = (pseudo_glabel != self.negative_c).nonzero().view(-1)
