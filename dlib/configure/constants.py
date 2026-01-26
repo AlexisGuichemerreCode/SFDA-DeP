@@ -544,7 +544,7 @@ RMODE_SEARCH = 'search-mode'
 RMODE_FINAL = 'final-mode'
 
 
-FOLDS_NBR = 1000
+FOLDS_NBR = 10000
 FOLD_SEARCH = 0  # fold used for hyper-prama search.
 
 # folder
