@@ -539,7 +539,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         "ece_adapt": False,  # use or not ECE.
         "ece_adapt_lambda": 1.,  # lambda for ECE.
         "entropy_filter_mode": False,
-        "keep_ratio": "0.2",  # keep ratio for entropy filtering
+        "keep_ratio": 0.2,  # keep ratio for entropy filtering
 
         "epx": False,  # use or not ECE.
         "epx_lambda": 1.,  # lambda for ECE.
