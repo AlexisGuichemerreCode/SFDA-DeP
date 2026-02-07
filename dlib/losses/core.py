@@ -15,6 +15,7 @@ sys.path.append(root_dir)
 from dlib.losses.elb import ELB
 from dlib.losses.entropy import Entropy
 from dlib.losses.energy_marginal import Energy_Marginal
+from dlib.losses.unlearning_sfda import ForgetClassSuppressionLoss
 from dlib import crf
 
 from dlib.div_classifiers.parts.spg import get_loss as get_spg_loss
@@ -52,6 +53,7 @@ __all__ = [
     'Energy_Marginal',
     'CENotFlipLoss',
     'CEFlipLoss',
+    'CEForgetLoss',
     'EntropyFcamsLoss',
 ]
 
@@ -302,6 +304,89 @@ class CENotFlipLoss(ElementaryLoss):
         #return self.loss(input=cl_logits, target=y_pred_batch_not_flip) * self.lambda_
 
 
+class CEForgetLoss(ElementaryLoss):
+    """
+    Unlearning loss: suppress confidence for the predicted class
+    for samples selected to be forgotten.
+    """
+
+    def __init__(self, **kwargs):
+        super(CEForgetLoss, self).__init__(**kwargs)
+
+        self.lambda_: float = 1.0
+
+        self.loss = ForgetClassSuppressionLoss().to(self._device)
+
+        self.already_set = False
+
+    def set_it(self, lambda_: float, **kwargs):
+        assert isinstance(lambda_, float)
+        assert 0.0 <= lambda_ <= 1.0
+
+        self.lambda_ = lambda_
+
+        self.loss = ForgetClassSuppressionLoss().to(self._device)
+
+        self.already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+        super(CEForgetLoss, self).forward(epoch=epoch)
+        assert self.already_set
+
+        if not self.is_on():
+            return self._zero
+
+        # -----------------------------
+        # Sanity checks
+        # -----------------------------
+        assert cl_logits is not None
+        assert key_arg is not None
+        assert "cal_mask_forget" in key_arg
+        assert "y_pred_batch" in key_arg
+        assert "forget_label_batch" in key_arg
+
+
+
+        forget_mask = torch.tensor(
+            key_arg["cal_mask_forget"],
+            dtype=torch.bool,
+            device=cl_logits.device
+        )
+
+        if forget_mask.sum() == 0:
+            return self._zero
+
+        # -----------------------------
+        # Select samples to forget
+        # -----------------------------
+        logits_forget = cl_logits[forget_mask]                 # [Bf, K]
+        forget_class = key_arg["forget_label_batch"][forget_mask]
+
+        # -----------------------------
+        # Compute unlearning loss
+        # -----------------------------
+        loss_vec = self.loss(logits_forget, forget_class)      # [Bf]
+
+        return self.lambda_ * loss_vec.mean()
+    
+
+
 class CEFlipLoss(ElementaryLoss):
     def __init__(self, **kwargs):
         super(CEFlipLoss, self).__init__(**kwargs)
@@ -313,7 +398,7 @@ class CEFlipLoss(ElementaryLoss):
     def set_it(self, lambda_: float, ce_label_smoothing: float = 0.0):
         assert isinstance(ce_label_smoothing, float)
         assert 0 <= ce_label_smoothing <= 1.
-        self.ce_notflip_label_smoothing = ce_label_smoothing
+        self.ce_flip_label_smoothing = ce_label_smoothing
 
         assert isinstance(lambda_, float)
         assert 0 <= lambda_ <= 1.

@@ -466,6 +466,7 @@ def get_visaualization(exp_path, target_method, sf_uda_source_folder, checkpoint
             multi_contour_eval=args.multi_contour_eval,
             out_folder=args.outd,
         )
+        
     overlay_images = {}
     input_images = {}
     gt_masks = {}

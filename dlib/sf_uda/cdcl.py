@@ -236,7 +236,6 @@ class Cdcl(object):
         self.threshold = threshold
         self.convergence = convergence
         self.n_cls = n_cls
-        #self.source_anchors = F.normalize(torch.randn(2, 2048), dim=1).cpu()
 
     def solve(self):
             torch.cuda.empty_cache()
@@ -322,27 +321,7 @@ class Cdcl(object):
         min_sn_cls = 5
         target_samples = self.clustered_target_samples
 
-        # chosen_samples = self.filter_samples(target_samples, threshold=threshold)
         chosen_samples_2 = self.filter_samples_2(target_samples, threshold=threshold)
-        # error_found = False
-
-        # for data_item in chosen_samples['data']:
-        #     index = chosen_samples['data'].index(data_item)
-        #     index2 = chosen_samples_2['data'].index(data_item)
-        #     label1 = chosen_samples['label'][index]
-        #     label2 = chosen_samples_2['label'][index2]
-
-        #     # Compare labels
-        #     if label1 != label2:
-        #         print(f"La valeur de data '{data_item}' a des labels différents dans les deux dictionnaires.")
-        #         error_found = True
-        #         break
-
-        # if error_found:
-        #     print("Une erreur a été trouvée : les labels pour au moins un élément diffèrent dans les deux dictionnaires.")
-        # else:
-        #     print("Aucune erreur trouvée : les labels pour tous les éléments sont les mêmes dans les deux dictionnaires.")
-
         filtered_classes = self.filter_class(chosen_samples_2['label'], min_sn_cls, self.n_cls)
         print('The number of filtered classes: %d' % len(filtered_classes))
 

@@ -1,3 +1,4 @@
+from html import parser
 import os
 import sys
 from os.path import join, dirname, abspath
@@ -880,6 +881,16 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'freeze_encoder_sfda': False,  # freeze the enocodeur during
         # training. If True, the encodeur are not updated.
 
+
+        'save_unlearning_model_all_criterion': False, # Save unlearning model for all criterion
+
+        'track_cams': False, # track cams during unlearning
+        'track_cam_image_ids': None, # list of image ids to track cams
+        'track_cam_every': 1,  # track cams every n epochs
+
+        'track_test_performance': False, # track test performance during unlearning
+
+        'disable_train_augmentations': False,  # disable augmentations during unlearning
         'esfda_select_imgs': False,  # select images to shift label
         'esfda_select_imgs_ratio':  0.1,  # ratio of images to select
         'random_select_ratio':  0.1,  # ratio of images to select
@@ -891,6 +902,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'smooth_selection' : False,  # select model for unlearning based on train set using fakelabel and smooth approach
         'balance_stable_to_flips' : False,  # balance the number of stable and flips
         'stable_match_strategy': False,  # match the number of stable and flips
+        'activate_load_mask': False,  # activate loading mask  
 
         'entropy_probabilistic': False,
         'entropy_gt': False,

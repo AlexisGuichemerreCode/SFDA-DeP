@@ -30,6 +30,8 @@ from skimage.transform import resize
 from sklearn.manifold import TSNE
 from sklearn.metrics import davies_bouldin_score
 
+from collections import Counter
+
 #import cuml
 #print("cuML version:", cuml.__version__)
 
@@ -89,22 +91,70 @@ def cl_forward(args, model, images):
 
     return cl_logits
     
-def _compute_accuracy(args, model, loader):
+# def _compute_accuracy(args, model, loader):
+#     num_correct = 0
+#     num_images = 0
+
+#     for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+#         images = images.cuda()
+#         targets = targets.cuda()
+#         with torch.no_grad():
+#             cl_logits = cl_forward(args, model, images)
+#             pred = cl_logits.argmax(dim=1)
+
+#         num_correct += (pred == targets).sum().item()
+#         num_images += images.size(0)
+
+#     classification_acc = num_correct / float(num_images) * 100
+#     return classification_acc
+
+def _compute_accuracy(args, model, loader, num_classes=2):
     num_correct = 0
     num_images = 0
 
-    for i, (images, targets, _, _, _, _, _, _) in enumerate(loader):
+    pred_counter = Counter()
+
+    for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
         images = images.cuda()
         targets = targets.cuda()
+
         with torch.no_grad():
             cl_logits = cl_forward(args, model, images)
             pred = cl_logits.argmax(dim=1)
 
+        # accuracy
         num_correct += (pred == targets).sum().item()
         num_images += images.size(0)
 
+        # count predictions
+        pred_counter.update(pred.cpu().tolist())
+
+    # accuracy
     classification_acc = num_correct / float(num_images) * 100
-    return classification_acc
+
+    # prediction bias
+    pred_counts = torch.zeros(num_classes)
+    for k, v in pred_counter.items():
+        pred_counts[k] = v
+
+
+    # over / under predicted classes
+    over_pred_class = pred_counts.argmax().item()
+    under_pred_class = pred_counts.argmin().item()
+
+    max_pred = pred_counts.max().item()
+    min_pred = pred_counts.min().item()
+
+    ratio_pred = max_pred / (min_pred + 1e-6)
+
+    return (
+        classification_acc,
+        ratio_pred,
+        pred_counts,
+        over_pred_class,
+        under_pred_class,
+    )
+
 
 def extract_pixel_features(mask_source, feature_source, label_source, cam_source, image_id_source, target_method, dataset, parsedargs):
     _,l,m,n=feature_source.shape
@@ -652,22 +702,22 @@ IgnoreKeyLoader.add_constructor(
 )
 
 
-def _compute_accuracy(args, model, loader):
-    num_correct = 0
-    num_images = 0
+# def _compute_accuracy(args, model, loader):
+#     num_correct = 0
+#     num_images = 0
 
-    for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
-        images = images.cuda()
-        targets = targets.cuda()
-        with torch.no_grad():
-            cl_logits = cl_forward(args, model, images)
-            pred = cl_logits.argmax(dim=1)
+#     for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
+#         images = images.cuda()
+#         targets = targets.cuda()
+#         with torch.no_grad():
+#             cl_logits = cl_forward(args, model, images)
+#             pred = cl_logits.argmax(dim=1)
 
-        num_correct += (pred == targets).sum().item()
-        num_images += images.size(0)
+#         num_correct += (pred == targets).sum().item()
+#         num_images += images.size(0)
 
-    classification_acc = num_correct / float(num_images) * 100
-    return classification_acc
+#     classification_acc = num_correct / float(num_images) * 100
+#     return classification_acc
 
 def compute_ece(probs, labels, n_bins=15):
     bin_boundaries = torch.linspace(0, 1, n_bins+1)
@@ -971,11 +1021,15 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                     )
     
 
-    acc_cl = _compute_accuracy(args, model, loaders[parsedargs.split])
+    classification_acc, ratio_pred, pred_counts, over_pred_class, under_pred_class = _compute_accuracy(args, model, loaders[parsedargs.split])
     cam_performance = cam_computer.compute_and_evaluate_cams()
     cam_perf_pxap = cam_computer.evaluator.perf_gist[constants.MTR_PXAP]
  
-    print(f"Classification Accuracy on {parsedargs.split} set: {acc_cl:.2f}%")
+    print(f"Classification Accuracy on {parsedargs.split} set: {classification_acc:.2f}%")
+    print(f"Ratio of positive predictions on {parsedargs.split} set: {ratio_pred:.2f}")
+    print(f"Counts of predictions on {parsedargs.split} set: {pred_counts}")
+    print(f"Over-predicted classes on {parsedargs.split} set: {over_pred_class}")
+    print(f"Under-predicted classes on {parsedargs.split} set: {under_pred_class}")
     print(f"CAM Performance PxAP on {parsedargs.split} set: {cam_perf_pxap:.2f}")
 
 

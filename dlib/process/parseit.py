@@ -694,6 +694,16 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--freeze_classifier_sfda', type=str2bool, default=None,)
     parser.add_argument('--freeze_encoder_sfda', type=str2bool, default=None,)
 
+
+    parser.add_argument('--save_unlearning_model_all_criterion', type=str2bool, default=None,)
+    
+    parser.add_argument('--track_cams', type=str2bool, default=None,)
+    parser.add_argument('--track_cam_image_ids', nargs='+', type=str, default=None,)
+    parser.add_argument('--track_cam_every', type=int, default=None,)
+
+    parser.add_argument('--track_test_performance', type=str2bool, default=None,)
+
+    parser.add_argument('--disable_train_augmentations', type=str2bool, default=None,)
     parser.add_argument('--esfda_select_imgs', type=str2bool, default=None,)
     parser.add_argument('--esfda_select_imgs_ratio', type=float, default=None,)
     parser.add_argument('--random_select_ratio', type=float, default=None,)
@@ -706,7 +716,7 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--balance_stable_to_flips', type=str2bool, default=None,)
     parser.add_argument('--stable_match_strategy', type=str2bool, default=None,)
     parser.add_argument('--measure_loc', type=str2bool, default=None,)
-    
+    parser.add_argument('--activate_load_mask', type=str2bool, default=None,)
 
     parser.add_argument('--entropy_probabilistic', type=str2bool, default=None,)
     parser.add_argument('--entropy_gt', type=str2bool, default=None,)
@@ -1226,16 +1236,22 @@ def get_args(args: dict, eval: bool = False):
             #assert args['target_domain_ds_to_compute_stats'] == args['ds_to_compute_acc_trainset_source_target']
 
         dsname_target_domain = args['target_domain_ds_to_compute_stats']
+        dsname_source_domain = args['ds_to_compute_acc_trainset_source_target']
         pre = constants.FORMAT_DEBUG.split('_')[0]
         if dsname_target_domain.startswith(pre):
             dsname_target_domain = dsname_target_domain.replace('{}_'.format(pre), '')
+        if dsname_source_domain.startswith(pre):
+            dsname_source_domain = dsname_source_domain.replace('{}_'.format(pre), '')
         assert dsname_target_domain in [constants.CAMELYON512, constants.GLAS, constants.CAMELYON17_512, constants.OpenImagesTrgt]
+        
         args['target_domain_data_paths'] = config.configure_data_paths(args, dsname_target_domain)
 
         args['target_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['target_domain_ds_to_compute_stats'],
                                      f"fold-{args['fold_came_compute']}")
         args['source_domain_metadata_root'] = join(constants.RELATIVE_META_ROOT, args['ds_to_compute_acc_trainset_source_target'],
                                      f"fold-{args['sf_uda_source_ds_fold']}")
+
+        args['source_domain_data_paths'] = config.configure_data_paths(args, dsname_source_domain)
         
 
         # if dsname_target_domain == constants.CAMELYON512:

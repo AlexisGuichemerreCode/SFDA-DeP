@@ -563,7 +563,8 @@ def get_data_loader(data_roots,
                     per_split_sfuda_select_ids_pl: dict = None,
                     sfuda_faust: bool = False,  # FAUST
                     sfuda_n_rnd_views: int = 0,  # FAUST
-                    sfda_aug_transform=None
+                    sfda_aug_transform=None,
+                    disable_train_augmentations: bool = False
                     ):
 
     def get_eval_tranforms():
@@ -624,17 +625,49 @@ def get_data_loader(data_roots,
 
     # todo: check transformations in
     #  https://github.com/gatsby2016/Augmentation-PyTorch-Transforms
+    # dataset_transforms = {
+    #     constants.TRAINSET: Compose([
+    #         Resize((resize_size, resize_size)),
+    #         RandomCrop(crop_size),
+    #         RandomHorizontalFlip(),
+    #         RandomVerticalFlip(),
+    #         transforms.ColorJitter(brightness=0.5, contrast=0.5,
+    #                                saturation=0.5, hue=0.05),
+    #         transforms.ToTensor(),
+    #         transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
+    #     ]),
+    #     constants.PXVALIDSET: get_eval_tranforms(),
+    #     constants.CLVALIDSET: get_eval_tranforms(),
+    #     constants.TESTSET: get_eval_tranforms()
+    # }
+
+    train_transform_with_aug = Compose([
+        Resize((resize_size, resize_size)),
+        RandomCrop(crop_size),
+        RandomHorizontalFlip(),
+        RandomVerticalFlip(),
+        transforms.ColorJitter(
+            brightness=0.5, contrast=0.5,
+            saturation=0.5, hue=0.05
+        ),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
+    ])
+
+    train_transform_no_aug = Compose([
+        Resize((resize_size, resize_size)),
+        RandomCrop(crop_size), 
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
+    ])
+
+    
     dataset_transforms = {
-        constants.TRAINSET: Compose([
-            Resize((resize_size, resize_size)),
-            RandomCrop(crop_size),
-            RandomHorizontalFlip(),
-            RandomVerticalFlip(),
-            transforms.ColorJitter(brightness=0.5, contrast=0.5,
-                                   saturation=0.5, hue=0.05),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
-        ]),
+        constants.TRAINSET: (
+            train_transform_no_aug
+            if disable_train_augmentations
+            else train_transform_with_aug
+        ),
         constants.PXVALIDSET: get_eval_tranforms(),
         constants.CLVALIDSET: get_eval_tranforms(),
         constants.TESTSET: get_eval_tranforms()
@@ -648,6 +681,9 @@ def get_data_loader(data_roots,
         transforms.ToTensor(),
         transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
     ])
+
+
+        
 
     if per_split_sfuda_select_ids_pl is None:
         per_split_sfuda_select_ids_pl = {
@@ -688,9 +724,11 @@ def get_data_loader(data_roots,
                 resize_size=resize_size,
                 crop_size=crop_size,
                 set_mode=get_mode(split),
-                load_tr_masks=load_tr_masks if split == constants.TRAINSET
-                else False,
-                mask_root=mask_root if split == constants.TRAINSET else '',
+                #load_tr_masks=load_tr_masks if split == constants.TRAINSET
+                #else False,
+                load_tr_masks=load_tr_masks,
+                #mask_root=mask_root if split == constants.TRAINSET else '',
+                mask_root=mask_root,
                 num_sample_per_class=(num_val_sample_per_class
                                       if split == constants.PXVALIDSET else 0),
                 root_data_cams=std_cams_folder[split],

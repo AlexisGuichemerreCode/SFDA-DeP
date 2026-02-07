@@ -17,6 +17,9 @@ from tqdm import tqdm as tqdm
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 import yaml
+import cv2
+import re
+from dlib.utils.tools import t2n
 import torch.nn.functional as F
 
 from torch.cuda.amp import autocast
@@ -299,7 +302,13 @@ class Trainer(Basic):
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
 
-        self.load_tr_masks = args.task == constants.SEG
+        if args.task == constants.SEG:
+            self.load_tr_masks = True
+        elif args.task != constants.SEG and args.activate_load_mask:
+            self.load_tr_masks = True
+        else:
+            self.load_tr_masks = False
+        #self.load_tr_masks = args.task == constants.SEG
         self.load_tr_masks &= args.localization_avail
         mask_root = args.mask_root if self.load_tr_masks else ''
         self.mask_root = args.mask_root
@@ -321,6 +330,7 @@ class Trainer(Basic):
         self.reinforce_indices = []
         self.entropy_all = []
         self.idx_to_pred = {}
+        self.forget_info = {}
 
         if args.entropy_models:
             self.entropy_models = args.entropy_models
@@ -350,7 +360,8 @@ class Trainer(Basic):
             std_cams_folder=self.args.std_cams_folder,
             sfuda_faust=self.args.faust,
             sfuda_n_rnd_views=self._get_faust_n_views(),
-            sfda_aug_transform=self.args.sfda_aug_transform
+            sfda_aug_transform=self.args.sfda_aug_transform,
+            disable_train_augmentations = self.args.disable_train_augmentations
             #chg_staining = self.chg_staining,
             #path_staining = self.path_staining,
             #dist_staining = self.dist_staining
@@ -413,21 +424,38 @@ class Trainer(Basic):
             #         get_splits_eval=[constants.TESTSET]
             #     )
             
-            # self.source_domain_loaders = get_data_loader(
-            #         data_roots=self.args.data_paths,
-            #         metadata_root=self.args.source_domain_metadata_root,
-            #         batch_size=self.args.batch_size,
-            #         eval_batch_size=self.args.eval_batch_size,
-            #         workers=self.args.num_workers,
-            #         resize_size=self.args.resize_size,
-            #         crop_size=self.args.crop_size,
-            #         load_tr_masks=self.load_tr_masks,
-            #         mask_root=mask_root,
-            #         proxy_training_set=self.args.proxy_training_set,
-            #         num_val_sample_per_class=self.args.num_val_sample_per_class,
-            #         std_cams_folder=None,
-            #         get_splits_eval=[constants.TESTSET]
-            #     )
+            self.source_domain_loaders = get_data_loader(
+                    data_roots=self.args.source_domain_data_paths,
+                    metadata_root=self.args.source_domain_metadata_root,
+                    batch_size=self.args.batch_size,
+                    eval_batch_size=self.args.eval_batch_size,
+                    workers=self.args.num_workers,
+                    resize_size=self.args.resize_size,
+                    crop_size=self.args.crop_size,
+                    load_tr_masks=self.load_tr_masks,
+                    mask_root=mask_root,
+                    proxy_training_set=self.args.proxy_training_set,
+                    num_val_sample_per_class=self.args.num_val_sample_per_class,
+                    std_cams_folder=None,
+                    get_splits_eval=["train", "valcl", "valpx","test"]
+                )
+
+
+            
+            self.metrics = {
+                "source": {
+                    "train": self.empty_metrics(),
+                    "valcl": self.empty_metrics(),
+                    "valpx": self.empty_metrics(),
+                    "test": self.empty_metrics(),
+                },
+                "target": {
+                    "train": self.empty_metrics(),
+                    "valcl": self.empty_metrics(),
+                    "valpx": self.empty_metrics(),
+                    "test": self.empty_metrics(),
+                },
+            }
             
             # self.source_train_domain_loaders = get_data_loader(
             #         data_roots=self.args.data_paths,
@@ -637,6 +665,36 @@ class Trainer(Basic):
             #         )
 
         # ======================================================================
+
+
+    def empty_metrics(self):
+                return {
+                    "acc_cl": [],
+                    "acc_normal": [],
+                    "acc_cancer": [],
+                    "f1": [],
+                    "precision": [],
+                    "recall": [],
+                    "entropy": [],
+                    "silhouette": [],
+                    "DBI": [],
+                    "CH": [],
+                    "J_index": [],
+                    "kl_uniform": [],
+                    "Hm": [],
+                    "Htilde": [],
+                    "acc_flip": [],
+                    "acc_stable": [],
+                    "acc_global": [],
+                    "ece": [],
+                    "nll": [],
+                    "brier": [],
+                    "ratio_bias": [],
+                    "acc_balanced": [],
+                    "acc_reverse_weighted": [],
+                    "pxap": [],
+                }
+
 
     def _get_faust_n_views(self) -> int:
         cnd = (self.args.sf_uda and self.args.faust)
@@ -1291,44 +1349,26 @@ class Trainer(Basic):
                     out = self.model(images)
                     features = self.model.lin_ft
 
-                    # if args.pixel_wise_classification and args.ece_adapt:
-                    #     _, _, h, w = self.model.encoder_last_features.shape
-                    #     interpolation_mode = 'bilinear'
 
-                    #     if std_cams is None:
-                    #         cams_inter = self.get_pseudo_cams_minibatch(images=images, targets=z_label)
-                    #     else:
-                    #         cams_inter = std_cams
-
-                    #     if self.args.low_res:
-                    #         fcams = self.model.cams
-                    #     else:
-                    #         _, _, i, x = cams_inter.shape
-                    #         fcams = F.interpolate(
-                    #             self.model.cams, (i, x),
-                    #             mode=interpolation_mode,
-                    #             align_corners=False
-                    #         )
-
-                    #     with torch.no_grad():
-                    #         if self.args.low_res:
-                    #             cams_inter = F.interpolate(
-                    #                 cams_inter, (h, w),
-                    #                 mode=interpolation_mode,
-                    #                 align_corners=False
-                    #             )
-
-                    #         seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
-                    # else:
-                    #     seeds = None
-                    #     fcams = None
-                    
                     with torch.no_grad():
                             output = self.model(images)
                             cl_logits = output
+
+
                     
-                    sfde_out = self.sfuda_master.forward_data(features, self.normal_sampler)
-                    loss = self.loss(epoch=self.epoch,model=self.model,fcams=fcams, cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global,seeds=seeds,key_arg=sfde_out)
+                    
+                    probs = torch.softmax(cl_logits, dim=1)      # [B, C]
+                    pred_class = probs.argmax(dim=1)             # [B]
+                    entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1)  # [B]
+
+                    if args.pixel_wise_classification and args.ece_adapt:
+                        seeds = self.sl_mask_builder(cams_inter, class_idx=pred_class)
+                    else:
+                        seeds = None
+                    
+                    key_args = self.sfuda_master.forward_data(features, self.normal_sampler)
+                    key_args["entropy"] = entropy
+                    loss = self.loss(epoch=self.epoch,model=self.model,fcams=fcams, cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global,seeds=seeds,key_arg=key_args)
                     logits = cl_logits
 
                 elif self.args.pxsfde:
@@ -1359,38 +1399,6 @@ class Trainer(Basic):
 
                     certainty_SA, mask_SA, y_tilde_SA, aug_feats_SA, weights = self.rgv_refine_and_align(images, aug_images, index)
 
-                    if args.pixel_wise_classification and args.ece_adapt:
-                        out = self.model(images) 
-                        _, _, h, w = self.model.encoder_last_features.shape
-                        interpolation_mode = 'bilinear'
-                        if std_cams is None:
-                            cams_inter = self.get_pseudo_cams_minibatch(images=images,
-                                                                    targets=y_tilde_SA)
-                        else:
-                            cams_inter = std_cams
-
-                        if self.args.low_res:
-                            fcams=self.model.cams
-                        else:
-                            _, _, i, x = cams_inter.shape
-                            fcams= F.interpolate(self.model.cams,
-                                        (i, x),
-                                        mode=interpolation_mode,
-                                        align_corners=False)
-
-                        with torch.no_grad():
-                            if self.args.low_res:
-                                cams_inter = F.interpolate(cams_inter,
-                                        (h, w),
-                                        mode=interpolation_mode,
-                                        align_corners=False)
-
-                            seeds = self.sl_mask_builder(cams_inter, class_idx=y_tilde_SA)
-
-                    else:
-                        seeds = None
-                        fcams = None
-
                     key_arg = {}
 
                     # --- Cross-Entropy (D_I) ---
@@ -1409,6 +1417,18 @@ class Trainer(Basic):
                     if weights is not None:
                         key_arg["weights"] = weights
 
+
+
+                    probs = torch.softmax(cl_logits, dim=1)      # [B, C]
+                    pred_class = probs.argmax(dim=1)             # [B]
+                    entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1)  # [B]
+
+                    if args.pixel_wise_classification and args.ece_adapt:
+                        seeds = self.sl_mask_builder(cams_inter, class_idx=pred_class)
+                    else:
+                        seeds = None
+
+                    key_arg["entropy"] = entropy
                     
 
                     #cl_logits = output
@@ -1619,7 +1639,8 @@ class Trainer(Basic):
                         cal_mask_forget=None,
                         cal_mask_retain=None,
                         y_pred_batch=None,
-                        mask_entropy = None):
+                        mask_entropy = None,
+                        forget_label_batch=None):
         
         args = self.args
         y_global = targets
@@ -1642,6 +1663,8 @@ class Trainer(Basic):
                         key_arg["cal_mask_retain"] = cal_mask_retain
                     if y_pred_batch is not None:
                         key_arg["y_pred_batch"] = y_pred_batch
+                    if forget_label_batch is not None:
+                        key_arg["forget_label_batch"] = forget_label_batch
 
                     if self.args.esfda_flip_labels_weight:
                         if mask_entropy is not None:
@@ -1938,7 +1961,7 @@ class Trainer(Basic):
         all_indices = []
         all_true_labels = []
 
-        for _, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views) in enumerate(loader):
+        for _, (images, targets, p_glabel, index, raw_imgs, std_cams, masks, views, _) in enumerate(loader):
 
             all_indices.extend(list(index))
             all_true_labels.extend(targets.cpu().tolist())
@@ -2155,7 +2178,8 @@ class Trainer(Basic):
                 self.stable_labels,
                 self.probs_all,
                 self.KL_global,
-                self.assigned_labels_map             
+                self.assigned_labels_map,
+                self.forget_info                
                 ) = self.select_flippable_indices_entropy(model=self.model,
                                 loader=self.loaders_notransform,
                                 select_imgs_ratio=self.args.esfda_select_imgs_ratio,
@@ -2200,7 +2224,8 @@ class Trainer(Basic):
                 self.stable_labels,
                 self.probs_all,
                 self.KL_global,
-                self.assigned_labels_map     
+                self.assigned_labels_map,
+                self.forget_info        
                 ) = self.select_flippable_indices_entropy(model=self.model,
                                 loader=self.loaders_notransform,
                                 select_imgs_ratio=self.args.esfda_select_imgs_ratio,
@@ -2570,8 +2595,8 @@ class Trainer(Basic):
             retain_all_others: if True → ALL non-flipped images become Xretain.
 
         Returns:
-            selected_flippable: set of indices selected for flipping.
-            reinforce_indices: empty set (legacy placeholder).
+            selected_flippable: set of indices to forget.
+            reinforce_indices: empty set  (legacy).
             idx_to_pred: mapping idx → predicted class.
             entropy_all: mapping idx → entropy value.
             flippable_subset: same as selected_flippable.
@@ -2685,7 +2710,7 @@ class Trainer(Basic):
         py_random.seed(self.seed)
 
         # ========================================================
-        # Select images to flip: threshold-based or ratio-based
+        # Select images to forget: threshold-based or ratio-based
         # ========================================================
         if entropy_threshold is not None:
             preselected_indices = [(idx, e) for (idx, e) in entropy_list if e >= entropy_threshold]
@@ -2704,6 +2729,30 @@ class Trainer(Basic):
 
         selected_flippable = set(idx for (idx, _) in selected_indices)
         flippable_subset = selected_flippable
+
+        forget_info = {
+            idx: {
+                "pred_before": idx_to_pred[idx],
+                "entropy": entropy_all[idx],
+                "top1": idx_to_top1[idx],
+                "top2": idx_to_top2[idx],
+            }
+            for idx in selected_flippable
+        }
+
+
+
+        # --------------------------------------------------------
+        # Create an ordered list of forget indices (deterministic)
+        # --------------------------------------------------------
+        selected_flippable_list = sorted(selected_flippable)
+
+        # Initial predicted class BEFORE flip, aligned with indices
+        forget_initial_preds = [
+            idx_to_pred[idx] for idx in selected_flippable_list
+        ]
+
+
 
         # ========================================================
         # Assign labels:
@@ -2730,7 +2779,7 @@ class Trainer(Basic):
         all_seen = list(idx_to_pred.keys())
 
         # ========================================================
-        # NEW OPTION: retain absolutely all non-flipped images
+        # NEW OPTION: retain absolutely all non-forgotten images
         # ========================================================
         if retain_all_others:
             # Xretain = all_seen \ Xforget
@@ -2745,7 +2794,7 @@ class Trainer(Basic):
             preserve_all = self.args.stable_match_strategy
 
             if not preserve_all:
-                # Simple retain: keep everything not flipped
+                # Simple retain: keep everything not forgotten
                 nonflipped = [idx for idx in all_seen if idx not in flippable_subset]
                 stable_selected = nonflipped
                 stable_labels = [idx_to_pred[idx] for idx in stable_selected]
@@ -2781,7 +2830,7 @@ class Trainer(Basic):
                             targets_per_class[c] += 1
                             remainder -= 1
 
-                    # Sort by entropy ascending (most confident retained first)
+                    # Sort by entropy ascending (most confident retained first) 
                     for c in by_class_all.keys():
                         by_class_all[c].sort(key=lambda x: x[1])
 
@@ -2858,7 +2907,8 @@ class Trainer(Basic):
             stable_labels,
             probs_all,
             KL_global,
-            assigned_labels_map
+            assigned_labels_map,
+            forget_info                 
         )
 
 
@@ -3570,13 +3620,254 @@ class Trainer(Basic):
         return final_selected_ids, out_dict, acc
 
 
+    def _extract_single_cam_from_batch(
+        self,
+        image,
+        target,
+        loader,
+        raw_imgs,
+        cams
+    ):
+        """
+        images   : normalized tensor [B, C, H, W]
+        raw_imgs : non-normalized images (PIL or tensor)
+        cams     : CAM tensor [B, h, w] or [B, 1, h, w]
+        idx      : index in batch
+        """
+
+
+        cam_computer = CAMComputer(
+            args=deepcopy(self.args),
+            model=self.model,
+            loader=loader,
+            metadata_root=os.path.join(self.args.metadata_root, constants.TRAINSET),
+            mask_root=self.args.mask_root,
+            iou_threshold_list=self.args.iou_threshold_list,
+            dataset_name=self.args.dataset,
+            split=constants.TRAINSET,
+            cam_curve_interval=self.args.cam_curve_interval,
+            multi_contour_eval=self.args.multi_contour_eval,
+            out_folder=self.args.outd,
+        )
+
+        self.model.eval()
+
+        image_size = image.shape[-2:]
+
+        image = image.cuda(self.args.c_cudaid)
+        target = target.cuda(self.args.c_cudaid)
+        
+
+        with torch.no_grad():
+            cam, cl_logits = cam_computer.get_cam_one_sample(
+                    image=image.unsqueeze(0), target=target.item())
+            cam = F.interpolate(cam.unsqueeze(0).unsqueeze(0),
+                                image_size,
+                                mode='bilinear',
+                                align_corners=False).squeeze(0).squeeze(0)
+            cam = cam.detach()
+
+
+        image_norm = image.permute(1,2,0)
+        image_norm = (image_norm - image_norm.min()) / (image_norm.max() - image_norm.min())
+        overlay_image = self.show_cam_on_image(t2n(image_norm), t2n(cam), use_rgb=True)
+
+
+
+        return overlay_image
+
+    def _resize_cam(self, cam, target_size):
+        cam = cam.unsqueeze(0).unsqueeze(0)
+        cam = F.interpolate(
+            cam,
+            target_size,
+            mode="bilinear",
+            align_corners=False
+        )
+        return cam.squeeze(0).squeeze(0)
+
+    def show_cam_on_image(self,
+                        img: np.ndarray,
+                        mask: np.ndarray,
+                        use_rgb: bool = False,
+                        colormap: int = cv2.COLORMAP_JET) -> np.ndarray:
+        """ This function overlays the cam mask on the image as an heatmap.
+        By default the heatmap is in BGR format.
+        :param img: The base image in RGB or BGR format.
+        :param mask: The cam mask.
+        :param use_rgb: Whether to use an RGB or BGR heatmap, this should be set to True if 'img' is in RGB format.
+        :param colormap: The OpenCV colormap to be used.
+        :returns: The default image with the cam overlay.
+        """
+        heatmap = cv2.applyColorMap(np.uint8(255 * mask), colormap)
+        if use_rgb:
+            heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+        heatmap = np.float32(heatmap) / 255
+        if np.max(img) > 1:
+            raise Exception(
+                "The input image should np.float32 in the range [0, 1]")
+        cam = heatmap + img
+        cam = cam / np.max(cam)
+        return np.uint8(255 * cam)
     
+    def _overlay_cam(self, raw_img, cam):
+        if isinstance(raw_img, torch.Tensor):
+            img = raw_img.permute(1, 2, 0).cpu().numpy()
+        else:
+            img = np.array(raw_img)
+
+        img = img.astype(np.float32)
+        img = (img - img.min()) / (img.max() - img.min() + 1e-6)
+
+        cam = cam.cpu().numpy()
+        cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-6)
+
+        overlay = self.show_cam_on_image(img, cam, use_rgb=True)
+        return overlay
+
+    def _sanitize_path(self, s: str) -> str:
+        """
+        Make a string filesystem-safe and remove file extension.
+        """
+        # Remove extension if any (.png, .jpg, .tif, ...)
+        s = os.path.splitext(s)[0]
+
+        # Replace path separators
+        s = s.replace("/", "_")
+        s = s.replace("\\", "_")
+
+        # Keep only safe characters
+        s = re.sub(r"[^a-zA-Z0-9_.-]", "_", s)
+
+        return s
+
+
+    def _store_tracked_cam(
+        self,
+        overlay_img,
+        mask,
+        img_id: str,
+        epoch: int,
+        split: str
+    ):
+        """
+        overlay : H x W x 3 RGB image (float [0,1] or uint8)
+        mask    : H x W binary mask (torch tensor)
+        img_id  : unique image identifier
+        epoch   : current epoch
+        phase   : 'unlearning' or 'adaptation'
+        """
+
+        assert overlay_img.ndim == 3 and overlay_img.shape[2] == 3, \
+            "Overlay must be HxWx3 RGB image"
+
+        # Root folder
+        root = os.path.join(self.args.outd, "tracked_cams",split)
+
+        # Sanitize image id for filesystem
+        img_id_safe = self._sanitize_path(img_id)
+
+        out_dir = os.path.join(root, img_id_safe)
+        os.makedirs(out_dir, exist_ok=True)
+
+        # Normalize & convert to uint8 if needed
+        if overlay_img.dtype != np.uint8:
+            overlay_img = np.clip(overlay_img, 0.0, 1.0)
+            overlay_img = (overlay_img * 255).astype(np.uint8)
+
+        # Convert RGB → BGR for OpenCV
+        overlay_bgr = cv2.cvtColor(overlay_img, cv2.COLOR_RGB2BGR)
+
+        fname = f"epoch_{epoch:03d}.png"
+        out_path = os.path.join(out_dir, fname)
+
+        cv2.imwrite(out_path, overlay_bgr)
+
+       
+        # mask exists but is NOT a pixel-level mask → ignore
+        if mask is None:
+            return
+
+        if torch.is_tensor(mask) and mask.ndim < 2:
+            return
+
+        if isinstance(mask, np.ndarray) and mask.ndim < 2:
+            return
+
+         # --- Convert mask to numpy ---
+
+        if torch.is_tensor(mask):
+            mask_np = mask.detach().cpu().numpy()
+        else:
+            mask_np = mask
+
+        # Remove singleton dims
+        if mask_np.ndim == 3:
+            mask_np = mask_np.squeeze()
+
+        # Convert to uint8
+        if mask_np.dtype != np.uint8:
+            mask_np = (mask_np > 0).astype(np.uint8) * 255
+
+        # Safety check
+        assert isinstance(mask_np, np.ndarray), type(mask_np)
+        assert mask_np.ndim == 2, mask_np.shape
+
+        mask_name = f"epoch_{epoch:03d}_mask.png"
+        out_path = os.path.join(out_dir, mask_name)
+
+        cv2.imwrite(out_path, mask_np)
+
+
+    def track_cams_from_loader(
+        self,
+        loader,
+        split: str,
+        epoch: int,
+    ):
+        """
+        Track and store CAMs for a given dataloader and split.
+
+        split : 'train' | 'test' | 'val'
+        """
+
+        self.model.eval()  # important pour test
+        root = os.path.join(self.args.outd, "tracked_cams", split)
+
+        with torch.no_grad():
+            for batch_idx, (images, targets, p_glabel, index,
+                        raw_imgs, std_cams, masks, views, aug_images) in tqdm(
+                enumerate(loader), ncols=constants.NCOLS, total=len(loader)):
+
+                for i, (image, target, image_id, mask) in enumerate(
+                    zip(images, targets, index, masks)
+                ):
+                    if image_id not in self.args.track_cam_image_ids:
+                        continue
+
+                    overlay_img = self._extract_single_cam_from_batch(
+                        image    = image,
+                        target   = target,
+                        raw_imgs = raw_imgs,
+                        loader   = loader,
+                        cams     = std_cams,
+                    )
+
+                    self._store_tracked_cam(
+                        overlay_img = overlay_img,
+                        mask        = mask,
+                        img_id      = image_id,
+                        epoch       = epoch,
+                        split       = split,  
+                    )
+
 
     def train(self, split: str, epoch: int) -> dict:
         self.epoch = epoch
         self.random()
         self.on_epoch_start()
 
+    
         
 
         assert split == constants.TRAINSET
@@ -3601,6 +3892,29 @@ class Trainer(Basic):
 
             self.batch_idx = batch_idx
             
+            if self.args.track_cams:
+                for image, target, image_id, mask in zip(images, targets, index, masks):
+                    if image_id not in self.args.track_cam_image_ids:
+                        continue
+
+                    overlay_img = self._extract_single_cam_from_batch(
+                        image    = image,
+                        target   = target,
+                        raw_imgs = raw_imgs,
+                        loader   = loader,
+                        cams     = std_cams,
+                    )
+
+
+                    self._store_tracked_cam(
+                        overlay_img = overlay_img,
+                        mask        = mask,
+                        img_id      = image_id,
+                        epoch       = epoch,
+                        split       = constants.TRAINSET
+        )
+
+
 
             # if self.args.esfda and self.args.esfda_select_imgs:
             #     supervised_labels = torch.full_like(p_glabel, -255)
@@ -3615,7 +3929,8 @@ class Trainer(Basic):
 
             if self.args.esfda and self.args.esfda_select_imgs:
                 supervised_labels = torch.full_like(p_glabel, -255)   #p_glabel
-                entropy_batch = []
+                entropy_batch = []          
+                forget_label_batch = []
 
 
                 for i in range(images.size(0)):
@@ -3635,6 +3950,16 @@ class Trainer(Basic):
                         entropy_batch.append(self.entropy_all[img_idx])
                     else:
                         entropy_batch.append(0.0) 
+
+                    # ----- forget initial label (aligned with batch) -----
+                    if img_idx in self.flipped_indices:
+                        forget_label_batch.append(
+                            self.forget_info[img_idx]["pred_before"]
+                        )
+                    else:
+                        forget_label_batch.append(-1)
+
+
                 #p_glabel = supervised_labels
                 # mask_list_forget = [img_name not in self.flipped_indices for img_name in index]
                 # #y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
@@ -3642,6 +3967,13 @@ class Trainer(Basic):
                 # mask_list_retain = [img_name not in self.stable_selected for img_name in index]
                 # mask_entropy = torch.tensor(entropy_batch, dtype=torch.float32, device=images.device)
                 p_glabel = supervised_labels
+                forget_label_batch = torch.tensor(
+                    forget_label_batch,
+                    dtype=torch.long,
+                    device=images.device
+                )
+
+
                 mask_list = [img_name not in self.flipped_indices for img_name in index]
                 #y_pred_batch = torch.tensor([self.idx_to_pred[idx] for idx in index])
                 y_pred_batch = torch.tensor([self.assigned_labels_map[idx] for idx in index])
@@ -3673,7 +4005,8 @@ class Trainer(Basic):
             
             if self.args.esfda and self.args.esfda_select_imgs:
                 y_pred_batch = y_pred_batch.cuda(self.args.c_cudaid)
-
+                forget_label_batch = forget_label_batch.cuda(self.args.c_cudaid)
+                
             # SFUDA: estimate img-class pseudo-label on the fly ================
             if self.args.sf_uda:
 
@@ -3740,7 +4073,8 @@ class Trainer(Basic):
                                                         cal_mask_forget = mask_list_forget,
                                                         cal_mask_retain = mask_list_retain,
                                                         y_pred_batch = y_pred_batch,
-                                                        mask_entropy = mask_entropy
+                                                        mask_entropy = mask_entropy,
+                                                        forget_label_batch = forget_label_batch
                                                         )
                     # logits, loss = self._one_step_train_unlearning(images,
                     #                     raw_imgs,
@@ -3794,19 +4128,50 @@ class Trainer(Basic):
                 # with torch.no_grad():
                 #     self.compute_acc_on_source_and_target(self.epoch)
                 #     self.compute_loc_on_source_and_target(self.epoch)
-                if self.args.measure_loc:
-                    self.compute_loc_on_target(self.epoch, split = constants.CLVALIDSET)
                 # self.model.train()
 
                 self.model.eval()
                 with torch.no_grad():
-                    self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.CLVALIDSET)
-                    self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.TRAINSET)
+
+                    self.compute_acc_on_domain_came(loader=self.target_domain_loaders[constants.CLVALIDSET],domain="target",split=constants.CLVALIDSET,compute_kl=True)
+                    self.compute_acc_on_domain_came(loader=self.target_domain_loaders[constants.TRAINSET],domain="target",split=constants.TRAINSET,compute_kl=True)
+
+                    if self.args.track_test_performance:
+                        self.compute_acc_on_domain_came(loader=self.target_domain_loaders[constants.TESTSET],domain="target",split=constants.TESTSET,compute_kl=True)
+                        self.track_cams_from_loader(
+                            loader=self.target_domain_loaders[constants.TESTSET],
+                            split=constants.TESTSET,
+                            epoch=self.epoch,
+                        )
+
+                    self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.CLVALIDSET],domain="source",split=constants.CLVALIDSET,compute_kl=True)
+                    self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TRAINSET],domain="source",split=constants.TRAINSET,compute_kl=True)
+                    
+                    if self.args.track_test_performance:
+                        self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TESTSET],domain="source",split=constants.TESTSET,compute_kl=True)
+                        self.track_cams_from_loader(
+                            loader=self.source_domain_loaders[constants.TESTSET],
+                            split=constants.TESTSET,
+                            epoch=self.epoch,
+                        )
+
+                    #self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.CLVALIDSET)
+                    #self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.TRAINSET)
+                    #self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.TESTSET)
                     #self.compute_loc_on_target(self.epoch)
+
+                    if self.args.measure_loc:
+                        self.compute_loc_on_target(self.epoch,domain="target", split = constants.PXVALIDSET)
+                        self.compute_loc_on_target(self.epoch,domain="target", split = constants.TRAINSET)
+                
 
                     if self.args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512, constants.OpenImagesTrgt, constants.GLAS] and self.args.cl_train_models:
                         self.update_best_cl_train_model_came(epoch=self.epoch)
+                    elif self.args.save_unlearning_model_all_criterion:
+                        self.update_all_model_unlearning_criterion(epoch=self.epoch)
+               
                 self.model.train()
+
                 
 
         loss_average = total_loss.item() / float(num_images)
@@ -4179,9 +4544,25 @@ class Trainer(Basic):
         u = torch.ones_like(p) / num_classes  
         kl = (p * (p / u).log()).sum()
         return float(kl.item())
+
+    def compute_prediction_ratio_bias(self, y_pred, num_classes):
+        counts = np.bincount(y_pred, minlength=num_classes)
+        max_c = counts.max()
+        min_c = counts.min()
+
+        bias_ratio = max_c / max(1, min_c)
+        return bias_ratio, counts
     
-    def _compute_accuracy_f1(self, loader, split = constants.CLVALIDSET, compute_kl = True):
+    def _compute_accuracy_f1(self, loader, split = constants.CLVALIDSET, compute_kl = True, domain = None):
         torch.cuda.empty_cache()
+
+        has_unlearning = (
+            hasattr(self, "stable_selected") and
+            hasattr(self, "flipped_indices") and
+            hasattr(self, "assigned_labels_map")
+        )
+
+
 
         num_correct = 0
         num_images = 0
@@ -4337,14 +4718,14 @@ class Trainer(Basic):
                 pred_b = pred[b].item()
 
                 # Forget
-                if idx_b in self.flipped_indices:
+                if has_unlearning and idx_b in self.flipped_indices:
                     init_cls = self.assigned_labels_map[idx_b]
                     #tgt_flip = 0
                     correct_flip += int(pred_b == init_cls)
                     total_flip += 1
 
                 # Retain
-                if idx_b in self.stable_selected:
+                if has_unlearning and idx_b in self.stable_selected:
                     #pos = self.stable_selected.index(idx_b)
                     tgt_stable = int(self.assigned_labels_map[idx_b])
                     correct_stable += int(pred_b == tgt_stable)
@@ -4396,12 +4777,10 @@ class Trainer(Basic):
         self.J_index.append(J_index)
 
 
-        fig_outd = os.path.join(self.args.outd, "entropy_hist", split)
+        fig_outd = os.path.join(self.args.outd, f"entropy_hist_{domain}", split)
         os.makedirs(fig_outd, exist_ok=True)
 
         #fig_outd = os.path.join(self.args.outd, "entropy_hist")
-
-
 
         # After loop — plotting
         for c in range(self.args.num_classes):
@@ -4424,43 +4803,10 @@ class Trainer(Basic):
             )
 
 
-        # if self.args.target_domain_ds_to_compute_stats == constants.GLAS:
-        #     CLASS_NORMAL_NAME = f"entropy_hist_normal_ep{self.epoch:03d}.png"
-        #     CLASS_CANCER_NAME = f"entropy_hist_cancer_ep{self.epoch:03d}.png"
-        #     out_normal = os.path.join(fig_outd, CLASS_NORMAL_NAME)
-        #     out_cancer = os.path.join(fig_outd, CLASS_CANCER_NAME)
-        # else:
-        #     if self.batch_idx == None:
-        #         self.batch_idx = 0
-        #     CLASS_NORMAL_NAME = f"entropy_hist_normal_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
-        #     CLASS_CANCER_NAME = f"entropy_hist_cancer_ep{self.epoch:03d}_b{self.batch_idx:05d}.png"
-        #     out_normal = os.path.join(fig_outd, CLASS_NORMAL_NAME)
-        #     out_cancer = os.path.join(fig_outd, CLASS_CANCER_NAME)
 
-
-
-        # # Classe 0 : Normal
-        # self._plot_entropy_hist_per_class(
-        #     ent_correct_by_class[0],
-        #     ent_incorrect_by_class[0],
-        #     class_name="Normal (label=0)",
-        #     out_path=out_normal,
-        #     num_classes=self.args.num_classes
-        # )
-
-        # # Classe 1 : Cancer
-        # self._plot_entropy_hist_per_class(
-        #     ent_correct_by_class[1],
-        #     ent_incorrect_by_class[1],
-        #     class_name="Cancer (label=1)",
-        #     out_path=out_cancer,
-        #     num_classes=self.args.num_classes
-        # )
-
-
-        self.store_master_loss.append(master_loss) 
-        self.store_ce_flip_loss.append(ce_flip_loss)
-        self.store_ce_not_flip_loss.append(ce_not_flip_loss)
+        #self.store_master_loss.append(master_loss) 
+        #self.store_ce_flip_loss.append(ce_flip_loss)
+        #self.store_ce_not_flip_loss.append(ce_not_flip_loss)
 
         classification_acc = num_correct / float(num_images) * 100
         classification_acc_normal = num_correct_normal / float(num_images_normal) * 100 if num_images_normal > 0 else 0
@@ -4503,16 +4849,18 @@ class Trainer(Basic):
             "f1": f1,
             "precision": precision,
             "recall": recall,
+            "ECE": ECE_global,
+            "NLL": NLL_global,
+            "Brier": Brier_global,
             "TP": tp,
             "FP": fp,
             "TN": tn,
             "FN": fn,
-            "ECE": ECE_global,
-            "NLL": NLL_global,
-            "Brier": Brier_global,
+
         }
 
-        cm_file = os.path.join(self.args.outd, "confusion_evolution.csv")
+        cm_filename = f"confusion_evolution_{split}_{domain}.csv"
+        cm_file = os.path.join(self.args.outd, cm_filename)
 
         # === Append or create ===
         file_exists = os.path.isfile(cm_file)
@@ -4526,6 +4874,15 @@ class Trainer(Basic):
         preds_all = pred
         #KL consistency (mean over all images)
         kl_uniform = self.compute_kl_uniform(preds_all, num_classes= self.args.num_classes)
+
+        y_pred_np = np.array(y_pred)
+
+        ratio_bias, pred_counts = self.compute_prediction_ratio_bias(
+            y_pred_np,
+            num_classes=self.args.num_classes
+        )
+
+
         #self.metrics.hist.append(kl_uniform)
 
         #Marginal entropy
@@ -4536,14 +4893,35 @@ class Trainer(Basic):
         #self.metrics.hm_hist.append(Hm)
         #self.metrics.htilde_hist.append(Htilde)
 
-        #Store accuracy unlearned and not unlearned ---
-        acc_flip = correct_flip / total_flip if total_flip > 0 else 0.0
-        acc_stable = correct_stable / total_stable if total_stable > 0 else 0.0
+        # --- Unlearning-specific metrics ---
+        if not has_unlearning:
+            acc_flip = None
+            acc_stable = None
+            acc_global = None
+            acc_balanced = None
+            acc_reverse_weighted = None
+        else:
+            acc_flip = correct_flip / total_flip if total_flip > 0 else 0.0
+            acc_stable = correct_stable / total_stable if total_stable > 0 else 0.0
 
-        total_correct = correct_flip + correct_stable
-        total_samples = total_flip + total_stable
+            total_correct = correct_flip + correct_stable
+            total_samples = total_flip + total_stable
 
-        acc_global = total_correct / total_samples if total_samples > 0 else 0.0
+            acc_global = total_correct / total_samples if total_samples > 0 else 0.0
+            acc_balanced = 0.5 * (acc_flip + acc_stable)
+
+            w_flip   = 1.0 / total_flip   if total_flip > 0 else 0.0
+            w_stable = 1.0 / total_stable if total_stable > 0 else 0.0
+
+            w_sum = w_flip + w_stable
+            if w_sum > 0:
+                w_flip   /= w_sum
+                w_stable /= w_sum
+
+            acc_reverse_weighted = (
+                w_flip   * acc_flip +
+                w_stable * acc_stable
+            )
 
 
         if not hasattr(self, "history_acc_flip"):
@@ -4575,6 +4953,9 @@ class Trainer(Basic):
             "ECE": ECE_global,
             "NLL": NLL_global,
             "Brier": Brier_global,
+            "ratio_bias": ratio_bias,
+            "acc_balanced": acc_balanced,
+            "acc_reverse_weighted": acc_reverse_weighted,
         }
 
         torch.cuda.empty_cache()
@@ -4702,6 +5083,65 @@ class Trainer(Basic):
         one_hot = torch.nn.functional.one_hot(labels, num_classes=num_classes).float()
         return float(((probs - one_hot)**2).mean().item())
 
+
+    def compute_acc_on_domain_came(
+            self,
+            loader,
+            domain: str,
+            split: str,
+            compute_kl: bool = False,
+        ):
+            """
+            domain: 'source' or 'target'
+            split: 'train', 'valcl', 'valpx', 'test'
+            """
+
+            assert domain in self.metrics
+            assert split in self.metrics[domain]
+
+            self.model.eval()
+            with torch.no_grad():
+                stats = self._compute_accuracy_f1(
+                    loader,
+                    split      = split,
+                    compute_kl = compute_kl,
+                    domain     = domain
+                )
+
+            m = self.metrics[domain][split]
+
+            m["acc_cl"].append(stats["classification_acc"])
+            m["acc_normal"].append(stats["classification_acc_normal"])
+            m["acc_cancer"].append(stats["classification_acc_cancer"])
+
+            m["f1"].append(stats["f1"])
+            m["precision"].append(stats["precision"])
+            m["recall"].append(stats["recall"])
+
+            m["entropy"].append(stats["images_entropy"])
+
+            m["silhouette"].append(stats["silhouette"])
+            m["DBI"].append(stats["DBI"])
+            m["CH"].append(stats["CH"])
+            m["J_index"].append(stats["J_index"])
+
+            m["kl_uniform"].append(stats["kl_uniform"])
+            m["Hm"].append(stats["Hm"])
+            m["Htilde"].append(stats["Htilde"])
+
+            m["acc_flip"].append(stats["acc_flip"])
+            m["acc_stable"].append(stats["acc_stable"])
+            m["acc_global"].append(stats["acc_global"])
+
+            m["ece"].append(stats["ECE"])
+            m["nll"].append(stats["NLL"])
+            m["brier"].append(stats["Brier"])
+
+            m["ratio_bias"].append(stats["ratio_bias"])
+            m["acc_balanced"].append(stats["acc_balanced"])
+            m["acc_reverse_weighted"].append(stats["acc_reverse_weighted"])
+
+
     def compute_acc_on_target_came(self, epoch, split, compute_kl= False):
 
         if not hasattr(self, "metrics"):
@@ -4727,6 +5167,10 @@ class Trainer(Basic):
                     "ece": [],
                     "nll": [],
                     "brier": [],
+                    "ratio_bias": [],
+                    "acc_reverse_weighted": [],
+                    "acc_balanced": [],
+                    "pxap": [],
                 },
                 "valcl": {
                     "acc_cl": [],
@@ -4749,7 +5193,63 @@ class Trainer(Basic):
                     "ece": [],
                     "nll": [],
                     "brier": [],
-            }
+                    "acc_reverse_weighted": [],
+                    "acc_balanced": [],
+                    "ratio_bias": [],
+                    "pxap": [],
+            },
+                "valpx": {
+                    "acc_cl": [],
+                    "acc_normal": [],
+                    "acc_cancer": [],
+                    "f1": [],
+                    "precision": [],
+                    "recall": [],
+                    "entropy": [],
+                    "silhouette": [],
+                    "DBI": [],
+                    "CH": [],
+                    "J_index": [],
+                    "kl_uniform": [],
+                    "Hm": [],
+                    "Htilde": [],
+                    "acc_flip": [],
+                    "acc_stable": [],
+                    "acc_global": [],
+                    "ece": [],
+                    "nll": [],
+                    "brier": [],
+                    "acc_reverse_weighted": [],
+                    "acc_balanced": [],
+                    "ratio_bias": [],
+                    "pxap": [],
+            },
+            "test": {
+                    "acc_cl": [],
+                    "acc_normal": [],
+                    "acc_cancer": [],
+                    "f1": [],
+                    "precision": [],
+                    "recall": [],
+                    "entropy": [],
+                    "silhouette": [],
+                    "DBI": [],
+                    "CH": [],
+                    "J_index": [],
+                    "kl_uniform": [],
+                    "Hm": [],
+                    "Htilde": [],
+                    "acc_flip": [],
+                    "acc_stable": [],
+                    "acc_global": [],
+                    "ece": [],
+                    "nll": [],
+                    "brier": [],
+                    "ratio_bias": [],
+                    "acc_reverse_weighted": [],
+                    "acc_balanced": [],
+                    "pxap": [],
+                }
         }
 
 
@@ -4778,18 +5278,22 @@ class Trainer(Basic):
             ece            = stats["ECE"]
             nll            = stats["NLL"]
             brier          = stats["Brier"]
+            ratio_bias     = stats["ratio_bias"]
+            acc_balanced   = stats["acc_balanced"]
+            acc_reverse_weighted = stats["acc_reverse_weighted"]
 
 
+            # ----------------- Classification metrics -----------------
             self.metrics[split]["acc_cl"].append(acc_cl)
             self.metrics[split]["acc_normal"].append(acc_n)
             self.metrics[split]["acc_cancer"].append(acc_c)
-
             self.metrics[split]["f1"].append(f1)
             self.metrics[split]["precision"].append(precision)
             self.metrics[split]["recall"].append(recall)
 
             self.metrics[split]["entropy"].append(images_entropy)
 
+            # ----------------- Clustering metrics -----------------
             self.metrics[split]["silhouette"].append(silhouette)
             self.metrics[split]["DBI"].append(DBI)
             self.metrics[split]["CH"].append(CH)
@@ -4799,13 +5303,20 @@ class Trainer(Basic):
             self.metrics[split]["Hm"].append(Hm)
             self.metrics[split]["Htilde"].append(Htilde)
 
+            # ----------------- Accuracy on unlearning splits -----------------
             self.metrics[split]["acc_flip"].append(acc_flip)
             self.metrics[split]["acc_stable"].append(acc_stable)
             self.metrics[split]["acc_global"].append(acc_global)
 
+            # ----------------- Calibration metrics -----------------
             self.metrics[split]["ece"].append(ece)
             self.metrics[split]["nll"].append(nll)
             self.metrics[split]["brier"].append(brier)
+
+            # ----------------- Bias metrics -----------------
+            self.metrics[split]["ratio_bias"].append(ratio_bias)
+            self.metrics[split]["acc_balanced"].append(acc_balanced)
+            self.metrics[split]["acc_reverse_weighted"].append(acc_reverse_weighted)
 
 
             if self.args.save_multiple_unlearn_models:
@@ -4899,7 +5410,7 @@ class Trainer(Basic):
     def compute_loc_on_target(self, epoch, split=constants.TRAINSET):
         self.model.eval()
 
-        cam_computer_target_train = CAMComputer(
+        cam_computer_split = CAMComputer(
             args=deepcopy(self.args),
             model=self.model,
             loader=self.target_domain_loaders[split],
@@ -4916,23 +5427,48 @@ class Trainer(Basic):
         )
 
 
-        cam_performance_target_train = cam_computer_target_train.compute_and_evaluate_cams()
+        # cam_performance_target_train = cam_computer_target_train.compute_and_evaluate_cams()
 
-        self.target_valpx_pxap.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_PXAP])
-        #self.source_test_pxap.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_PXAP])
-        #self.source_train_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
+        # self.target_valpx_pxap.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_PXAP])
+        # #self.source_test_pxap.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_PXAP])
+        # #self.source_train_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
 
-        self.target_train_dice_bg.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
-        #self.source_test_dice_bg.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_DICEBG_05])
-        #self.source_train_dice_bg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
+        # self.target_train_dice_bg.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
+        # #self.source_test_dice_bg.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_DICEBG_05])
+        # #self.source_train_dice_bg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
 
-        self.target_train_dice_fg.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
-        #self.source_test_dice_fg.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_DICEFG_05])
-        #self.source_train_dice_fg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
+        # self.target_train_dice_fg.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
+        # #self.source_test_dice_fg.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_DICEFG_05])
+        # #self.source_train_dice_fg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
 
-        self.target_train_miou.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_MIOU_05])
-        #self.source_test_miou.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_MIOU_05])
-        #self.source_train_miou.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_MIOU_05])
+        # self.target_train_miou.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_MIOU_05])
+        # #self.source_test_miou.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_MIOU_05])
+        # #self.source_train_miou.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_MIOU_05])
+
+        cam_computer_split.compute_and_evaluate_cams()
+        perf = cam_computer_split.evaluator.perf_gist
+
+        # Init if needed
+        if "localization" not in self.metrics[split]:
+            self.metrics[split]["localization"] = {
+                "pxap": [],
+                "dice_bg": [],
+                "dice_fg": [],
+                "miou": [],
+            }
+
+        self.metrics[split]["pxap"].append(
+            perf[constants.MTR_PXAP]
+        )
+        self.metrics[split]["dice_bg"].append(
+            perf[constants.MTR_DICEBG_05]
+        )
+        self.metrics[split]["dice_fg"].append(
+            perf[constants.MTR_DICEFG_05]
+        )
+        self.metrics[split]["miou"].append(
+            perf[constants.MTR_MIOU_05]
+        )
 
     def compute_loc_on_source_and_target(self, epoch, split=constants.TESTSET):
         self.model.eval()
@@ -5007,18 +5543,18 @@ class Trainer(Basic):
         self.source_test_miou.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_MIOU_05])
         self.source_train_miou.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_MIOU_05])
 
-    def compute_loc_on_target(self, epoch, split=constants.TESTSET):
+    def compute_loc_on_target(self, epoch, domain, split=constants.TESTSET):
         self.model.eval()
 
-        cam_computer_source_train = CAMComputer(
+        cam_computer_split = CAMComputer(
             args=deepcopy(self.args),
             model=self.model,
-            loader=self.target_domain_loaders['valpx'],
-            metadata_root=os.path.join(self.args.metadata_root, 'valpx'),
+            loader=self.target_domain_loaders[split],
+            metadata_root=os.path.join(self.args.metadata_root, split),
             mask_root=self.args.mask_root,
             iou_threshold_list=self.args.iou_threshold_list,
             dataset_name=self.args.dataset,
-            split='valpx',
+            split=split,
             cam_curve_interval=self.args.cam_curve_interval,
             multi_contour_eval=self.args.multi_contour_eval,
             out_folder=self.args.outd,
@@ -5026,15 +5562,41 @@ class Trainer(Basic):
             best_valid_tau= None
         )
   
-        cam_performance_source_train = cam_computer_source_train.compute_and_evaluate_cams()
+        #cam_performance_source_train = cam_computer_source_train.compute_and_evaluate_cams()
 
-        self.target_valpx_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
+        cam_computer_split.compute_and_evaluate_cams()
+        perf = cam_computer_split.evaluator.perf_gist
 
-        self.target_train_dice_bg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
+        # Init if needed
+        if "localization" not in self.metrics[domain][split]:
+            self.metrics[domain][split]["localization"] = {
+                "pxap": [],
+                "dice_bg": [],
+                "dice_fg": [],
+                "miou": [],
+            }
 
-        self.target_train_dice_fg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
+        self.metrics[domain][split]["localization"]["pxap"].append(
+            perf[constants.MTR_PXAP]
+        )
+        self.metrics[domain][split]["localization"]["dice_bg"].append(
+            perf[constants.MTR_DICEBG_05]
+        )
+        self.metrics[domain][split]["localization"]["dice_fg"].append(
+            perf[constants.MTR_DICEFG_05]
+        )
+        self.metrics[domain][split]["localization"]["miou"].append(
+            perf[constants.MTR_MIOU_05]
+        )
 
-        self.target_train_miou.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_MIOU_05])
+
+        # self.target_valpx_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
+
+        # self.target_train_dice_bg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
+
+        # self.target_train_dice_fg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
+
+        # self.target_train_miou.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_MIOU_05])
 
 
     def save_curves(self, task, cmpt_epoch):
@@ -5104,9 +5666,6 @@ class Trainer(Basic):
             pkl.dump(curves_data, f)
 
     def save_unlearning_acc(self, filename="unlearning_acc_history.pickle"):
-        """
-        Sauvegarde l'historique des accuracies flip et stable dans un pickle.
-        """
         data_to_save = {
             "history_acc_flip": getattr(self, "history_acc_flip", []),
             "history_acc_stable": getattr(self, "history_acc_stable", [])
@@ -5278,16 +5837,22 @@ class Trainer(Basic):
         s = s.replace('-', 'm')
         return s
 
-    def plot_target_acc_curves(self, task, cmpt_epoch, split):
+    def plot_domain_acc_curves(self, domain, task, cmpt_epoch, split):
         """
+        domain : 'source' or 'target'
         task : str in {
             'cl', 'silhouette', 'DBI', 'CH', 'J_index',
             'f1', 'precision', 'recall',
             'image_entropy', 'acc_normal', 'acc_cancer',
-            'acc_flip', 'acc_stable', 'kl_uniform', 'acc_global'
+            'acc_flip', 'acc_stable', 'kl_uniform', 'acc_global',
+            'ECE', 'NLL', 'Brier', 'ratio_bias',
+            'acc_reverse_weighted', 'acc_balanced', 'pxap'
         }
-        split : constants.TRAINSET or constants.CLVALIDSET
+        split : train / valcl / valpx / test
         """
+
+        assert domain in self.metrics, f"Unknown domain '{domain}'"
+        assert split in self.metrics[domain], f"Unknown split '{split}'"
 
         lr = self.fmt(self.args.optimizer.get("opt__lr", "NA"))
         step_size = self.fmt(self.args.optimizer.get("opt__step_size", "NA"))
@@ -5296,28 +5861,38 @@ class Trainer(Basic):
         Retain_lambda = self.fmt(getattr(self.args, "CERetain_lambda", "NA"))
         Forget_lambda = self.fmt(getattr(self.args, "CEForget_lambda", "NA"))
 
-        hp_suffix = f"LR{lr}_STEP{step_size}_K{Resample}_P{imgs_ratio}_LRETAIN{Retain_lambda}_LFORGET{Forget_lambda}"
-
+        hp_suffix = (
+            f"LR{lr}_STEP{step_size}_K{Resample}_P{imgs_ratio}_"
+            f"LRETAIN{Retain_lambda}_LFORGET{Forget_lambda}"
+        )
 
         task_map = {
-            "cl":           ("acc_cl",           "Classification",          "Classification"),
-            "silhouette":   ("silhouette",    "Silhouette",              "Silhouette"),
-            "DBI":          ("DBI",           "DBI",                     "DBI"),
-            "CH":           ("CH",            "CH",                      "CH"),
-            "J_index":      ("J_index",       "J_index",                 "J_index"),
-            "f1":           ("f1",            "F1 Score",                "F1"),
-            "precision":    ("precision",     "Precision",               "Precision"),
-            "recall":       ("recall",        "Recall",                  "Recall"),
-            "image_entropy":("entropy",       "Image Entropy",           "Image_Entropy"),
-            "acc_normal":   ("acc_normal",    "Normal Classification",   "Acc_Normal"),
-            "acc_cancer":   ("acc_cancer",    "Cancer Classification",   "Acc_Cancer"),
-            "acc_flip":     ("acc_flip",      "Flip Accuracy",           "Acc_Flip"),
-            "acc_stable":   ("acc_stable",    "Stable Accuracy",         "Acc_Stable"),
-            "kl_uniform":   ("kl_uniform",    "KL Divergence (Uniform)", "KL_Uniform"),
-            "acc_global":   ("acc_global",    "Global Accuracy",         "Acc_Global"),
-            "ECE":          ("ece",    "ECE",         "ECE"),
-            "NLL":          ("nll",    "NLL",         "NLL"),
-            "Brier":        ("brier",    "Brier",         "Brier"),
+            "cl":           ("acc_cl", "Classification", "Classification"),
+            "silhouette":   ("silhouette", "Silhouette", "Silhouette"),
+            "DBI":          ("DBI", "DBI", "DBI"),
+            "CH":           ("CH", "CH", "CH"),
+            "J_index":      ("J_index", "J_index", "J_index"),
+            "f1":           ("f1", "F1 Score", "F1"),
+            "precision":    ("precision", "Precision", "Precision"),
+            "recall":       ("recall", "Recall", "Recall"),
+            "image_entropy":("entropy", "Image Entropy", "Image_Entropy"),
+            "acc_normal":   ("acc_normal", "Normal Classification", "Acc_Normal"),
+            "acc_cancer":   ("acc_cancer", "Cancer Classification", "Acc_Cancer"),
+            "acc_flip":     ("acc_flip", "Flip Accuracy", "Acc_Flip"),
+            "acc_stable":   ("acc_stable", "Stable Accuracy", "Acc_Stable"),
+            "kl_uniform":   ("kl_uniform", "KL Divergence (Uniform)", "KL_Uniform"),
+            "acc_global":   ("acc_global", "Global Accuracy", "Acc_Global"),
+            "ECE":          ("ece", "ECE", "ECE"),
+            "NLL":          ("nll", "NLL", "NLL"),
+            "Brier":        ("brier", "Brier", "Brier"),
+            "ratio_bias":   ("ratio_bias", "Bias Ratio", "Bias_Ratio"),
+            "acc_reverse_weighted": (
+                "acc_reverse_weighted",
+                "Reverse Weighted Accuracy",
+                "Acc_Reverse_Weighted",
+            ),
+            "acc_balanced": ("acc_balanced", "Balanced Accuracy", "Acc_Balanced"),
+            "pxap":         ("pxap", "PxAP", "PxAP"),
         }
 
         if task not in task_map:
@@ -5325,55 +5900,69 @@ class Trainer(Basic):
 
         metric_key, ylabel, file_prefix = task_map[task]
 
-        if not hasattr(self, "metrics"):
-            raise RuntimeError("self.metrics is not initialized.")
+        if metric_key not in self.metrics[domain][split]:
+            raise RuntimeError(
+                f"Metric '{metric_key}' not found in "
+                f"self.metrics['{domain}']['{split}']."
+            )
 
-        if split not in self.metrics:
-            raise RuntimeError(f"Split '{split}' not found in self.metrics. Available: {list(self.metrics.keys())}")
+        data = self.metrics[domain][split][metric_key]
 
-        if metric_key not in self.metrics[split]:
-            raise RuntimeError(f"Metric '{metric_key}' not found in self.metrics['{split}'].")
-
-        target_data = self.metrics[split][metric_key]
-
-        if len(target_data) == 0:
-            print(f"[plot_target_acc_curves] No data for metric '{metric_key}' on split '{split}'.")
+        if len(data) == 0:
+            print(
+                f"[plot_domain_acc_curves] No data for metric '{metric_key}' "
+                f"on domain '{domain}', split '{split}'."
+            )
             return
 
-        base_dir = os.path.join(self.args.outd, "unlearning_metrics", str(split))
+        base_dir = os.path.join(
+            self.args.outd,
+            "unlearning_metrics",
+            domain,
+            str(split),
+        )
         os.makedirs(base_dir, exist_ok=True)
 
-        epochs = np.arange(cmpt_epoch, len(target_data) * cmpt_epoch + cmpt_epoch, cmpt_epoch)
+        epochs = np.arange(
+            cmpt_epoch,
+            len(data) * cmpt_epoch + cmpt_epoch,
+            cmpt_epoch,
+        )
 
         # --- Plot
         plt.figure(figsize=(12, 3))
-        plt.plot(epochs, target_data, label=f'{split}')
-        plt.xlabel('Epoch')
+        plt.plot(epochs, data, label=f"{domain}-{split}")
+        plt.xlabel("Epoch")
         plt.ylabel(ylabel)
         plt.legend()
-        plt.xticks(epochs, rotation=45, ha='right')
+        plt.xticks(epochs, rotation=45, ha="right")
         plt.tight_layout()
 
-        png_name = f"{file_prefix}_curve_{split}_{hp_suffix}.png"
+        png_name = f"{file_prefix}_curve_{domain}_{split}_{hp_suffix}.png"
         output_path = os.path.join(base_dir, png_name)
         plt.savefig(output_path)
         plt.close()
 
         curves_data = {
             "epochs": epochs.tolist(),
-            "values": target_data,
+            "values": data,
             "metric_key": metric_key,
             "ylabel": ylabel,
+            "domain": domain,
             "split": split,
         }
-        pickle_name = f"{file_prefix}_results_{split}_{hp_suffix}.pickle"
+
+        pickle_name = f"{file_prefix}_results_{domain}_{split}_{hp_suffix}.pickle"
         pickle_path = os.path.join(base_dir, pickle_name)
         with open(pickle_path, "wb") as f:
             pkl.dump(curves_data, f)
 
-        all_metrics_path = os.path.join(base_dir, f"all_metrics_{split}_{hp_suffix}.pickle")
+        all_metrics_path = os.path.join(
+            base_dir,
+            f"all_metrics_{domain}_{split}_{hp_suffix}.pickle",
+        )
         with open(all_metrics_path, "wb") as f:
-            pkl.dump(self.metrics[split], f)
+            pkl.dump(self.metrics[domain][split], f)
 
     def plot_unlearning_acc(self):
         plt.figure(figsize=(8, 5))
@@ -6088,6 +6677,93 @@ class Trainer(Basic):
             )
         )
 
+    def save_all_unlearning_models(self):
+        """
+        Save all best models selected by unlearning-aware criteria.
+        Used ONLY in debug / research mode.
+        """
+
+        assert hasattr(self, "best_models"), "No unlearning models to save."
+
+        for criterion_name, entry in self.best_models.items():
+
+            model = entry["model"]
+            epoch = entry["epoch"]
+            score = entry["score"]
+
+            if model is None:
+                continue
+
+            # --------------------------------------------------
+            # Create save directory
+            # --------------------------------------------------
+            checkpoint_type = f"B-UNLEARNING_{criterion_name}"
+            tag = get_tag(self.args, checkpoint_type=checkpoint_type)
+            save_dir = os.path.join(self.args.outd, tag)
+
+            os.makedirs(save_dir, exist_ok=True)
+
+            # --------------------------------------------------
+            # Save info file
+            # --------------------------------------------------
+            with open(os.path.join(save_dir, "best_model_info.txt"), "w") as f:
+                f.write(
+                    f"Criterion: {criterion_name}\n"
+                    f"Epoch: {epoch}\n"
+                    f"Score: {score:.4f}\n"
+                )
+
+            # --------------------------------------------------
+            # Save model weights (REUSE your existing logic)
+            # --------------------------------------------------
+            if self.args.task == constants.STD_CL:
+                method = self.args.method
+
+                if method in [
+                    constants.METHOD_ACOL,
+                    constants.METHOD_ADL,
+                    constants.METHOD_SPG,
+                    constants.METHOD_TSCAM,
+                    constants.METHOD_SAT,
+                ]:
+                    torch.save(model.state_dict(), os.path.join(save_dir, "model.pt"))
+
+                elif method == constants.METHOD_MAXMIN:
+                    torch.save(model.encoder.state_dict(), os.path.join(save_dir, "encoder.pt"))
+                    torch.save(model.classification_head1.state_dict(), os.path.join(save_dir, "classification_head1.pt"))
+                    torch.save(model.classification_head2.state_dict(), os.path.join(save_dir, "classification_head2.pt"))
+                    if model.mask_head is not None:
+                        torch.save(model.mask_head.state_dict(), os.path.join(save_dir, "mask_head.pt"))
+
+                elif method == constants.METHOD_PIXELCAM:
+                    if "deit" in self.args.model["encoder_name"]:
+                        torch.save(model.state_dict(), os.path.join(save_dir, "model.pt"))
+                    else:
+                        torch.save(model.encoder.state_dict(), os.path.join(save_dir, "encoder.pt"))
+                        torch.save(model.classification_head.state_dict(), os.path.join(save_dir, "classification_head.pt"))
+                        torch.save(
+                            model.pixel_wise_classification_head.state_dict(),
+                            os.path.join(save_dir, "pixel_wise_classification_head.pt"),
+                        )
+
+                else:
+                    torch.save(model.encoder.state_dict(), os.path.join(save_dir, "encoder.pt"))
+                    torch.save(model.classification_head.state_dict(), os.path.join(save_dir, "classification_head.pt"))
+
+            # --------------------------------------------------
+            # Save config
+            # --------------------------------------------------
+            self._save_args(path=os.path.join(save_dir, "config_model.yaml"))
+
+            DLLogger.log(
+                message=(
+                    f"[SAVE-UNLEARNING] {criterion_name} | "
+                    f"Epoch {epoch} | Score {score:.4f} | "
+                    f"Saved to {save_dir}"
+                )
+            )
+
+
     def save_best_epoch(self):
         if self.args.localization_avail:
             split = constants.PXVALIDSET
@@ -6274,6 +6950,157 @@ class Trainer(Basic):
         else:
             print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {accuracy:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
 
+
+    def _update_best_model(self, key, score, epoch, model, mode="max"):
+        """
+        Generic helper to update best model according to a criterion.
+
+        mode:
+            - "max": higher score is better
+            - "min": lower score is better (e.g. bias ratio)
+        """
+
+        if key not in self.best_models:
+            self.best_models[key] = {
+                "score": float("-inf") if mode == "max" else float("inf"),
+                "epoch": -1,
+                "model": None,
+            }
+
+        entry = self.best_models[key]
+
+        improved = (
+            score > entry["score"] if mode == "max"
+            else score < entry["score"]
+        )
+
+        if improved:
+            self.best_models[key]["score"] = score
+            self.best_models[key]["epoch"] = epoch
+            self.best_models[key]["model"] = deepcopy(model)
+
+            print(
+                f"[Unlearning-Select][UPDATE] {key} | "
+                f"epoch={epoch} | score={score:.4f}"
+            )
+        else:
+            print(
+                f"[Unlearning-Select][SKIP] {key} | "
+                f"epoch={epoch} | score={score:.4f} | "
+                f"best={entry['score']:.4f}"
+            )
+
+    def update_all_model_unlearning_criterion(self, epoch):
+        """
+        Store best models according to multiple unlearning-aware criteria.
+
+        Criteria tracked:
+            - Validation accuracy
+            - Balanced accuracy (train)
+            - Reverse-weighted accuracy (train)
+            - Bias ratio (train, minimized)
+
+        This function DOES NOT:
+            - perform smoothing
+            - handle resampling logic
+            - select a single final model
+        """
+
+        torch.cuda.empty_cache()
+        self.model.eval()
+
+        # ------------------------------------------------------------
+        # INIT STORAGE
+        # ------------------------------------------------------------
+        if not hasattr(self, "best_models"):
+            self.best_models = {}
+
+        # ------------------------------------------------------------
+        # COPY MODEL (CPU)
+        # ------------------------------------------------------------
+        model_cl = deepcopy(self.model).to(self.cpu_device).eval()
+
+        # ------------------------------------------------------------
+        # READ METRICS
+        # ------------------------------------------------------------
+        try:
+            acc_val = self.metrics['target'][constants.CLVALIDSET]["acc_cl"][-1]
+        except KeyError:
+            acc_val = None
+
+        
+        try:
+            pxap_val = self.metrics['target'][constants.PXVALIDSET]['localization']["pxap"][-1]
+        except KeyError:
+            pxap_val = None
+
+
+        try:
+            acc_bal = self.metrics['target'][constants.TRAINSET]["acc_balanced"][-1]
+        except KeyError:
+            acc_bal = None
+
+        try:
+            acc_rev = self.metrics['target'][constants.TRAINSET]["acc_reverse_weighted"][-1]
+        except KeyError:
+            acc_rev = None
+
+        try:
+            ratio_bias = self.metrics['target'][constants.TRAINSET]["ratio_bias"][-1]
+        except KeyError:
+            ratio_bias = None
+
+        # ------------------------------------------------------------
+        # UPDATE PER-CRITERION MODELS
+        # ------------------------------------------------------------
+        if acc_val is not None:
+            self._update_best_model(
+                key="val_accuracy",
+                score=acc_val,
+                epoch=epoch,
+                model=model_cl,
+                mode="max",
+            )
+
+        if acc_bal is not None:
+            self._update_best_model(
+                key="acc_balanced",
+                score=acc_bal,
+                epoch=epoch,
+                model=model_cl,
+                mode="max",
+            )
+
+        if acc_rev is not None:
+            self._update_best_model(
+                key="acc_reverse_weighted",
+                score=acc_rev,
+                epoch=epoch,
+                model=model_cl,
+                mode="max",
+            )
+
+        if ratio_bias is not None:
+            self._update_best_model(
+                key="ratio_bias",
+                score=ratio_bias,
+                epoch=epoch,
+                model=model_cl,
+                mode="min",
+            )
+
+        if pxap_val is not None:
+            self._update_best_model(
+                key="pxap_val",
+                score=pxap_val,
+                epoch=epoch,
+                model=model_cl,
+                mode="max",
+            )
+
+        self.model.train()
+
+
     def update_best_cl_train_model_came(self, epoch):
         torch.cuda.empty_cache()
         self.model.eval()
@@ -6370,8 +7197,8 @@ class Trainer(Basic):
         # PXAP PART (UNCHANGED)
         # ============================================================
         if self.args.measure_loc:
-            acc_pxap = self.target_valpx_pxap[-1]
 
+            acc_pxap = self.metrics[constants.PXVALIDSET]['pxap'][-1]
             if not hasattr(self, "best_accuracy_pxap"):
                 self.pxap_train_model = None
                 self.best_accuracy_pxap = -1.0

@@ -111,8 +111,9 @@ def main():
         DLLogger.flush()
 
 
-    splits = [constants.TRAINSET, constants.CLVALIDSET]
-    if args.ds_to_compute_acc_trainset_source_target and args.esfda == True:
+    splits = [constants.TRAINSET, constants.CLVALIDSET, constants.PXVALIDSET, constants.TESTSET]
+    if args.ds_to_compute_acc_trainset_source_target :
+        #and args.esfda == True
         PLOT_TASKS = [
             "cl",
             "silhouette",
@@ -132,11 +133,23 @@ def main():
             "ECE",
             "NLL",
             "Brier",
+            "ratio_bias",
+            "acc_balanced",
+            "acc_reverse_weighted",
+            "pxap",
         ]
 
         for split in splits:
             for task in PLOT_TASKS:
-                trainer.plot_target_acc_curves(
+                trainer.plot_domain_acc_curves(
+                    domain      = "target",
+                    task        = task,
+                    cmpt_epoch  = args.cmpt_epoch,
+                    split       = split
+                )
+
+                trainer.plot_domain_acc_curves(
+                    domain      = "source",
                     task        = task,
                     cmpt_epoch  = args.cmpt_epoch,
                     split       = split
@@ -180,7 +193,11 @@ def main():
 
     if args.cl_train_models:
         trainer.save_best_cl_train_models(criterion=constants.CLVALIDSET)
-    if args.measure_loc:
+
+    if args.save_unlearning_model_all_criterion:
+        trainer.save_all_unlearning_models()
+
+    if args.measure_loc and not args.save_unlearning_model_all_criterion:
         trainer.save_best_cl_train_models(criterion=constants.PXVALIDSET)
 
     trainer.save_checkpoints()

@@ -78,6 +78,9 @@ from dlib.losses.sf_uda import UdaCdd
 from dlib.losses.sf_uda import UdaCdcl
 from dlib.losses.sf_uda import UdaErl
 
+from dlib.losses.unlearning_sfda import ForgetClassSuppressionLoss
+from dlib.losses.core import CEForgetLoss
+
 from dlib.losses.sf_uda import UdaNLL
 
 from dlib.losses.sf_uda import RgvSemanticAlignmentLoss
