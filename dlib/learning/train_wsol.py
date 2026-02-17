@@ -1317,9 +1317,15 @@ class Trainer(Basic):
 
                     
                     
-                    with torch.no_grad():
-                            output = self.model(images)
-                            cl_logits = output
+                    #with torch.no_grad():
+                    output = self.model(images)
+                    cl_logits = output
+
+                    # labels = out
+                    # labels_idx = torch.argmax(labels, dim=1)
+                    # counts = torch.bincount(labels_idx, minlength=2)
+                    # print(counts)
+
 
                     cdcl_out = self.sfuda_master.forward_data(features)
 
@@ -2284,7 +2290,6 @@ class Trainer(Basic):
                     # or no weights (simple max pooling for e.g.)
                 if self.args.freeze_encoder_sfda:
                     self.model.freeze_encoder()
- 
 
             elif self.args.adadsa:
                 self.model = adadsa.adadsa_freeze_all_model_except_bn_a(
@@ -2293,6 +2298,9 @@ class Trainer(Basic):
                 pass
             else:  # todo
                 raise NotImplementedError('Add more SFUDA methods.')
+            
+            if self.args.freeze_bn_sfda:
+                self.model.freeze_bn()
 
     def on_epoch_end(self):
         self.loss.update_t()
@@ -3983,7 +3991,8 @@ class Trainer(Basic):
                 mask_list_forget = [img_name in self.flipped_indices for img_name in index]
             
             self.random()
-            self.model.train()
+            #self.model.train()
+            self.model.eval()
             
             if batch_idx == 0:
                 mbatchsz = images.shape[0]
@@ -4144,16 +4153,16 @@ class Trainer(Basic):
                             epoch=self.epoch,
                         )
 
-                    self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.CLVALIDSET],domain="source",split=constants.CLVALIDSET,compute_kl=True)
-                    self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TRAINSET],domain="source",split=constants.TRAINSET,compute_kl=True)
+                    # self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.CLVALIDSET],domain="source",split=constants.CLVALIDSET,compute_kl=True)
+                    # self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TRAINSET],domain="source",split=constants.TRAINSET,compute_kl=True)
                     
-                    if self.args.track_test_performance:
-                        self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TESTSET],domain="source",split=constants.TESTSET,compute_kl=True)
-                        self.track_cams_from_loader(
-                            loader=self.source_domain_loaders[constants.TESTSET],
-                            split=constants.TESTSET,
-                            epoch=self.epoch,
-                        )
+                    # if self.args.track_test_performance:
+                    #     self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TESTSET],domain="source",split=constants.TESTSET,compute_kl=True)
+                    #     self.track_cams_from_loader(
+                    #         loader=self.source_domain_loaders[constants.TESTSET],
+                    #         split=constants.TESTSET,
+                    #         epoch=self.epoch,
+                    #     )
 
                     #self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.CLVALIDSET)
                     #self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.TRAINSET)
@@ -4163,6 +4172,7 @@ class Trainer(Basic):
                     if self.args.measure_loc:
                         self.compute_loc_on_target(self.epoch,domain="target", split = constants.PXVALIDSET)
                         self.compute_loc_on_target(self.epoch,domain="target", split = constants.TRAINSET)
+                        self.compute_loc_on_target(self.epoch,domain="target", split = constants.TESTSET)
                 
 
                     if self.args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512, constants.OpenImagesTrgt, constants.GLAS] and self.args.cl_train_models:
@@ -4887,6 +4897,17 @@ class Trainer(Basic):
 
         #Marginal entropy
         pbar = sum_probs / num_samples
+
+        # === Sanity check: eval-mode distributions ===
+        pred_ratio_eval = (
+            np.bincount(np.array(y_pred), minlength=self.args.num_classes)
+            / len(y_pred)
+        )
+        print("argmax ratio (eval):", pred_ratio_eval)
+
+        pbar_values = (sum_probs / num_samples).detach().cpu().numpy()
+        print("pbar (eval):", pbar_values)
+
         Hm = -(pbar * (pbar + 1e-8).log()).sum().item()
         Htilde = max(0.0, math.log(self.args.num_classes) - Hm)
 
@@ -5407,68 +5428,68 @@ class Trainer(Basic):
         #             print(f"[Accuracy Skip] Model at epoch {epoch} with accuracy {acc_cl:.2f}% was not better than best ({self.best_accuracy:.2f}%)")
 
 
-    def compute_loc_on_target(self, epoch, split=constants.TRAINSET):
-        self.model.eval()
+    # def compute_loc_on_target(self, epoch, split=constants.TRAINSET):
+    #     self.model.eval()
 
-        cam_computer_split = CAMComputer(
-            args=deepcopy(self.args),
-            model=self.model,
-            loader=self.target_domain_loaders[split],
-            metadata_root=os.path.join(self.args.target_domain_metadata_root, split),
-            mask_root=self.args.mask_root_target,
-            iou_threshold_list=self.args.iou_threshold_list,
-            dataset_name=self.args.target_domain_ds_to_compute_stats,
-            split=split,
-            cam_curve_interval=self.args.cam_curve_interval,
-            multi_contour_eval=self.args.multi_contour_eval,
-            out_folder=self.args.outd,
-            fcam_argmax=self.fcam_argmax,
-            best_valid_tau= None
-        )
+    #     cam_computer_split = CAMComputer(
+    #         args=deepcopy(self.args),
+    #         model=self.model,
+    #         loader=self.target_domain_loaders[split],
+    #         metadata_root=os.path.join(self.args.target_domain_metadata_root, split),
+    #         mask_root=self.args.mask_root_target,
+    #         iou_threshold_list=self.args.iou_threshold_list,
+    #         dataset_name=self.args.target_domain_ds_to_compute_stats,
+    #         split=split,
+    #         cam_curve_interval=self.args.cam_curve_interval,
+    #         multi_contour_eval=self.args.multi_contour_eval,
+    #         out_folder=self.args.outd,
+    #         fcam_argmax=self.fcam_argmax,
+    #         best_valid_tau= None
+    #     )
 
 
-        # cam_performance_target_train = cam_computer_target_train.compute_and_evaluate_cams()
+    #     # cam_performance_target_train = cam_computer_target_train.compute_and_evaluate_cams()
 
-        # self.target_valpx_pxap.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_PXAP])
-        # #self.source_test_pxap.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_PXAP])
-        # #self.source_train_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
+    #     # self.target_valpx_pxap.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_PXAP])
+    #     # #self.source_test_pxap.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_PXAP])
+    #     # #self.source_train_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])
 
-        # self.target_train_dice_bg.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
-        # #self.source_test_dice_bg.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_DICEBG_05])
-        # #self.source_train_dice_bg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
+    #     # self.target_train_dice_bg.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
+    #     # #self.source_test_dice_bg.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_DICEBG_05])
+    #     # #self.source_train_dice_bg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEBG_05])
 
-        # self.target_train_dice_fg.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
-        # #self.source_test_dice_fg.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_DICEFG_05])
-        # #self.source_train_dice_fg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
+    #     # self.target_train_dice_fg.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
+    #     # #self.source_test_dice_fg.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_DICEFG_05])
+    #     # #self.source_train_dice_fg.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_DICEFG_05])
 
-        # self.target_train_miou.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_MIOU_05])
-        # #self.source_test_miou.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_MIOU_05])
-        # #self.source_train_miou.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_MIOU_05])
+    #     # self.target_train_miou.append(cam_computer_target_train.evaluator.perf_gist[constants.MTR_MIOU_05])
+    #     # #self.source_test_miou.append(cam_computer_source_test.evaluator.perf_gist[constants.MTR_MIOU_05])
+    #     # #self.source_train_miou.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_MIOU_05])
 
-        cam_computer_split.compute_and_evaluate_cams()
-        perf = cam_computer_split.evaluator.perf_gist
+    #     cam_computer_split.compute_and_evaluate_cams()
+    #     perf = cam_computer_split.evaluator.perf_gist
 
-        # Init if needed
-        if "localization" not in self.metrics[split]:
-            self.metrics[split]["localization"] = {
-                "pxap": [],
-                "dice_bg": [],
-                "dice_fg": [],
-                "miou": [],
-            }
+    #     # Init if needed
+    #     if "localization" not in self.metrics[split]:
+    #         self.metrics[split]["localization"] = {
+    #             "pxap": [],
+    #             "dice_bg": [],
+    #             "dice_fg": [],
+    #             "miou": [],
+    #         }
 
-        self.metrics[split]["pxap"].append(
-            perf[constants.MTR_PXAP]
-        )
-        self.metrics[split]["dice_bg"].append(
-            perf[constants.MTR_DICEBG_05]
-        )
-        self.metrics[split]["dice_fg"].append(
-            perf[constants.MTR_DICEFG_05]
-        )
-        self.metrics[split]["miou"].append(
-            perf[constants.MTR_MIOU_05]
-        )
+    #     self.metrics[split]["pxap"].append(
+    #         perf[constants.MTR_PXAP]
+    #     )
+    #     self.metrics[split]["dice_bg"].append(
+    #         perf[constants.MTR_DICEBG_05]
+    #     )
+    #     self.metrics[split]["dice_fg"].append(
+    #         perf[constants.MTR_DICEFG_05]
+    #     )
+    #     self.metrics[split]["miou"].append(
+    #         perf[constants.MTR_MIOU_05]
+    #     )
 
     def compute_loc_on_source_and_target(self, epoch, split=constants.TESTSET):
         self.model.eval()
@@ -5568,26 +5589,26 @@ class Trainer(Basic):
         perf = cam_computer_split.evaluator.perf_gist
 
         # Init if needed
-        if "localization" not in self.metrics[domain][split]:
-            self.metrics[domain][split]["localization"] = {
-                "pxap": [],
-                "dice_bg": [],
-                "dice_fg": [],
-                "miou": [],
-            }
+        # if "localization" not in self.metrics[domain][split]:
+        #     self.metrics[domain][split]["localization"] = {
+        #         "pxap": [],
+        #         "dice_bg": [],
+        #         "dice_fg": [],
+        #         "miou": [],
+        #     }
 
-        self.metrics[domain][split]["localization"]["pxap"].append(
+        self.metrics[domain][split]["pxap"].append(
             perf[constants.MTR_PXAP]
         )
-        self.metrics[domain][split]["localization"]["dice_bg"].append(
-            perf[constants.MTR_DICEBG_05]
-        )
-        self.metrics[domain][split]["localization"]["dice_fg"].append(
-            perf[constants.MTR_DICEFG_05]
-        )
-        self.metrics[domain][split]["localization"]["miou"].append(
-            perf[constants.MTR_MIOU_05]
-        )
+        # self.metrics[domain][split]["localization"]["dice_bg"].append(
+        #     perf[constants.MTR_DICEBG_05]
+        # )
+        # self.metrics[domain][split]["localization"]["dice_fg"].append(
+        #     perf[constants.MTR_DICEFG_05]
+        # )
+        # self.metrics[domain][split]["localization"]["miou"].append(
+        #     perf[constants.MTR_MIOU_05]
+        # )
 
 
         # self.target_valpx_pxap.append(cam_computer_source_train.evaluator.perf_gist[constants.MTR_PXAP])

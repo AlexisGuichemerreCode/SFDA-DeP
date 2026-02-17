@@ -197,8 +197,8 @@ def main():
     if args.save_unlearning_model_all_criterion:
         trainer.save_all_unlearning_models()
 
-    if args.measure_loc and not args.save_unlearning_model_all_criterion:
-        trainer.save_best_cl_train_models(criterion=constants.PXVALIDSET)
+    #if args.measure_loc and not args.save_unlearning_model_all_criterion:
+        #trainer.save_best_cl_train_models(criterion=constants.PXVALIDSET)
 
     trainer.save_checkpoints()
 

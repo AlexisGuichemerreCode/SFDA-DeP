@@ -54,6 +54,7 @@ __all__ = [
     'CENotFlipLoss',
     'CEFlipLoss',
     'CEForgetLoss',
+    'CEMaxForgetLoss',
     'EntropyFcamsLoss',
 ]
 
@@ -385,6 +386,99 @@ class CEForgetLoss(ElementaryLoss):
 
         return self.lambda_ * loss_vec.mean()
     
+class CEMaxForgetLoss(ElementaryLoss):
+    """
+    Unlearning loss: maximize cross-entropy for the class to forget.
+    Equivalent to minimizing log(p_c).
+    Works for K > 2.
+    """
+
+    def __init__(self, **kwargs):
+        super(CEMaxForgetLoss, self).__init__(**kwargs)
+
+        self.ce_label_smoothing: float = 0.0
+        self.lambda_: float = 1.0
+
+        self.loss = nn.CrossEntropyLoss(
+            reduction="mean",
+            label_smoothing=self.ce_label_smoothing
+        ).to(self._device)
+
+        self.already_set = False
+
+    def set_it(self, lambda_: float, ce_label_smoothing: float = 0.0):
+        assert isinstance(lambda_, float)
+        assert 0.0 <= lambda_ <= 1.0
+        self.lambda_ = lambda_
+
+        assert isinstance(ce_label_smoothing, float)
+        assert 0.0 <= ce_label_smoothing <= 1.0
+        self.ce_label_smoothing = ce_label_smoothing
+
+        self.loss = nn.CrossEntropyLoss(
+            reduction="mean",
+            label_smoothing=self.ce_label_smoothing
+        ).to(self._device)
+
+        self.already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+
+        super(CEMaxForgetLoss, self).forward(epoch=epoch)
+        assert self.already_set
+
+        if not self.is_on():
+            return self._zero
+
+        # -----------------------------
+        # Sanity checks
+        # -----------------------------
+        assert cl_logits is not None
+        assert key_arg is not None
+        assert "cal_mask_forget" in key_arg
+        assert "forget_label_batch" in key_arg
+
+        forget_mask = torch.tensor(
+            key_arg["cal_mask_forget"],
+            dtype=torch.bool,
+            device=cl_logits.device
+        )
+
+        if forget_mask.sum() == 0:
+            return self._zero
+
+        # -----------------------------
+        # Select samples to forget
+        # -----------------------------
+        logits_forget = cl_logits[forget_mask]                 # [Bf, K]
+        forget_class = key_arg["forget_label_batch"][forget_mask]
+
+        # -----------------------------
+        # Compute CE
+        # -----------------------------
+        ce_loss = self.loss(input=logits_forget,
+                            target=forget_class)
+
+        # -----------------------------
+        # Maximize CE  (=> minimize log(p_c))
+        # -----------------------------
+        return - self.lambda_ * ce_loss
 
 
 class CEFlipLoss(ElementaryLoss):
@@ -1977,22 +2071,77 @@ class EnergyCEAdaptloss(SelfLearningFcams):
         self.apply_negative_samples: bool = False
         self.negative_c: int = 0
 
+        self.stop_localization: bool = False
+        self.stop_loc_epoch: int | None = None
+
+        self.use_loc_decay: bool = False
+
+        self.loc_lambda_init: float = 0.0
+        self.loc_decay_gamma: float = 1.0
+        self.loc_decay_every: int = 1
+        self.loc_decay_start_epoch: int = 0
+        self.loc_lambda_min: float = 0.0
+
+
         self._is_already_set = False
 
     def set_it(self,ece_adapt_lambda, apply_negative_samples: bool, negative_c: int | None = None, 
-               entropy_filter_mode: str = None,
-               keep_ratio: float = 0.2):
+                entropy_filter_mode: str = None,
+                keep_ratio: float = 0.2,
+                stop_localization: bool = False,
+                stop_loc_epoch: int | None = None,
+                use_loc_decay: bool = False,
+                loc_decay_gamma: float = 0.9,
+                loc_decay_every: int = 5,
+                loc_decay_start_epoch: int = 0,
+                loc_lambda_min: float = 0.0):
+        
         assert isinstance(apply_negative_samples, bool)
         #assert isinstance(negative_c, int)
         #assert negative_c >= 0
 
-        self.ece_lambda = ece_adapt_lambda
+        self.ece_adapt_lambda = ece_adapt_lambda
         self.negative_c = negative_c
         self.apply_negative_samples = apply_negative_samples
         self.entropy_filter_mode = entropy_filter_mode
         self.keep_ratio = keep_ratio
 
+        self.stop_localization = stop_localization
+        self.stop_loc_epoch = stop_loc_epoch
+
+        if self.stop_localization:
+            assert self.stop_loc_epoch is not None, \
+                "stop_loc_epoch must be set if stop_localization=True"
+            
+
+        # 🔹 decay config
+        self.use_loc_decay = use_loc_decay
+        self.loc_lambda_init = ece_adapt_lambda
+        self.loc_decay_gamma = loc_decay_gamma
+        self.loc_decay_every = loc_decay_every
+        self.loc_decay_start_epoch = loc_decay_start_epoch
+        self.loc_lambda_min = loc_lambda_min
+
+        if self.use_loc_decay:
+            assert self.loc_decay_every > 0
+            assert 0.0 < self.loc_decay_gamma <= 1.0
+
+            
+
         self._is_already_set = True
+
+    def _get_loc_lambda(self, epoch: int) -> float:
+        if not self.use_loc_decay:
+            return self.ece_adapt_lambda
+
+        if epoch < self.loc_decay_start_epoch:
+            return self.loc_lambda_init
+
+        steps = (epoch - self.loc_decay_start_epoch) // self.loc_decay_every
+        lam = self.loc_lambda_init * (self.loc_decay_gamma ** steps)
+
+        return max(lam, self.loc_lambda_min)
+
 
     def forward(self,
                 epoch=0,
@@ -2015,9 +2164,18 @@ class EnergyCEAdaptloss(SelfLearningFcams):
 
         assert self._is_already_set
 
+
         if not self.is_on():
             return self._zero
 
+        if self.stop_localization and epoch > self.stop_loc_epoch:
+            return self._zero
+        
+        self.loc_lambda = self._get_loc_lambda(epoch)
+
+        if self.loc_lambda <= 0.0:
+            return self._zero
+    
         assert not self.multi_label_flag
 
         if not self.apply_negative_samples:
@@ -2026,7 +2184,7 @@ class EnergyCEAdaptloss(SelfLearningFcams):
             # 🔹 MODE 0 — baseline
             # =========================
             if self.entropy_filter_mode is None:
-                return self.loss(input=fcams, target=seeds) * self.ece_lambda
+                return self.loss(input=fcams, target=seeds) * self.loc_lambda
 
 
             with torch.no_grad(): 
@@ -2080,7 +2238,7 @@ class EnergyCEAdaptloss(SelfLearningFcams):
             fcams_keep = fcams[ind_keep]
             seeds_keep = seeds[ind_keep]
 
-            return self.loss(input=fcams_keep, target=seeds_keep) * self.ece_lambda
+            return self.loss(input=fcams_keep, target=seeds_keep) * self.loc_lambda
 
         #ind_non_neg = (pseudo_glabel != -255) & (pseudo_glabel != self.negative_c)
         #ind_non_neg = (pseudo_glabel != self.negative_c).nonzero().view(-1)
@@ -2095,7 +2253,7 @@ class EnergyCEAdaptloss(SelfLearningFcams):
 
         fcams_n_neg = fcams[ind_non_neg]
         seeds_n_neg = seeds[ind_non_neg]
-        return self.loss(input=fcams_n_neg, target=seeds_n_neg) * self.ece_lambda
+        return self.loss(input=fcams_n_neg, target=seeds_n_neg) * self.loc_lambda
 
 
 

@@ -82,7 +82,7 @@ class Shot(object):
         all_image_ids = []
         all_img_lbs = None
 
-        for i, (images, targets, _, image_ids, _, _, _, _) in enumerate(loader):
+        for i, (images, targets, _, image_ids, _, _, _, _, _) in enumerate(loader):
             images = images.cuda()
             targets = targets.cuda()  # todo: track targets to MEASURE acc of
             # pseudo-labels.

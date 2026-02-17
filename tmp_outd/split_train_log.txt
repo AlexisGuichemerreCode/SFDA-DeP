@@ -1,10 +1,10 @@
-DLLL 2026-02-04 13:22:41.213001 0:00:00.193113 
+DLLL 2026-02-08 03:41:13.422022 0:00:00.186576 
 =====================================================================================================
  TASK: STD_CL 	 BOX_V2_METRIC: FALSE 	DATASET: CAMELYON17_512 	 METHOD: PIXELCAM 	 ENCODER: RESNET50 	
 =====================================================================================================
 
-DLLL 2026-02-04 13:22:42.357184 0:00:01.337296 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23518277
-DLLL 2026-02-04 13:22:42.357350 0:00:01.337462 Arch: STDClassifier
+DLLL 2026-02-08 03:41:14.419593 0:00:01.184147 `u-resnet50. Task: STD_CL.` was created. Nbr.params: 23518277
+DLLL 2026-02-08 03:41:14.419742 0:00:01.184296 Arch: STDClassifier
 task: STD_CL
 encoder_name: resnet50
 encoder_weights: imagenet
@@ -34,14 +34,14 @@ freeze_cl: False
 im_rec: False
 img_range: tanh 
 
-DLLL 2026-02-04 13:22:42.361665 0:00:01.341777 u-resnet50. Task: STD_CL. 
+DLLL 2026-02-08 03:41:14.423721 0:00:01.188275 u-resnet50. Task: STD_CL. 
  NBR-PARAMS: 
 	Encoder [resnet50]: 23508032. 
 	Classification head [WGAP]: 6147. 
 	Pixel Wise Classification head [PixelWise]: 4098. 
 	Total: 23518277. 
 
-DLLL 2026-02-04 13:22:42.607578 0:00:01.587690 
+DLLL 2026-02-08 03:41:14.520084 0:00:01.284638 
 ========================================================================================================================
  MODEL CHECKPOINT LOADED FROM /EXPORT/LIVIA/HOME/VISION/AGUICHEMERRE/ENERGY_BASED_ADAPTATION/EXPS/CAMELYON17_512/RESNET50/STD_CL/PIXELCAM/ID_UNLEARNING_C17_3_PXCAM-TSK_STD_CL-DS_CAMELYON17_512-FOLD_3-MAG_NONE-RUNMODE_SEARCH-MODE-MTH_PIXELCAM-SPOOLING_WGAP-ARCH_STDCLASSIFIER-ECD_RESNET50/CAMELYON17_512-3-RESNET50-PIXELCAM-WGAP-CP_B-UNLEARNING_WO_AUG_VAL_ACCURACY
 ========================================================================================================================

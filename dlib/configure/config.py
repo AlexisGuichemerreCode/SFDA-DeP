@@ -539,6 +539,19 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
 
         "ece_adapt": False,  # use or not ECE.
         "ece_adapt_lambda": 1.,  # lambda for ECE.
+
+        # --- Hard stop localization ---
+        "stop_localization": False,         # stop localization loss after a given epoch
+        "stop_loc_epoch": None,             # epoch at which localization is stopped
+
+        # --- Decay localization (LR-style) ---
+        "use_loc_decay": False,             # enable decay for localization loss
+        "loc_decay_gamma": 0.9,             # decay factor (lambda *= gamma)
+        "loc_decay_every": 5,               # decay every N epochs
+        "loc_decay_start_epoch": 0,         # epoch at which decay starts
+        "loc_lambda_min": 0.0,              # minimum localization loss weight
+
+
         "entropy_filter_mode": False,
         "keep_ratio": 0.2,  # keep ratio for entropy filtering
 
@@ -880,6 +893,8 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # training. If True, the classifiers are not updated.
         'freeze_encoder_sfda': False,  # freeze the enocodeur during
         # training. If True, the encodeur are not updated.
+        'freeze_bn_sfda': False,  # freeze the bn during
+        # training. If True, the bn are not updated.
 
 
         'save_unlearning_model_all_criterion': False, # Save unlearning model for all criterion
@@ -921,7 +936,10 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'esfda_distance_cancer': 10.0,
         'esfda_distance_normal': 4.0,
 
+        'fine_tuning': False,  # use or not fine-tuning for unlearning.
         'esfda_flip_labels': False,  # flip labels of the images
+        'esfda_flip_labels_v2': False,  # flip labels of the images
+        'esfda_flip_labels_v3': False,  # flip labels of the images
         'CEForget_lambda': 0.1,  # lambda of this term. >= 0.
 
         'esfda_notflip_labels': False,  # do not flip labels of the images

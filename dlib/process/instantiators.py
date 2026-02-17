@@ -426,6 +426,15 @@ def get_loss_target(args):
                 ce_loss.set_it(ce_label_smoothing=args.ce_pseudo_lb_smooth)
                 masterloss.add(ce_loss)
 
+        if args.fine_tuning:
+            cl_loss = losses.ClLoss(
+                    cuda_id=args.c_cudaid,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag)
+            cl_loss.set_it(ce_label_smoothing=args.ce_label_smoothing)
+            masterloss.add(cl_loss)
+
+
         if args.ent_pseudo_lb:
             ent_loss = losses.UdaTargetClassProbEntropy(
                 cuda_id=args.c_cudaid,
@@ -478,6 +487,22 @@ def get_loss_target(args):
                         multi_label_flag=multi_label_flag)
                     CEForgetLoss.set_it(lambda_=args.CEForget_lambda)
                     masterloss.add(CEForgetLoss)
+                
+                if args.esfda_flip_labels_v2:
+                    CEFlipLoss = losses.CEFlipLoss(
+                        cuda_id=args.c_cudaid,
+                        support_background=support_background,
+                        multi_label_flag=multi_label_flag)
+                    CEFlipLoss.set_it(lambda_=args.CEForget_lambda)
+                    masterloss.add(CEFlipLoss)
+
+                if args.esfda_flip_labels_v3:
+                    CEFlipLoss = losses.CEMaxForgetLoss(
+                        cuda_id=args.c_cudaid,
+                        support_background=support_background,
+                        multi_label_flag=multi_label_flag)
+                    CEFlipLoss.set_it(lambda_=args.CEForget_lambda)
+                    masterloss.add(CEFlipLoss)
 
                 if args.esfda_notflip_labels:
                     CENotFlipLoss = losses.CENotFlipLoss(
@@ -634,8 +659,16 @@ def get_loss_target(args):
                 negative_samples = True
             
             EnergyCEAdapt_loss.set_it(ece_adapt_lambda=args.ece_adapt_lambda, apply_negative_samples=negative_samples, negative_c=constants.DS_NEG_CL[args.dataset], 
-                                     entropy_filter_mode=args.entropy_filter_mode,
-                                     keep_ratio=args.keep_ratio)
+                                    entropy_filter_mode=args.entropy_filter_mode,
+                                    keep_ratio=args.keep_ratio,
+                                    stop_localization=args.stop_localization,
+                                    stop_loc_epoch=args.stop_loc_epoch,
+                                    use_loc_decay=args.use_loc_decay,
+                                    loc_decay_gamma=args.loc_decay_gamma,
+                                    loc_decay_every=args.loc_decay_every,
+                                    loc_decay_start_epoch=args.loc_decay_start_epoch,
+                                    loc_lambda_min=args.loc_lambda_min,
+                                )
             masterloss.add(EnergyCEAdapt_loss)
 
         if args.ece:

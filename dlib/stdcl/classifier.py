@@ -160,6 +160,19 @@ class STDClassifier(STDClModel):
         self.freeze_all_params()
         self.set_all_bn_running_stats_to_be_updatable()
 
+    def freeze_bn(self):
+        """
+        Freeze all BatchNorm layers:
+        - use running statistics
+        - do NOT update running stats
+        - do NOT update gamma / beta
+        """
+        for m in self.modules():
+            if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                m.eval()
+                m.weight.requires_grad_(False)
+                m.bias.requires_grad_(False)
+
 
 def findout_names(model, architecture):
     def string_contains_any(string, substring_list):

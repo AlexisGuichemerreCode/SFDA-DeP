@@ -3,7 +3,7 @@ import torch.nn as nn
 
 class ForgetClassSuppressionLoss(nn.Module):
     """
-    Suppresses confidence for a given class without enforcing another class.
+    Suppresses confidence for a given class.
     """
 
     def __init__(self, eps: float = 1e-6):

@@ -44,6 +44,9 @@ from dlib.losses.core import EnergyMGloss
 from dlib.losses.core import ConRanFieldPxcams
 from dlib.losses.core import CEFlipLoss
 from dlib.losses.core import CENotFlipLoss
+from dlib.losses.unlearning_sfda import ForgetClassSuppressionLoss
+from dlib.losses.core import CEForgetLoss
+from dlib.losses.core import CEMaxForgetLoss
 from dlib.losses.core import EntropyFcamsLoss
 
 from dlib.losses.sf_uda import UdaCrossEntropyImgPseudoLabels
@@ -78,8 +81,7 @@ from dlib.losses.sf_uda import UdaCdd
 from dlib.losses.sf_uda import UdaCdcl
 from dlib.losses.sf_uda import UdaErl
 
-from dlib.losses.unlearning_sfda import ForgetClassSuppressionLoss
-from dlib.losses.core import CEForgetLoss
+
 
 from dlib.losses.sf_uda import UdaNLL
 

@@ -545,6 +545,17 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--ece_adapt', type=str2bool, default=None)
     parser.add_argument('--ece_adapt_lambda', type=float, default=None, 
                         help='ECE: lambda value for loss .')
+    
+    parser.add_argument('--stop_localization', type=str2bool, default=False)
+    parser.add_argument('--stop_loc_epoch', type=int, default=None)
+
+    parser.add_argument('--use_loc_decay', type=str2bool, default=False)
+    parser.add_argument('--loc_decay_gamma', type=float, default=0.9)
+    parser.add_argument('--loc_decay_every', type=int, default=5)
+    parser.add_argument('--loc_decay_start_epoch', type=int, default=0)
+    parser.add_argument('--loc_lambda_min', type=float, default=0.0)
+
+
     parser.add_argument('--entropy_filter_mode', type=str2bool, default=None, 
                         help='ECE: activate filter .')
     parser.add_argument('--keep_ratio', type=float, default=None, 
@@ -693,6 +704,7 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda', type=str2bool, default=None, help='USE/NOT ESFDA method for SFUDA.')
     parser.add_argument('--freeze_classifier_sfda', type=str2bool, default=None,)
     parser.add_argument('--freeze_encoder_sfda', type=str2bool, default=None,)
+    parser.add_argument('--freeze_bn_sfda', type=str2bool, default=None,)
 
 
     parser.add_argument('--save_unlearning_model_all_criterion', type=str2bool, default=None,)
@@ -735,7 +747,13 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_distance_normal', type=float, default=None,)
 
     parser.add_argument('--esfda_flip_labels', type=str2bool, default=None,)
+    parser.add_argument('--esfda_flip_labels_v2', type=str2bool, default=None,)
+    parser.add_argument('--esfda_flip_labels_v3', type=str2bool, default=None,)
+
     parser.add_argument('--CEForget_lambda', type=float, default=None,)
+
+
+    parser.add_argument('--fine_tuning', type=str2bool, default=None,)
 
 
     parser.add_argument('--esfda_notflip_labels', type=str2bool, default=None,)
@@ -1515,7 +1533,7 @@ def get_args(args: dict, eval: bool = False):
     if args.sf_uda:
         assert args.task in [constants.STD_CL, constants.NEGEV], args.task
 
-        l_sf_uda_techs = [args.shot, args.faust, args.adadsa, args.sdda, args.nrc, args.sfde, args.cdcl, args.esfda, args.pxsfde, args.rgv, args.grsfda]
+        l_sf_uda_techs = [args.shot, args.faust, args.adadsa, args.sdda, args.nrc, args.sfde, args.cdcl, args.esfda, args.pxsfde, args.rgv, args.grsfda, args.fine_tuning]
 
         assert any(l_sf_uda_techs)
         assert sum(l_sf_uda_techs) == 1, 'Only one SFUDA must be active.'
