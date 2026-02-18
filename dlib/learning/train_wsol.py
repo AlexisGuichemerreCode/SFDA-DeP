@@ -1275,7 +1275,7 @@ class Trainer(Basic):
                                 mode=interpolation_mode,
                                 align_corners=False)
 
-                    seeds = seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
+                    seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
 
             else:
                 seeds = None
