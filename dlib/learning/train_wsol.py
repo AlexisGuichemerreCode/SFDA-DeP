@@ -4156,13 +4156,13 @@ class Trainer(Basic):
                     # self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.CLVALIDSET],domain="source",split=constants.CLVALIDSET,compute_kl=True)
                     # self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TRAINSET],domain="source",split=constants.TRAINSET,compute_kl=True)
                     
-                    # if self.args.track_test_performance:
-                    #     self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TESTSET],domain="source",split=constants.TESTSET,compute_kl=True)
-                    #     self.track_cams_from_loader(
-                    #         loader=self.source_domain_loaders[constants.TESTSET],
-                    #         split=constants.TESTSET,
-                    #         epoch=self.epoch,
-                    #     )
+                    if self.args.track_test_performance:
+                        self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TESTSET],domain="source",split=constants.TESTSET,compute_kl=True)
+                        self.track_cams_from_loader(
+                            loader=self.source_domain_loaders[constants.TESTSET],
+                            split=constants.TESTSET,
+                            epoch=self.epoch,
+                        )
 
                     #self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.CLVALIDSET)
                     #self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.TRAINSET)
@@ -4175,10 +4175,10 @@ class Trainer(Basic):
                         self.compute_loc_on_target(self.epoch,domain="target", split = constants.TESTSET)
                 
 
-                    if self.args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512, constants.OpenImagesTrgt, constants.GLAS] and self.args.cl_train_models:
-                        self.update_best_cl_train_model_came(epoch=self.epoch)
-                    elif self.args.save_unlearning_model_all_criterion:
-                        self.update_all_model_unlearning_criterion(epoch=self.epoch)
+                    #if self.args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512, constants.OpenImagesTrgt, constants.GLAS] and self.args.cl_train_models:
+                        #self.update_best_cl_train_model_came(epoch=self.epoch)
+                    #elif self.args.save_unlearning_model_all_criterion:
+                        #self.update_all_model_unlearning_criterion(epoch=self.epoch)
                
                 self.model.train()
 

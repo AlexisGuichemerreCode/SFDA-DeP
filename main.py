@@ -191,11 +191,11 @@ def main():
     # if args.unlearning_models:
     #     trainer.save_unlearning_models()
 
-    if args.cl_train_models:
-        trainer.save_best_cl_train_models(criterion=constants.CLVALIDSET)
+    #if args.cl_train_models:
+        #trainer.save_best_cl_train_models(criterion=constants.CLVALIDSET)
 
-    if args.save_unlearning_model_all_criterion:
-        trainer.save_all_unlearning_models()
+    #if args.save_unlearning_model_all_criterion:
+        #trainer.save_all_unlearning_models()
 
     #if args.measure_loc and not args.save_unlearning_model_all_criterion:
         #trainer.save_best_cl_train_models(criterion=constants.PXVALIDSET)

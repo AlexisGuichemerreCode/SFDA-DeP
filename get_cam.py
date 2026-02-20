@@ -365,7 +365,7 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
         args_dict = yaml.load(fy, Loader=IgnoreKeyLoader)
         # args_dict = yaml.safe_load(fy)
         # args_dict['model']['freeze_encoder'] = False
-        args_dict['pixel_wise_classification'] = True
+        args_dict['pixel_wise_classification'] = False
         args_dict['multiple_layer_pixel_classifier'] = False
         args_dict['anchors_ortogonal'] = False
         args_dict['detach_pixel_classifier'] = False
@@ -438,13 +438,13 @@ def get_cam(exp_path, checkpoint_type, dataset, cudaid, split='train', tmp_outd=
     ####################################################################################
     DLLogger.flush()
     
-    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{2}")
+    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{4}")
     #read sys var DATASETSH
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
     target_domain_data_paths = config.configure_data_paths(args_dict, dataset)
 
     metadata_root_CAME = join('./folds/wsol-done-right-splits', 'CAMELYON512', f"fold-{args.fold}")
-    args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
+    args_dict['data_root'] = '/export/livia/home/vision/Aguichemerre/datasets'
     target_domain_data_paths_CAME = config.configure_data_paths(args_dict, 'CAMELYON512')
 
     loaders = get_data_loader(

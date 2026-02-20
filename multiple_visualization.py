@@ -80,6 +80,7 @@ def cl_forward(args, model, images):
 
 def t2n(t):
     return t.detach().cpu().numpy().astype(float)
+    #return t
     
 def _compute_accuracy(args, model, loader):
     num_correct = 0
@@ -518,14 +519,29 @@ def get_visaualization(exp_path, target_method, sf_uda_source_folder, checkpoint
             # plt.axis('off')
             # plt.show()
             # plt.imsave("image_sauvegardee_energy_layercam__41_cam.png", overlay_cam)
-            image_norm = image.permute(1,2,0)
-            image_norm = (image_norm - image_norm.min()) / (image_norm.max() - image_norm.min())
-            overlay_image = show_cam_on_image(t2n(image_norm), t2n(cam), use_rgb=True)
+            # image_norm = image.permute(1,2,0)
+            # image_norm = (image_norm - image_norm.min()) / (image_norm.max() - image_norm.min())
+            # cam = cam.cpu().numpy()
+            # cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-6)
+            # overlay_image = show_cam_on_image(t2n(image_norm), t2n(cam), use_rgb=True)
+            # plt.imsave("overlay_image.png", overlay_image)
+            # overlay_images[image_id] = overlay_image
+            # input_images[image_id] = t2n(image_norm)
+
+            img = image.permute(1, 2, 0).cpu().numpy()
+            img = img.astype(np.float32)
+            img = (img - img.min()) / (img.max() - img.min() + 1e-6)
+
+            cam_tmp = cam
+            cam = cam.cpu().numpy()
+            cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-6)
+
+            overlay_image = show_cam_on_image(img, cam, use_rgb=False)
             plt.imsave("overlay_image.png", overlay_image)
             overlay_images[image_id] = overlay_image
-            input_images[image_id] = t2n(image_norm)
+            input_images[image_id] = img
 
-            scoremap = t2n(cam)
+            scoremap = t2n(cam_tmp)
             cam_computer.evaluator.accumulate(scoremap, image_id, target=target, preds_ordered=None)
 
             gt_mask = get_mask('f/export/livia/home/vision/Aguichemerre/datasets/{dataset}',
@@ -619,14 +635,15 @@ def fast_eval():
         _CODE_FUNCTION = 'fast_eval_{}'.format(split)
 
         #target_methods = ['DeepMIL', 'EnergyCAM DL', 'GradCAMpp', 'EnergyCAM GC', 'LayerCAM', 'EnergyCAM LC', 'SAT', 'EnergyCAM SAT']
-        #target_methods = ['SFDE', 'SFDE UL', 'CDCL', 'CDCL UL', 'ERL', 'ERL UL']
-        target_methods = ['SFDE']
+        target_methods = ['SFDE', 'CDCL', 'ERL', 'RGV', 'Ours']
+        #target_methods = ['SFDE']
         #target_methods = ['GradCAMpp']
         #'CAM', 'GradCAMpp', 'NEGEV',
         # target_methods = ['ADADSA']GradCAMpp'EnergyCAM', 'NEGEV', 
         #create fig len(parsedargs.image_ids_to_draw) row and len(target_methods) columns
         fig, axs = plt.subplots(len(parsedargs.image_ids_to_draw), len(target_methods)+2, figsize=((len(target_methods)+2)*1.9, 2*len(parsedargs.image_ids_to_draw)),squeeze=False)
-
+        plt.subplots_adjust(hspace=0.2, wspace=0.05)
+        
         method_name_lst = []
         for ind_method, target_method in enumerate(target_methods):
             ind_method+= 2

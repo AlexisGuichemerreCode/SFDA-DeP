@@ -1633,6 +1633,11 @@ def get_model(args, eval=False, eval_path_weights=''):
                     weights = torch.load(join(path_cl, 'model.pt'),
                                      map_location=get_cpu_device())
                     model.load_state_dict(weights, strict=False)
+
+        elif args.method in [constants.METHOD_TSCAM, constants.METHOD_SAT] and "deit" in args.model['encoder_name']:
+                    weights = torch.load(join(path_cl, 'model.pt'),
+                                     map_location=get_cpu_device())
+                    model.load_state_dict(weights, strict=False)
         else:
             encoder_w = torch.load(join(path_cl, 'encoder.pt'),
                                    map_location=get_cpu_device())
