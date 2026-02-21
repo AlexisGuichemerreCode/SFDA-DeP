@@ -4147,22 +4147,22 @@ class Trainer(Basic):
 
                     if self.args.track_test_performance:
                         self.compute_acc_on_domain_came(loader=self.target_domain_loaders[constants.TESTSET],domain="target",split=constants.TESTSET,compute_kl=True)
-                        self.track_cams_from_loader(
-                            loader=self.target_domain_loaders[constants.TESTSET],
-                            split=constants.TESTSET,
-                            epoch=self.epoch,
-                        )
+                        # self.track_cams_from_loader(
+                        #     loader=self.target_domain_loaders[constants.TESTSET],
+                        #     split=constants.TESTSET,
+                        #     epoch=self.epoch,
+                        # )
 
                     # self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.CLVALIDSET],domain="source",split=constants.CLVALIDSET,compute_kl=True)
                     # self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TRAINSET],domain="source",split=constants.TRAINSET,compute_kl=True)
                     
-                    if self.args.track_test_performance:
-                        self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TESTSET],domain="source",split=constants.TESTSET,compute_kl=True)
-                        self.track_cams_from_loader(
-                            loader=self.source_domain_loaders[constants.TESTSET],
-                            split=constants.TESTSET,
-                            epoch=self.epoch,
-                        )
+                    # if self.args.track_test_performance:
+                    #     self.compute_acc_on_domain_came(loader=self.source_domain_loaders[constants.TESTSET],domain="source",split=constants.TESTSET,compute_kl=True)
+                    #     self.track_cams_from_loader(
+                    #         loader=self.source_domain_loaders[constants.TESTSET],
+                    #         split=constants.TESTSET,
+                    #         epoch=self.epoch,
+                    #     )
 
                     #self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.CLVALIDSET)
                     #self.compute_acc_on_target_came(self.epoch, compute_kl=True, split = constants.TRAINSET)
