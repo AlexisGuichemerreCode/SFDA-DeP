@@ -635,15 +635,33 @@ def fast_eval():
         _CODE_FUNCTION = 'fast_eval_{}'.format(split)
 
         #target_methods = ['DeepMIL', 'EnergyCAM DL', 'GradCAMpp', 'EnergyCAM GC', 'LayerCAM', 'EnergyCAM LC', 'SAT', 'EnergyCAM SAT']
-        target_methods = ['SFDE', 'CDCL', 'ERL', 'RGV', 'Ours']
+        target_methods = ['SFDE', 'CDCL', 'ERL', 'RGV', 'SFDA-GU']
         #target_methods = ['SFDE']
         #target_methods = ['GradCAMpp']
         #'CAM', 'GradCAMpp', 'NEGEV',
         # target_methods = ['ADADSA']GradCAMpp'EnergyCAM', 'NEGEV', 
         #create fig len(parsedargs.image_ids_to_draw) row and len(target_methods) columns
-        fig, axs = plt.subplots(len(parsedargs.image_ids_to_draw), len(target_methods)+2, figsize=((len(target_methods)+2)*1.9, 2*len(parsedargs.image_ids_to_draw)),squeeze=False)
-        plt.subplots_adjust(hspace=0.2, wspace=0.05)
+
+        #fig, axs = plt.subplots(len(parsedargs.image_ids_to_draw), len(target_methods)+2, figsize=((len(target_methods)+2)*1.9, 2*len(parsedargs.image_ids_to_draw)),squeeze=False)
+        #plt.subplots_adjust(hspace=0.2, wspace=0.05)
         
+        fig, axs = plt.subplots(
+        len(parsedargs.image_ids_to_draw),
+        len(target_methods)+2,
+        figsize=((len(target_methods)+2)*1.9, 2*len(parsedargs.image_ids_to_draw)),
+        squeeze=False
+        )
+
+        
+        fig.patch.set_facecolor('#f0f0f0')
+
+        for ax_row in axs:
+            for ax in ax_row:
+                ax.set_facecolor('#f0f0f0')
+
+        plt.subplots_adjust(hspace=0.2, wspace=0.05)
+
+
         method_name_lst = []
         for ind_method, target_method in enumerate(target_methods):
             ind_method+= 2
@@ -686,7 +704,15 @@ def fast_eval():
                 axs[i, 0].imshow(input_image)
                 axs[i, 0].axis('off')
 
-                axs[i, 1].imshow(gt_masks[image_id], cmap='gray')
+                #axs[i, 1].imshow(gt_masks[image_id], cmap='gray')
+                axs[i, 1].set_facecolor('#f0f0f0')
+
+                gt = gt_masks[image_id]
+
+                # Fond gris + masque rouge semi-transparent
+                axs[i, 1].imshow(np.zeros_like(gt), cmap='gray', vmin=0, vmax=1)
+                axs[i, 1].imshow(gt, cmap='binary_r', alpha=0.7)
+
                 axs[i, 1].axis('off')
                 if i == 0:
                     axs[i, 0].set_title('INPUT', fontsize=18)

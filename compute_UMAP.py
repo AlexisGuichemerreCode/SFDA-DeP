@@ -2139,9 +2139,9 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
 
     model.eval()
-    cl_global= _compute_accuracy(args, model, target_loaders[split])
+    #cl_global= _compute_accuracy(args, model, target_loaders[split])
 
-    print(f"Classification accuracy on target dataset {target_dataset} is {cl_global:.2f}%")
+    #print(f"Classification accuracy on target dataset {target_dataset} is {cl_global:.2f}%")
     #print(f"Classification accuracy on target dataset {target_dataset} for normal class is {cl_normal:.2f}%")
     #print(f"Classification accuracy on target dataset {target_dataset} for cancer class is {cl_cancer:.2f}%")
 
@@ -2193,25 +2193,34 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
             plt.figure(figsize=(8,6))
 
-            # Plot features par classe
+            dot_size = 35  # try 25, 35, 50...
+
+            class_names = ["Normal", "Cancer"]  # index matches label id
+
             for label in np.unique(labels):
                 idx = labels == label
-                plt.scatter(embedding_features[idx, 0], embedding_features[idx, 1],
-                            label=f"Classe {label}", alpha=0.7, s=10)
+                plt.scatter(
+                    embedding_features[idx, 0],
+                    embedding_features[idx, 1],
+                    label=class_names[int(label)] if int(label) < len(class_names) else f"Class {label}",
+                    alpha=0.7,
+                    s=dot_size
+                )
 
-            # Plot anchors (poids du classifieur)
-            #plt.scatter(embedding_anchors[:,0], embedding_anchors[:,1],
-                        #c='black', marker='*', s=180, label='Anchors (weights)', edgecolor='white')
+            # Legend on top (outside the axes)
+            plt.legend(
+                loc="upper center",
+                bbox_to_anchor=(0.5, 1.1),
+                ncol=min(len(np.unique(labels)), 4),
+                frameon=True,
+                fontsize=14
+            )
 
-            plt.legend()
-            #plt.title("")
-            #plt.xlabel("UMAP 1")
-            #plt.ylabel("UMAP 2")
-            plt.xticks([])  # retire les valeurs sur l’axe X
-            plt.yticks([])  # retire les valeurs sur l’axe Y
-            #plt.axis('off')
+            plt.xticks([])
+            plt.yticks([])
             plt.tight_layout()
-            filename = f"umap_n_cdcl_{target_dataset}.png"
+
+            filename = f"umap_n_source_{target_dataset}.png"
             plt.savefig(filename, dpi=300, bbox_inches="tight")
             plt.close()
             # plt.savefig("UMAP.png", dpi=300)

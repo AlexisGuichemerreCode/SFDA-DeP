@@ -74,6 +74,9 @@ import json
 from glob import glob
 import torch.nn.functional as F
 from sklearn.neighbors import KNeighborsClassifier
+from collections import Counter
+
+
 
 
 
@@ -115,8 +118,8 @@ def _compute_accuracy(args, model, loader, num_classes=2):
     pred_counter = Counter()
 
     for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
-        images = images.cuda()
-        targets = targets.cuda()
+        images = images.cuda(non_blocking=True)
+        targets = targets.cuda(non_blocking=True)
 
         with torch.no_grad():
             cl_logits = cl_forward(args, model, images)
@@ -132,25 +135,29 @@ def _compute_accuracy(args, model, loader, num_classes=2):
     # accuracy
     classification_acc = num_correct / float(num_images) * 100
 
-    # prediction bias
-    pred_counts = torch.zeros(num_classes)
+    # counts per predicted class
+    pred_counts = torch.zeros(num_classes, dtype=torch.float32)
     for k, v in pred_counter.items():
-        pred_counts[k] = v
+        if 0 <= k < num_classes:
+            pred_counts[k] = float(v)
 
+    # prediction percentages (bias)
+    total_preds = pred_counts.sum().clamp_min(1.0)  # avoid div by 0
+    pred_percents = (pred_counts / total_preds) * 100.0
 
     # over / under predicted classes
-    over_pred_class = pred_counts.argmax().item()
-    under_pred_class = pred_counts.argmin().item()
+    over_pred_class = int(pred_counts.argmax().item())
+    under_pred_class = int(pred_counts.argmin().item())
 
     max_pred = pred_counts.max().item()
     min_pred = pred_counts.min().item()
-
     ratio_pred = max_pred / (min_pred + 1e-6)
 
     return (
         classification_acc,
         ratio_pred,
         pred_counts,
+        pred_percents,      
         over_pred_class,
         under_pred_class,
     )
@@ -1021,13 +1028,14 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                     )
     
 
-    classification_acc, ratio_pred, pred_counts, over_pred_class, under_pred_class = _compute_accuracy(args, model, loaders[parsedargs.split])
+    classification_acc, ratio_pred, pred_counts, pred_percents, over_pred_class, under_pred_class = _compute_accuracy(args, model, loaders[parsedargs.split])
     cam_performance = cam_computer.compute_and_evaluate_cams()
     cam_perf_pxap = cam_computer.evaluator.perf_gist[constants.MTR_PXAP]
  
     print(f"Classification Accuracy on {parsedargs.split} set: {classification_acc:.2f}%")
     print(f"Ratio of positive predictions on {parsedargs.split} set: {ratio_pred:.2f}")
     print(f"Counts of predictions on {parsedargs.split} set: {pred_counts}")
+    print(f"Percentages of predictions on {parsedargs.split} set: {pred_percents}")
     print(f"Over-predicted classes on {parsedargs.split} set: {over_pred_class}")
     print(f"Under-predicted classes on {parsedargs.split} set: {under_pred_class}")
     print(f"CAM Performance PxAP on {parsedargs.split} set: {cam_perf_pxap:.2f}")

@@ -1681,6 +1681,13 @@ class Trainer(Basic):
                     output = self.model(images)
                     cl_logits = output
 
+
+                    probs = torch.softmax(cl_logits, dim=1)      # [B, C]
+                    pred_class = probs.argmax(dim=1)             # [B]
+                    entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1)  # [B]
+
+
+
                     if not self.args.esfda_loc:
                         cams_inter = None
                         attention_map = None
@@ -1733,6 +1740,40 @@ class Trainer(Basic):
                     else:
                         fcams = None
                         seeds = None
+
+                    if args.pixel_wise_classification and args.ece_adapt:
+                        out = self.model(images) 
+                        _, _, h, w = self.model.encoder_last_features.shape
+                        interpolation_mode = 'bilinear'
+                        if std_cams is None:
+                            cams_inter = self.get_pseudo_cams_minibatch(images=images,
+                                                                    targets=pred_class)
+                        else:
+                            cams_inter = std_cams
+
+                        if self.args.low_res:
+                            fcams=self.model.cams
+                        else:
+                            _, _, i, x = cams_inter.shape
+                            fcams= F.interpolate(self.model.cams,
+                                        (i, x),
+                                        mode=interpolation_mode,
+                                        align_corners=False)
+
+                        with torch.no_grad():
+                            if self.args.low_res:
+                                cams_inter = F.interpolate(cams_inter,
+                                        (h, w),
+                                        mode=interpolation_mode,
+                                        align_corners=False)
+
+                            seeds = self.sl_mask_builder(cams_inter, class_idx=pred_class)
+                            
+                    else:
+                        seeds = None
+                        fcams = None
+
+                    key_arg["entropy"] = entropy
 
 
                     loss = self.loss(epoch=self.epoch,
