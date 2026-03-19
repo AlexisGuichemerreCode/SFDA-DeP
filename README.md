@@ -166,7 +166,7 @@ python main.py \
        --exp_id 01_12_2024_09_25_14_467534__5485897
 ```
 
-3- Adapt PixelCAM on data CAMELYON16:
+3- Adapt PixelCAM on data CAMELYON16 with SFDA-DeP:
 
 ```shell
 #!/usr/bin/env bash
