@@ -203,6 +203,7 @@ python main.py \
        --debug_subfolder None \
        --amp True \
        --opt__lr 0.001 \
+       --sf_uda True \
        --sf_uda_source_ds CAMELYON16 \
        --sf_uda_source_ds_fold 0 \
        --sf_uda_source_encoder_name resnet50 \
