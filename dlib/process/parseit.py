@@ -702,6 +702,7 @@ def get_args(args: dict, eval: bool = False):
     
     # 6- UnlearningSFDA
     parser.add_argument('--esfda', type=str2bool, default=None, help='USE/NOT ESFDA method for SFUDA.')
+    parser.add_argument('--esfda_2', type=str2bool, default=None, help='USE/NOT ESFDA method for SFUDA.')
     parser.add_argument('--freeze_classifier_sfda', type=str2bool, default=None,)
     parser.add_argument('--freeze_encoder_sfda', type=str2bool, default=None,)
     parser.add_argument('--freeze_bn_sfda', type=str2bool, default=None,)
@@ -722,6 +723,8 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--retain_all_others', type=str2bool, default=None,)
     parser.add_argument('--dynamic_selection', type=str2bool, default=None,)
     parser.add_argument('--resample_every', type=float, default=None,)
+    parser.add_argument('--loc_self_learning', type=str2bool, default=None,)
+
 
     parser.add_argument('--select_best_on_train', type=str2bool, default=None,)
     parser.add_argument('--smooth_selection', type=str2bool, default=None,)

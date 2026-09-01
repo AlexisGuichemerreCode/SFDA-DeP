@@ -1056,7 +1056,7 @@ def get_loss_source(args):
                     multi_label_flag=multi_label_flag,
                     dataset=args.dataset)
             
-            if args.dataset == constants.GLAS:
+            if args.dataset in [constants.GLAS, constants.EBHI]:
                 negative_samples = False
             # elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and args.neg_samples_partial:
             #     negative_samples = False

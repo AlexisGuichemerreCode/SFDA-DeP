@@ -1,0 +1,4 @@
+# EBHI-Seg samples/masks excluded during preprocessing
+# class\treason\tpath\t(optional details)
+Low-grade IN	missing_mask	Low-grade IN/image/GT2012149-2-400-001.png
+Low-grade IN	missing_mask	Low-grade IN/image/GTGT2012149-2-400-001.png

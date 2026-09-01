@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from timm.models.efficientnet import EfficientNet
 from timm.models.efficientnet import decode_arch_def, round_channels, default_cfgs
-from timm.models.layers.activations import Swish
+from timm.layers.activations import Swish
 
 root_dir = dirname(dirname(dirname(abspath(__file__))))
 sys.path.append(root_dir)
@@ -161,11 +161,32 @@ class EfficientNetLiteEncoder(EfficientNetBaseEncoder):
         super().__init__(stage_idxs, out_channels, depth, **kwargs)
 
 
-def prepare_settings(settings):
+def prepare_settings(settings, variant=None):
+    # New timm: DefaultCfg container
+    cfgs = getattr(settings, "cfgs", None)
+
+    if cfgs is not None:
+        if not cfgs:
+            return None
+
+        # explicit variant requested
+        if variant is not None:
+            if variant in cfgs:
+                settings = cfgs[variant]
+            else:
+                return None
+        else:
+            # use first available cfg safely
+            tags = getattr(settings, "tags", None)
+            if tags and len(tags) > 0:
+                settings = cfgs[tags[0]]
+            else:
+                return None
+
     return {
-        "mean": settings["mean"],
-        "std": settings["std"],
-        "url": settings["url"],
+        "mean": settings.mean if hasattr(settings, "mean") else settings["mean"],
+        "std": settings.std if hasattr(settings, "std") else settings["std"],
+        "url": settings.url if hasattr(settings, "url") else settings.get("url", None),
         "input_range": (0, 1),
         "input_space": "RGB",
     }

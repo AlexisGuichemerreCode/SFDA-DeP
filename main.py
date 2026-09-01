@@ -45,9 +45,12 @@ def main():
 
     if args.task in [constants.STD_CL]:
         if args.sf_uda == True:
-            model_src_init = get_model_source(args)
-            model_src_init.cuda(args.c_cudaid)
-            inter_classifier = model_src_init
+            if args.loc_self_learning == False:
+                model_src_init = get_model_source(args)
+                model_src_init.cuda(args.c_cudaid)
+                inter_classifier = model_src_init
+            else:
+                inter_classifier = model_src
 
             
     if args.sf_uda and args.sdda:

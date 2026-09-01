@@ -364,7 +364,7 @@ class MaskEvaluator(LocalizationEvaluator):
         super(MaskEvaluator, self).__init__(**kwargs)
 
         if self.dataset_name not in [constants.OpenImages,constants.OpenImagesSrc, constants.OpenImagesTrgt,constants.GLAS,
-                                     constants.CAMELYON512, constants.CAMELYON17_512]:
+                                     constants.CAMELYON512, constants.CAMELYON17_512, constants.EBHI]:
             raise ValueError(f"Cant evalaute masks on {self.dataset_name}.")
 
         self.mask_paths, self.ignore_paths = get_mask_paths(self.metadata)

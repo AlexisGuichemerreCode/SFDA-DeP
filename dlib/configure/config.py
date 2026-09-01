@@ -27,7 +27,7 @@ def configure_data_paths(args, dsname=None):
         train = val = test = join(args['data_root'], dsname)
         data_paths = mch(train=train, val=val, test=test)
     elif dsname in [constants.GLAS, constants.CAMELYON512,
-                    constants.CAMELYON17_512, constants.BREAKHIS, constants.ICIAR, constants.OpenImages, constants.OpenImagesTrgt]:
+                    constants.CAMELYON17_512,constants.EBHI , constants.BREAKHIS, constants.ICIAR, constants.OpenImages, constants.OpenImagesTrgt]:
 
         _splits = [constants.TRAINSET, constants.PXVALIDSET,
                    constants.CLVALIDSET, constants.TESTSET]
@@ -54,7 +54,7 @@ def configure_std_cams_folder(dsname):
     if dsname in [constants.CUB, constants.ILSVRC, constants.OpenImages]:
         folders = mch(train='', val='', test='')
     elif dsname in [constants.GLAS, constants.CAMELYON512,
-                    constants.CAMELYON17_512, constants.BREAKHIS, constants.ICIAR, constants.OpenImages, constants.OpenImagesSrc, constants.OpenImagesTrgt]:
+                    constants.CAMELYON17_512, constants.EBHI , constants.BREAKHIS, constants.ICIAR, constants.OpenImages, constants.OpenImagesSrc, constants.OpenImagesTrgt]:
 
         _splits = [constants.TRAINSET, constants.PXVALIDSET,
                    constants.CLVALIDSET, constants.TESTSET]
@@ -889,6 +889,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # ======================================================================
         # ESFDA: "Energy Source-Free Domain Adaptation",
         'esfda': False,  # ESFDE method. ON/OFF.
+        'esfda_2': False,  # ESFDE method. ON/OFF.
         'freeze_classifier_sfda': False,  # freeze the classifiers during
         # training. If True, the classifiers are not updated.
         'freeze_encoder_sfda': False,  # freeze the enocodeur during
@@ -949,6 +950,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         "esfda_loc": False,  # use or not ECE.
         "esfda_loc_lambda": 1.,  # lambda for ECE.
         "esfda_loc_mode": 'mse',  # lambda for ECE.
+        "loc_self_learning": False,  # use or not source CAM after 1st resampling.
 
 
         "save_multiple_unlearn_models": False,  # Save or not multiple unlearning models.

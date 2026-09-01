@@ -350,6 +350,8 @@ ICIAR = 'ICIAR'  # ICIAR-2018-BACH-Challenge
 CAMELYON512 = 'CAMELYON512'  # Camelyon16 512 patch.
 CAMELYON17_512 = 'CAMELYON17_512'  # Camelyon17 512 patch
 BREAKHIS = 'BREAKHIS'
+EBHI = 'EBHI'  # EBHI-SEG dataset
+
 
 FORMAT_DEBUG = 'DEBUG_{}'
 if DEBUG:
@@ -358,10 +360,12 @@ if DEBUG:
     OpenImages = FORMAT_DEBUG.format(OpenImages)
     OpenImagesSrc = FORMAT_DEBUG.format(OpenImagesSrc)
     OpenImagesTrgt = FORMAT_DEBUG.format(OpenImagesTrgt)
+    EBHI = FORMAT_DEBUG.format(EBHI)
+    ICIAR = FORMAT_DEBUG.format(ICIAR)
 
 
-datasets = [CUB, ILSVRC, OpenImages, OpenImagesSrc, OpenImagesTrgt, GLAS, BREAKHIS, CAMELYON512,CAMELYON17_512, ICIAR]
-SUPPORTED_DS = [GLAS, BREAKHIS, CAMELYON512,CAMELYON17_512, ICIAR, OpenImages, OpenImagesSrc, OpenImagesTrgt]
+datasets = [CUB, ILSVRC, OpenImages, OpenImagesSrc, OpenImagesTrgt, GLAS, BREAKHIS, CAMELYON512,CAMELYON17_512, EBHI, ICIAR]
+SUPPORTED_DS = [GLAS, BREAKHIS, CAMELYON512,CAMELYON17_512,  EBHI, ICIAR, OpenImages, OpenImagesSrc, OpenImagesTrgt]
 
 # Magnification for breakhis dataset
 MAG40X = '40X'
@@ -384,7 +388,8 @@ LOCALIZATION_AVAIL = {
     CAMELYON512: True,
     CAMELYON17_512: True,
     BREAKHIS: False,
-    ICIAR: False
+    ICIAR: False,
+    EBHI: True
 }
 
 RELATIVE_META_ROOT = './folds/wsol-done-right-splits'
@@ -400,7 +405,8 @@ NUMBER_CLASSES = {
     CAMELYON512: 2,
     CAMELYON17_512: 2,
     ICIAR: 4,
-    BREAKHIS: 2
+    BREAKHIS: 2,
+    EBHI: 6
 }
 
 CROP_SIZE = 224
@@ -423,7 +429,8 @@ EVAL_CHECKPOINT = {
     CAMELYON512: BEST_LOC,
     CAMELYON17_512: BEST_LOC,
     BREAKHIS: BEST_CL,
-    ICIAR: BEST_CL
+    ICIAR: BEST_CL,
+    EBHI: BEST_LOC
 }
 
 # ==============================================================================
@@ -582,6 +589,7 @@ DS_NEG_CL = {
     CAMELYON512: 0,
     CAMELYON17_512: 0,
     GLAS: 0,
+    EBHI: 0,
     OpenImages : None,
     OpenImagesSrc : None,
     OpenImagesTrgt : None,

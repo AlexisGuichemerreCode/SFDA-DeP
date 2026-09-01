@@ -1,0 +1,224 @@
+Low-grade IN/image/GTXC2014139-6-400-003.png,2
+Low-grade IN/image/GTxc2012493-1-400-002.png,2
+Normal/image/GT2017148-2-400-005.png,0
+Low-grade IN/image/GTxc2013490-1-400-002.png,2
+Adenocarcinoma/image/GTxc2014065-2-400-006.png,5
+Adenocarcinoma/image/GTxc2012996-2-400-002.png,5
+Low-grade IN/image/GTXC2015362-1-400-002.png,2
+Adenocarcinoma/image/GTXC2014153-3-400-008.png,5
+High-grade IN/image/GTxc2013987-3-400-003.png,3
+Polyp/image/GTXC2110181-1-400-006.png,1
+Low-grade IN/image/GTxc2014165-1-400-003.png,2
+Adenocarcinoma/image/GTxc2013496-4-400-003.png,5
+Polyp/image/GTXC2015335-4-400-001.png,1
+High-grade IN/image/GT2016887-1-400-002.png,3
+Low-grade IN/image/GTXC2014153-2-400-005.png,2
+Low-grade IN/image/GTXC2015407-1-400-002.png,2
+Polyp/image/GTxc2110172-1-400-002.png,1
+Serrated adenoma/image/GTXC2014129-3-400-005.png,4
+High-grade IN/image/GT2012508-1-400-003.png,3
+Adenocarcinoma/image/GTxc2013512-1-400-011.png,5
+Normal/image/GTDC2100796-1-400-005.png,0
+Polyp/image/GTXC2015335-5-400-001.png,1
+High-grade IN/image/GTXC2015371-1-400-002.png,3
+Serrated adenoma/image/GT1815555-4-400-001.png,4
+Adenocarcinoma/image/GTxc2012962-1-400-010.png,5
+Adenocarcinoma/image/GTxc2012481-3-400-003.png,5
+Low-grade IN/image/GT1815563-1-400-001.png,2
+Polyp/image/GTXC2100763-1-400-004.png,1
+Polyp/image/GTXC2110507-1-400-007.png,1
+Low-grade IN/image/GTXC2014153-2-400-002.png,2
+Low-grade IN/image/GTxc2012983-2-400-001.png,2
+High-grade IN/image/GT2014699-1-400-002.png,3
+Low-grade IN/image/GT2014080-1-400-001.png,2
+Polyp/image/GTXC2110570-1-400-006.png,1
+Low-grade IN/image/GTXC2015383-2-400-002.png,2
+Polyp/image/GT2012286-3-400-003.png,1
+Adenocarcinoma/image/GTxc2014131-1-400-002.png,5
+Adenocarcinoma/image/GT2016827-1-400-002.png,5
+Low-grade IN/image/GTxc2014093-1-400-001.png,2
+Adenocarcinoma/image/GTxc2013512-2-400-010.png,5
+Adenocarcinoma/image/GTXC2013391-1-400-008.png,5
+Low-grade IN/image/GT2001814-2-400-001.png,2
+Low-grade IN/image/GT2014804-1-400-001.png,2
+Adenocarcinoma/image/GT2100120-3-400-001.png,5
+Low-grade IN/image/GTxc2014094-2-400-005.png,2
+Adenocarcinoma/image/GTxc2013512-2-400-005.png,5
+Adenocarcinoma/image/GTxc2013512-1-400-025.png,5
+Low-grade IN/image/GTxc2012982-1-400-010.png,2
+Adenocarcinoma/image/GTxc2012888-1-400-022.png,5
+High-grade IN/image/GT2014757-2-400-003.png,3
+Low-grade IN/image/GTxc2013486-1-400-003.png,2
+Adenocarcinoma/image/GT2100009-1-400-002.png,5
+Adenocarcinoma/image/GTxc2013512-1-400-023.png,5
+Polyp/image/GTxc2014077-1-400-006.png,1
+Low-grade IN/image/GTxc2014136-1-400-003.png,2
+Adenocarcinoma/image/GTxc2014144-4-400-005.png,5
+Low-grade IN/image/GTXC2014146-1-400-005.png,2
+Adenocarcinoma/image/GTxc2012946-2-400-003.png,5
+Adenocarcinoma/image/GTXC2015401-1-400-004.png,5
+Polyp/image/GTxc2014103-1-400-003.png,1
+Low-grade IN/image/GT2012232-3-400-001.png,2
+Low-grade IN/image/GT2016860-1-400-001.png,2
+Low-grade IN/image/GTXC2014192-2-400-008.png,2
+Normal/image/GT2100256-1-400-002.png,0
+Adenocarcinoma/image/GTxc2014144-4-400-008.png,5
+Low-grade IN/image/GTxc2012896-1-400-005.png,2
+Adenocarcinoma/image/GTxc2013965-1-400-007.png,5
+High-grade IN/image/GTXC2110540-1-400-001.png,3
+Serrated adenoma/image/GTXC2014151-2-400-005.png,4
+Low-grade IN/image/GT2016791-2-400-001.png,2
+Polyp/image/GTXC2110491-3-400-009.png,1
+Low-grade IN/image/GT2012154-1-400-006.png,2
+Adenocarcinoma/image/GTXC2013391-1-400-002.png,5
+Low-grade IN/image/GT2012400-1-400-002.png,2
+Polyp/image/GTXC2014139-2-400-003.png,1
+Polyp/image/GTXC2013066-1-400-004.png,1
+Adenocarcinoma/image/GTxc2014144-5-400-006.png,5
+Polyp/image/GTXC2110572-1-400-007.png,1
+Polyp/image/GTXC2013066-1-400-006.png,1
+Polyp/image/GT2012286-3-400-002.png,1
+Low-grade IN/image/GT2016846-2-400-002.png,2
+High-grade IN/image/GTXC2015371-1-400-001.png,3
+Adenocarcinoma/image/GT2100011-1-400-002.png,5
+Adenocarcinoma/image/GTxc2013489-1-400-003.png,5
+High-grade IN/image/GTXC2110135-3-400-004.png,3
+Low-grade IN/image/GT2012197-2-400-001.png,2
+Serrated adenoma/image/GTXC2100732-1-400-005.png,4
+Adenocarcinoma/image/GT2012358-2-400-006.png,5
+Adenocarcinoma/image/GTxc2013512-2-400-012.png,5
+Low-grade IN/image/GTXC2015343-1-400-005.png,2
+Normal/image/GT2100256-1-400-001.png,0
+Low-grade IN/image/GT2012467-1-400-006.png,2
+Low-grade IN/image/GTXC2015362-3-400-001.png,2
+Low-grade IN/image/GTxc2014165-1-400-004.png,2
+Low-grade IN/image/GTXC2100476-1-400-002.png,2
+Polyp/image/GT2013911-1-400-001.png,1
+Low-grade IN/image/GT2012197-2-400-005.png,2
+Polyp/image/GTXC2110529-3-400-003.png,1
+Adenocarcinoma/image/GTxc2012996-3-400-002.png,5
+Adenocarcinoma/image/GT2100111-1-400-002.png,5
+Adenocarcinoma/image/GTXC2015422-1-400-001.png,5
+Low-grade IN/image/GTXC2015417-1-400-002.png,2
+Polyp/image/GTXC2015335-5-400-007.png,1
+Adenocarcinoma/image/GT2016841-2-400-002.png,5
+Low-grade IN/image/GTxc2014132-1-400-002.png,2
+Polyp/image/GTxc2014077-1-400-005.png,1
+Low-grade IN/image/GTxc2013400-2-400-006.png,2
+Adenocarcinoma/image/GTxc2012996-2-400-004.png,5
+Low-grade IN/image/GT2012246-1-400-003.png,2
+Adenocarcinoma/image/GT2016770-1-400-001.png,5
+Adenocarcinoma/image/GTxc2013512-1-400-007.png,5
+High-grade IN/image/GTXC2015413-3-400-002.png,3
+Adenocarcinoma/image/GTXC2013391-1-400-006.png,5
+Adenocarcinoma/image/GT2016846-4-400-002.png,5
+Low-grade IN/image/GTXC2110195-1-400-001.png,2
+Polyp/image/GTXC2110491-4-400-001.png,1
+Adenocarcinoma/image/GTxc2012946-2-400-007.png,5
+Low-grade IN/image/GTXC2012096-2-400-003.png,2
+Polyp/image/GTXC2110491-1-400-010.png,1
+Adenocarcinoma/image/GTxc2013450-1-400-006.png,5
+Adenocarcinoma/image/GT2014662-3-400-002.png,5
+Polyp/image/GTXC2014139-2-400-002.png,1
+Polyp/image/GTXC2015381-1-400-001.png,1
+Adenocarcinoma/image/GTxc2014131-1-400-003.png,5
+Polyp/image/GT2015144-1-400-002.png,1
+Adenocarcinoma/image/GTxc2012888-1-400-013.png,5
+High-grade IN/image/GT2016780-1-400-002.png,3
+Polyp/image/GTXC2110531-1-400-006.png,1
+Adenocarcinoma/image/GT2014209-1-400-001.png,5
+Polyp/image/GT2016852-1-400-001.png,1
+Low-grade IN/image/GTXC2110125-1-400-002.png,2
+Adenocarcinoma/image/GTxc2013489-1-400-007.png,5
+Polyp/image/GTXC2100763-1-400-002.png,1
+Adenocarcinoma/image/GT2016885-3-400-003.png,5
+Polyp/image/GT2012154-2-400-002.png,1
+Adenocarcinoma/image/GT2100120-3-400-003.png,5
+Serrated adenoma/image/GTDC2102188-3-400-002.png,4
+Polyp/image/GT2012358-1-400-005.png,1
+Low-grade IN/image/GTXC2013520-1-400-004.png,2
+Adenocarcinoma/image/GT2001849-1-400-002.png,5
+High-grade IN/image/GTxc2012996-4-400-002.png,3
+Low-grade IN/image/GTxc2012982-1-400-005.png,2
+Low-grade IN/image/GTXC2014139-4-400-002.png,2
+Low-grade IN/image/GTxc2014080-1-400-008.png,2
+High-grade IN/image/GTXC2110187-1-400-001.png,3
+Adenocarcinoma/image/GTxc2012888-1-400-001.png,5
+Adenocarcinoma/image/GT2012329-1-400-004.png,5
+Low-grade IN/image/GTxc2012967-1-400-001.png,2
+Adenocarcinoma/image/GTxc2014065-2-400-004.png,5
+Adenocarcinoma/image/GTxc2013496-2-400-002.png,5
+Adenocarcinoma/image/GTxc2013496-1-400-012.png,5
+Low-grade IN/image/GTxc2012986-3-400-001.png,2
+Polyp/image/GTXC2100474-1-400-005.png,1
+Adenocarcinoma/image/GTxc2012946-2-400-011.png,5
+Adenocarcinoma/image/GT2014667-1-400-001.png,5
+Adenocarcinoma/image/GTxc2013496-4-400-007.png,5
+Low-grade IN/image/GTxc2013458-2-400-002.png,2
+Polyp/image/GTXC2014134-1-400-002.png,1
+Low-grade IN/image/GTxc2014144-1-400-005.png,2
+Adenocarcinoma/image/GTxc2013961-1-400-001.png,5
+Low-grade IN/image/GTxc2013490-1-400-001.png,2
+Adenocarcinoma/image/GTxc2012902-1-400-010.png,5
+Polyp/image/GTxc2013391-1-400-002.png,1
+Adenocarcinoma/image/GTxc2013496-3-400-004.png,5
+Polyp/image/GT2014780-1-400-002.png,1
+Adenocarcinoma/image/GTXC2015349-2-400-003.png,5
+Low-grade IN/image/GTDC2101366-1-400-002.png,2
+Adenocarcinoma/image/GTXC2015413-3-400-003.png,5
+Adenocarcinoma/image/GTXC2015422-1-400-009.png,5
+Polyp/image/GTXC2100728-1-400-006.png,1
+Adenocarcinoma/image/GT2016841-2-400-004.png,5
+Low-grade IN/image/GT2014646-1-400-001.png,2
+Polyp/image/GT2015104-1-400-001.png,1
+Polyp/image/GTXC2110529-3-400-005.png,1
+Low-grade IN/image/GTXC2012096-3-400-001.png,2
+Adenocarcinoma/image/GT2012525-1-400-003.png,5
+Low-grade IN/image/GTxc2013393-1-400-001.png,2
+Adenocarcinoma/image/GTxc2013451-1-400-006.png,5
+Polyp/image/GT2013118-2-400-001.png,1
+Normal/image/GT2012915-1-400-005.png,0
+Low-grade IN/image/GT2012275-1-400-001.png,2
+Adenocarcinoma/image/GTXC2015422-1-400-003.png,5
+Serrated adenoma/image/GTXC2014151-2-400-006.png,4
+Adenocarcinoma/image/GTXC2014153-3-400-007.png,5
+Polyp/image/GTXC2110572-1-400-005.png,1
+Low-grade IN/image/GTxc2013393-1-400-002.png,2
+Adenocarcinoma/image/GT2013132-1-400-002.png,5
+Adenocarcinoma/image/GTxc2110176-3-400-004.png,5
+High-grade IN/image/GT2014662-1-400-004.png,3
+Polyp/image/GTXC2015335-7-400-001.png,1
+High-grade IN/image/GTXC2110128-2-400-006.png,3
+Polyp/image/GTxc2110164-1-400-001.png,1
+Normal/image/GT2100256-1-400-003.png,0
+Adenocarcinoma/image/GT2012118-1-400-006.png,5
+High-grade IN/image/GT2016846-3-400-002.png,3
+Polyp/image/GT2015144-1-400-001.png,1
+Low-grade IN/image/GT2012467-1-400-003.png,2
+Polyp/image/GTXC2015349-1-400-004.png,1
+Adenocarcinoma/image/GTxc2013451-1-400-003.png,5
+Polyp/image/GT2012217-1-400-004.png,1
+Polyp/image/GTXC2013066-1-400-001.png,1
+Low-grade IN/image/GTxc2013439-1-400-004.png,2
+Low-grade IN/image/GTxc2014094-1-400-005.png,2
+Low-grade IN/image/GTxc2012468-2-400-003.png,2
+Adenocarcinoma/image/GT2001849-1-400-009.png,5
+Adenocarcinoma/image/GT2013132-1-400-001.png,5
+Adenocarcinoma/image/GTXC2014153-3-400-006.png,5
+Low-grade IN/image/GTxc2012921-1-400-004.png,2
+Low-grade IN/image/GT2016811-2-400-003.png,2
+Adenocarcinoma/image/GT2100120-3-400-007.png,5
+Polyp/image/GT2012426-2-400-005.png,1
+High-grade IN/image/GTxc2012779-4-400-003.png,3
+Low-grade IN/image/GTXC2014139-6-400-001.png,2
+Adenocarcinoma/image/GT2012324-1-400-007.png,5
+Polyp/image/GTxc2013942-1-400-005.png,1
+Adenocarcinoma/image/GT2016841-2-400-001.png,5
+Normal/image/GT2100093-1-400-001.png,0
+High-grade IN/image/GTXC2015403-1-400-002.png,3
+Adenocarcinoma/image/GT2001838-1-400-002.png,5
+Adenocarcinoma/image/GT2100120-3-400-002.png,5
+Adenocarcinoma/image/GT2012324-1-400-006.png,5
+Normal/image/GT2000000-1-400-004.png,0
+High-grade IN/image/GT2016846-3-400-003.png,3
+Adenocarcinoma/image/GTxc2012962-1-400-009.png,5

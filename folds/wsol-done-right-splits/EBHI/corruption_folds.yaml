@@ -1,0 +1,12 @@
+fold-0: source_clean
+fold-1: target_clean
+fold-2: stain_light
+fold-3: stain_heavy
+fold-4: dust
+fold-5: air_bubble
+fold-6: defocus_blur
+fold-7: motion_blur
+fold-8: gaussian_noise
+fold-9: shot_noise
+fold-10: brightness
+fold-11: contrast

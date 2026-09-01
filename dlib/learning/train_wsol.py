@@ -325,12 +325,56 @@ class Trainer(Basic):
         self.J_index = []
 
 
-        self.store_loss = []
+        #self.store_loss = []
+        #self.flipped_indices = []
+        #self.reinforce_indices = []
+        #self.entropy_all = []
+        #self.idx_to_pred = {}
+        #self.forget_info = {}
+
+
+        # ===================================================================
+        # Forget / Retain sets
+        # ===================================================================
+
+        self.forget_indices = []
+        self.forget_labels = []
+        self.forget_labels_map = {}
+
+        self.retain_indices = []
+        self.retain_labels = []
+        self.retain_labels_map = {}
+
+        # ===================================================================
+        # Target prediction / Uncertainty
+        # ===================================================================
+
+        self.idx_to_pred = {}
+        self.entropy_all = {}
+        self.probs_all = {}
         self.flipped_indices = []
         self.reinforce_indices = []
-        self.entropy_all = []
-        self.idx_to_pred = {}
+        self.stable_selected = []
+        self.stable_labels = []
+        self.all_selected = set()
+        self.assigned_labels_map = {}
+
+        # ============================================================
+        # Monitoring
+        # ============================================================
+
+        self.KL_global = 0.0
+
+        # Detailed information about D_forget
         self.forget_info = {}
+
+        # ============================================================
+        # Other training storage
+        # ============================================================
+
+        self.store_loss = []
+
+
 
         if args.entropy_models:
             self.entropy_models = args.entropy_models
@@ -1745,11 +1789,15 @@ class Trainer(Basic):
                         out = self.model(images) 
                         _, _, h, w = self.model.encoder_last_features.shape
                         interpolation_mode = 'bilinear'
-                        if std_cams is None:
-                            cams_inter = self.get_pseudo_cams_minibatch(images=images,
-                                                                    targets=pred_class)
+
+                        if self.epoch >= self.args.resample_every and self.args.loc_self_learning == True:
+                            cams_inter = self.get_pseudo_cams_minibatch(images=images,targets=pred_class)
                         else:
-                            cams_inter = std_cams
+                            if std_cams is None:
+                                cams_inter = self.get_pseudo_cams_minibatch(images=images,
+                                                                        targets=pred_class)
+                            else:
+                                cams_inter = std_cams
 
                         if self.args.low_res:
                             fcams=self.model.cams
@@ -2207,56 +2255,86 @@ class Trainer(Basic):
             if (self.epoch == 1):
                 # Static mode → one-time precomputation
 
-                self.store_master_loss = []
-                self.store_ce_flip_loss = []
-                self.store_ce_not_flip_loss = []
-                #self.loader.dataset.transform = None
+                if (self.args.dynamic_selection and self.args.esfda == True and self.args.esfda_2 == False):
+                    self.store_master_loss = []
+                    self.store_ce_flip_loss = []
+                    self.store_ce_not_flip_loss = []
+                    #self.loader.dataset.transform = None
 
-                self.pred_distribution, self.overpred_class, self.underpred_class = self.compute_prediction_bias(model=self.model,
-                            loader_notransform=self.loaders_notransform, top_k=None
-                        )
-                (
-                self.flipped_indices, 
-                self.reinforce_indices, 
-                self.idx_to_pred, 
-                self.entropy_all, 
-                self.all_selected, 
-                self.stable_selected, 
-                self.stable_labels,
-                self.probs_all,
-                self.KL_global,
-                self.assigned_labels_map,
-                self.forget_info                
-                ) = self.select_flippable_indices_entropy(model=self.model,
-                                loader=self.loaders_notransform,
-                                select_imgs_ratio=self.args.esfda_select_imgs_ratio,
-                                random_select_ratio=self.args.random_select_ratio,
-                                reverse_imgs=self.args.esfda_reverse_imgs,
-                                entropy_threshold=self.args.entropy_threshold,
-                                retain_all_others=self.args.retain_all_others
+                    self.pred_distribution, self.overpred_class, self.underpred_class = self.compute_prediction_bias(model=self.model,
+                                loader_notransform=self.loaders_notransform, top_k=None
                             )
+                    (
+                    self.flipped_indices, 
+                    self.reinforce_indices, 
+                    self.idx_to_pred, 
+                    self.entropy_all, 
+                    self.all_selected, 
+                    self.stable_selected, 
+                    self.stable_labels,
+                    self.probs_all,
+                    self.KL_global,
+                    self.assigned_labels_map,
+                    self.forget_info                
+                    ) = self.select_flippable_indices_entropy(model=self.model,
+                                    loader=self.loaders_notransform,
+                                    select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+                                    random_select_ratio=self.args.random_select_ratio,
+                                    reverse_imgs=self.args.esfda_reverse_imgs,
+                                    entropy_threshold=self.args.entropy_threshold,
+                                    retain_all_others=self.args.retain_all_others
+                                )
 
 
-                print(f"[Static] Sampling done once before training.")
+                    print(f"[Dynamic] Sampling done once before training.")
 
-                # ------------------------------------------------------------
-                #  BUILD RETAIN SETS : overpred and underpred
-                # ------------------------------------------------------------
+                    # ------------------------------------------------------------
+                    #  BUILD RETAIN SETS : overpred and underpred
+                    # ------------------------------------------------------------
 
-                # 1) Xretain = all images not in Dforget
-                all_seen = list(self.idx_to_pred.keys())
+                    # 1) Xretain = all images not in Dforget
+                    all_seen = list(self.idx_to_pred.keys())
 
-                self.Xretain = [idx for idx in all_seen if idx not in self.flipped_indices]
+                    self.Xretain = [idx for idx in all_seen if idx not in self.flipped_indices]
 
-                # 2) Xretain_overpred = retain images whose predicted class is overpred_class
-                over = set([cls for cls, _ in self.overpred_class])      
-                self.retain_overpred = [idx for idx in self.Xretain if self.idx_to_pred[idx] in over]
+                    # 2) Xretain_overpred = retain images whose predicted class is overpred_class
+                    over = set([cls for cls, _ in self.overpred_class])      
+                    self.retain_overpred = [idx for idx in self.Xretain if self.idx_to_pred[idx] in over]
 
-                # 3) Xretain_underpred = retain images whose predicted class is underpred_class
-                under = set([cls for cls, _ in self.underpred_class])  
-                self.retain_underpred = [idx for idx in self.Xretain if self.idx_to_pred[idx] in under]
+                    # 3) Xretain_underpred = retain images whose predicted class is underpred_class
+                    under = set([cls for cls, _ in self.underpred_class])  
+                    self.retain_underpred = [idx for idx in self.Xretain if self.idx_to_pred[idx] in under]
 
-            elif (self.args.dynamic_selection and self.epoch % self.args.resample_every == 0):
+                elif (self.args.dynamic_selection and self.args.esfda_2 == True):
+                    (
+                        self.flipped_indices,
+                        self.reinforce_indices,
+                        self.idx_to_pred,
+                        self.entropy_all,
+                        self.all_selected,
+                        self.stable_selected,
+                        self.stable_labels,
+                        self.probs_all,
+                        self.KL_global,
+                        self.assigned_labels_map,
+                        self.forget_info
+                    ) = self.select_flippable_indices_entropy_global(
+                        model=self.model,
+                        loader=self.loaders_notransform,
+                        select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+                        random_select_ratio=self.args.random_select_ratio,
+                        entropy_threshold=self.args.entropy_threshold,
+                        normalize_entropy=True,
+                    )
+
+                    print(
+                        f"[Dynamic] Global entropy resampling "
+                        f"Dforget / Dretain at epoch {self.epoch}."
+                    )
+
+
+
+            elif (self.args.dynamic_selection and self.epoch % self.args.resample_every == 0 and self.args.esfda_2 == False):
                 # Dynamic mode → resample every N epochs
                 self.pred_distribution, self.overpred_class, self.underpred_class = self.compute_prediction_bias(model=self.model,
                             loader_notransform=self.loaders_notransform, top_k=None
@@ -2286,6 +2364,33 @@ class Trainer(Basic):
 
 
 
+            elif (self.args.dynamic_selection and self.epoch % self.args.resample_every == 0 and self.args.esfda_2 == True):
+                (
+                    self.flipped_indices,
+                    self.reinforce_indices,
+                    self.idx_to_pred,
+                    self.entropy_all,
+                    self.all_selected,
+                    self.stable_selected,
+                    self.stable_labels,
+                    self.probs_all,
+                    self.KL_global,
+                    self.assigned_labels_map,
+                    self.forget_info
+                ) = self.select_flippable_indices_entropy_global(
+                    model=self.model,
+                    loader=self.loaders_notransform,
+                    select_imgs_ratio=self.args.esfda_select_imgs_ratio,
+                    random_select_ratio=self.args.random_select_ratio,
+                    entropy_threshold=self.args.entropy_threshold,
+                    normalize_entropy=True,
+                )
+
+                print(
+                    f"[Dynamic] Global entropy resampling "
+                    f"Dforget / Dretain at epoch {self.epoch}."
+                )
+
 
     def on_epoch_start(self):
         torch.cuda.empty_cache()
@@ -2296,6 +2401,10 @@ class Trainer(Basic):
 
         if self.args.sf_uda:
             self._sf_uda_before_epoch_process()
+
+            if self.args.loc_self_learning:
+                self.classifier.load_state_dict(self.model.state_dict())
+                self.classifier.eval()
 
         #     if self.args.esfda:
         #         if self.args.esfda_select_imgs:
@@ -2782,6 +2891,7 @@ class Trainer(Basic):
         forget_info = {
             idx: {
                 "pred_before": idx_to_pred[idx],
+                "forget_label": idx_to_pred[idx],
                 "entropy": entropy_all[idx],
                 "top1": idx_to_top1[idx],
                 "top2": idx_to_top2[idx],
@@ -2791,8 +2901,7 @@ class Trainer(Basic):
 
 
 
-        # --------------------------------------------------------
-        # Create an ordered list of forget indices (deterministic)
+        # forget indices (deterministic)
         # --------------------------------------------------------
         selected_flippable_list = sorted(selected_flippable)
 
@@ -2960,6 +3069,1592 @@ class Trainer(Basic):
             forget_info                 
         )
 
+
+    # @torch.no_grad()
+    # def select_flippable_indices_entropy_global(
+    #     self,
+    #     model,
+    #     loader,
+    #     select_imgs_ratio=0.1,
+    #     random_select_ratio=1.0,
+    #     entropy_threshold=None,
+    #     normalize_entropy=True,
+    # ):
+    #     """
+    #     Global entropy-based selection of forget / retain target samples.
+
+    #     IMPORTANT:
+    #     ----------
+    #     Contrary to the previous version, this function does NOT select
+    #     samples according to an over-predicted / dominant class.
+
+    #     ALL target samples are considered.
+
+    #     D_forget is constructed using either:
+
+    #         1) Top-rho highest entropy samples:
+    #             entropy_threshold = None
+    #             select_imgs_ratio = rho
+
+    #         2) Fixed entropy threshold:
+    #             entropy_threshold = H_limit
+
+    #     For each forgotten sample, we store the CURRENT predicted class.
+    #     This is the class that must be suppressed during forgetting:
+
+    #         L_forget = -log(1 - p(y_forget | x))
+
+    #     Therefore, for K classes, the model is free to move probability
+    #     mass toward ANY of the K-1 remaining classes.
+
+    #     The retain set is simply:
+
+    #         D_retain = D_target \\ D_forget
+
+    #     and its pseudo-labels correspond to the current predictions.
+
+    #     Parameters
+    #     ----------
+    #     model:
+    #         Current model used to compute target predictions.
+
+    #     loader:
+    #         Dictionary containing loader['train'].
+
+    #     select_imgs_ratio:
+    #         Fraction of the complete target dataset selected for forgetting
+    #         when entropy_threshold is None.
+
+    #         Example:
+    #             select_imgs_ratio=0.2
+    #             -> forget globally the 20% highest entropy samples.
+
+    #     random_select_ratio:
+    #         Optional random subsampling after uncertainty selection.
+    #         Usually keep 1.0.
+
+    #     entropy_threshold:
+    #         If not None, overrides select_imgs_ratio.
+
+    #         Example:
+    #             entropy_threshold=0.7
+    #             -> forget every sample with normalized entropy >= 0.7.
+
+    #     normalize_entropy:
+    #         If True:
+    #             H(x) = - sum_k p_k log(p_k) / log(K)
+
+    #         Therefore:
+    #             H(x) in [0, 1]
+
+    #         Recommended for comparison between binary and multi-class
+    #         experiments.
+
+    #     Returns
+    #     -------
+    #     forget_indices:
+    #         Ordered list of indices belonging to D_forget.
+
+    #     forget_labels:
+    #         Predicted class to suppress for each sample in forget_indices.
+    #         IMPORTANT: aligned with forget_indices.
+
+    #     forget_labels_map:
+    #         Dictionary:
+    #             idx -> class to forget
+
+    #         Useful during training if samples are retrieved by dataset index.
+
+    #     retain_indices:
+    #         Ordered list of indices belonging to D_retain.
+
+    #     retain_labels:
+    #         Current pseudo-labels for retained samples.
+    #         Aligned with retain_indices.
+
+    #     retain_labels_map:
+    #         Dictionary:
+    #             idx -> pseudo-label to retain
+
+    #     idx_to_pred:
+    #         Current prediction of every target sample.
+
+    #     entropy_all:
+    #         Entropy of every target sample.
+
+    #     probs_all:
+    #         Probability vector of every target sample.
+
+    #     KL_global:
+    #         KL(U || p_hat), used only for monitoring prediction collapse.
+
+    #     forget_info:
+    #         Detailed information about forgotten samples for analysis.
+    #     """
+
+    #     # ============================================================
+    #     # Sanity checks
+    #     # ============================================================
+
+    #     if entropy_threshold is None:
+    #         if select_imgs_ratio < 0.0 or select_imgs_ratio > 1.0:
+    #             raise ValueError(
+    #                 f"select_imgs_ratio must be in [0,1], "
+    #                 f"got {select_imgs_ratio}"
+    #             )
+
+    #     if random_select_ratio < 0.0 or random_select_ratio > 1.0:
+    #         raise ValueError(
+    #             f"random_select_ratio must be in [0,1], "
+    #             f"got {random_select_ratio}"
+    #         )
+
+    #     if (
+    #         normalize_entropy
+    #         and entropy_threshold is not None
+    #         and (
+    #             entropy_threshold < 0.0
+    #             or entropy_threshold > 1.0
+    #         )
+    #     ):
+    #         raise ValueError(
+    #             "When normalize_entropy=True, "
+    #             "entropy_threshold should be in [0,1]. "
+    #             f"Got {entropy_threshold}"
+    #         )
+
+    #     # ============================================================
+    #     # Model / loader
+    #     # ============================================================
+
+    #     model.eval()
+
+    #     target_loader = loader["train"]
+
+    #     K = self.args.num_classes
+
+    #     # ============================================================
+    #     # Storage
+    #     # ============================================================
+
+    #     # Global list:
+    #     #     [(idx, entropy), ...]
+    #     #
+    #     # IMPORTANT:
+    #     # ALL target samples go into this list.
+    #     entropy_list = []
+
+    #     # idx -> entropy
+    #     entropy_all = {}
+
+    #     # idx -> predicted class
+    #     idx_to_pred = {}
+
+    #     # idx -> GT
+    #     # ONLY used for monitoring / analysis.
+    #     # Never used for selecting D_forget.
+    #     idx_to_target = {}
+
+    #     # idx -> probability vector
+    #     probs_all = {}
+
+    #     # ============================================================
+    #     # Monitoring of prediction distribution
+    #     # ============================================================
+
+    #     pred_count = torch.zeros(
+    #         K,
+    #         dtype=torch.float32
+    #     )
+
+    #     total_samples = 0
+
+    #     # ============================================================
+    #     # PASS THROUGH COMPLETE TARGET DATASET
+    #     # ============================================================
+
+    #     for batch_idx, (
+    #         images,
+    #         targets,
+    #         p_glabel,
+    #         index,
+    #         raw_imgs,
+    #         std_cams,
+    #         masks,
+    #         views,
+    #         _
+    #     ) in tqdm(
+    #         enumerate(target_loader),
+    #         ncols=constants.NCOLS,
+    #         total=len(target_loader)
+    #     ):
+
+    #         # --------------------------------------------------------
+    #         # Forward
+    #         # --------------------------------------------------------
+
+    #         images = images.cuda(
+    #             self.args.c_cudaid
+    #         )
+
+    #         logits = model(images)
+
+    #         probs = F.softmax(
+    #             logits,
+    #             dim=1
+    #         )
+
+    #         preds = probs.argmax(
+    #             dim=1
+    #         )
+
+    #         # --------------------------------------------------------
+    #         # Update prediction distribution
+    #         # --------------------------------------------------------
+
+    #         for c in preds:
+    #             pred_count[c.item()] += 1
+
+    #         total_samples += preds.size(0)
+
+    #         # Number of classes returned by network
+    #         C = probs.size(1)
+
+    #         # --------------------------------------------------------
+    #         # Predictive entropy
+    #         #
+    #         # H(p) = -sum p log(p)
+    #         # --------------------------------------------------------
+
+    #         entropy = -torch.sum(
+    #             probs * torch.log(
+    #                 probs + 1e-6
+    #             ),
+    #             dim=1
+    #         )
+
+    #         # --------------------------------------------------------
+    #         # Normalize entropy:
+    #         #
+    #         # H_norm = H / log(K)
+    #         #
+    #         # -> H_norm in [0,1]
+    #         # --------------------------------------------------------
+
+    #         if normalize_entropy and C > 1:
+
+    #             entropy = (
+    #                 entropy
+    #                 / np.log(C)
+    #             )
+
+    #         # ========================================================
+    #         # Store information sample by sample
+    #         # ========================================================
+
+    #         for i in range(
+    #             images.size(0)
+    #         ):
+
+    #             idx = index[i]
+
+    #             pred = int(
+    #                 preds[i].item()
+    #             )
+
+    #             gt = int(
+    #                 targets[i].item()
+    #             )
+
+    #             ent = float(
+    #                 entropy[i].item()
+    #             )
+
+    #             # ----------------------------------------------------
+    #             # Store information
+    #             # ----------------------------------------------------
+
+    #             idx_to_pred[idx] = pred
+
+    #             idx_to_target[idx] = gt
+
+    #             entropy_all[idx] = ent
+
+    #             probs_all[idx] = (
+    #                 probs[i]
+    #                 .detach()
+    #                 .cpu()
+    #             )
+
+    #             # ====================================================
+    #             # CRITICAL DIFFERENCE WITH OLD VERSION
+    #             #
+    #             # NO:
+    #             #
+    #             # if pred in freeze_classes:
+    #             #
+    #             # ALL TARGET IMAGES ARE CANDIDATES.
+    #             # ====================================================
+
+    #             entropy_list.append(
+    #                 (
+    #                     idx,
+    #                     ent
+    #                 )
+    #             )
+
+    #     # ============================================================
+    #     # Check dataset
+    #     # ============================================================
+
+    #     if total_samples == 0:
+    #         raise RuntimeError(
+    #             "No target samples were found in loader['train']."
+    #         )
+
+    #     # ============================================================
+    #     # Compute prediction distribution p_hat
+    #     # ============================================================
+
+    #     p_hat = (
+    #         pred_count
+    #         / float(total_samples)
+    #     )
+
+    #     # Uniform prior
+    #     U = torch.ones(
+    #         K,
+    #         dtype=torch.float32
+    #     ) / K
+
+    #     # ------------------------------------------------------------
+    #     # KL(U || p_hat)
+    #     #
+    #     # Monitoring only.
+    #     # NOT used for sample selection.
+    #     # ------------------------------------------------------------
+
+    #     KL_global = torch.sum(
+    #         U * (
+    #             torch.log(
+    #                 U + 1e-12
+    #             )
+    #             -
+    #             torch.log(
+    #                 p_hat + 1e-12
+    #             )
+    #         )
+    #     )
+
+    #     self.KL_global = float(
+    #         KL_global.item()
+    #     )
+
+    #     # ============================================================
+    #     # Sort ALL TARGET samples by uncertainty
+    #     #
+    #     # highest entropy first
+    #     # ============================================================
+
+    #     entropy_list.sort(
+    #         key=lambda x: x[1],
+    #         reverse=True
+    #     )
+
+    #     # ============================================================
+    #     # Construct initial D_forget
+    #     # ============================================================
+
+    #     # ------------------------------------------------------------
+    #     # OPTION A
+    #     #
+    #     # Fixed entropy threshold
+    #     #
+    #     # D_F = {x : H(x) >= H_limit}
+    #     # ------------------------------------------------------------
+
+    #     if entropy_threshold is not None:
+
+    #         preselected_indices = [
+    #             (
+    #                 idx,
+    #                 ent
+    #             )
+    #             for idx, ent
+    #             in entropy_list
+    #             if ent >= entropy_threshold
+    #         ]
+
+    #         selection_description = (
+    #             f"H >= {entropy_threshold}"
+    #         )
+
+    #         if len(
+    #             preselected_indices
+    #         ) == 0:
+
+    #             print(
+    #                 "[WARN] No target sample has entropy "
+    #                 f">= {entropy_threshold}"
+    #             )
+
+    #     # ------------------------------------------------------------
+    #     # OPTION B
+    #     #
+    #     # Global Top-rho%
+    #     #
+    #     # D_F = Top-rho H(x)
+    #     # ------------------------------------------------------------
+
+    #     else:
+
+    #         n_target = len(
+    #             entropy_list
+    #         )
+
+    #         n_select = int(
+    #             n_target
+    #             * select_imgs_ratio
+    #         )
+
+    #         # If rho > 0 but dataset is very small,
+    #         # select at least one sample.
+    #         if (
+    #             select_imgs_ratio > 0.0
+    #             and n_target > 0
+    #             and n_select == 0
+    #         ):
+    #             n_select = 1
+
+    #         preselected_indices = (
+    #             entropy_list[:n_select]
+    #         )
+
+    #         selection_description = (
+    #             f"Top "
+    #             f"{100 * select_imgs_ratio:.2f}% entropy"
+    #         )
+
+    #     # ============================================================
+    #     # Optional random sub-sampling
+    #     #
+    #     # Normally:
+    #     #     random_select_ratio = 1.0
+    #     #
+    #     # so this does nothing.
+    #     # ============================================================
+
+    #     py_random.seed(
+    #         self.seed
+    #     )
+
+    #     if (
+    #         len(preselected_indices) > 0
+    #         and random_select_ratio < 1.0
+    #     ):
+
+    #         final_n = int(
+    #             len(preselected_indices)
+    #             * random_select_ratio
+    #         )
+
+    #         if (
+    #             random_select_ratio > 0
+    #             and final_n == 0
+    #         ):
+    #             final_n = 1
+
+    #         final_n = min(
+    #             final_n,
+    #             len(preselected_indices)
+    #         )
+
+    #         if final_n > 0:
+
+    #             selected_indices = (
+    #                 py_random.sample(
+    #                     preselected_indices,
+    #                     final_n
+    #                 )
+    #             )
+
+    #         else:
+
+    #             selected_indices = []
+
+    #     else:
+
+    #         selected_indices = (
+    #             preselected_indices
+    #         )
+
+    #     # ============================================================
+    #     # D_FORGET
+    #     # ============================================================
+
+    #     selected_flippable = set(
+    #         idx
+    #         for idx, _
+    #         in selected_indices
+    #     )
+
+    #     # ------------------------------------------------------------
+    #     # IMPORTANT:
+    #     #
+    #     # Use an ordered list so that:
+    #     #
+    #     # forget_indices[j]
+    #     # corresponds exactly to
+    #     # forget_labels[j]
+    #     # ------------------------------------------------------------
+
+    #     forget_indices = sorted(
+    #         selected_flippable
+    #     )
+
+    #     # ============================================================
+    #     # LABEL TO FORGET
+    #     #
+    #     # This is NOT top-2.
+    #     #
+    #     # This is the CURRENT top-1 prediction.
+    #     #
+    #     # Example K=6:
+    #     #
+    #     # p = [0.10, 0.15, 0.08, 0.40, 0.17, 0.10]
+    #     #
+    #     # forget_label = 3
+    #     #
+    #     # The forgetting loss will suppress class 3.
+    #     # ============================================================
+
+    #     forget_labels = [
+    #         idx_to_pred[idx]
+    #         for idx in forget_indices
+    #     ]
+
+    #     # ------------------------------------------------------------
+    #     # Dictionary version
+    #     #
+    #     # Recommended during training:
+    #     #
+    #     # forget_label = forget_labels_map[idx]
+    #     # ------------------------------------------------------------
+
+    #     forget_labels_map = {
+    #         idx: idx_to_pred[idx]
+    #         for idx in forget_indices
+    #     }
+
+    #     # ============================================================
+    #     # D_RETAIN
+    #     #
+    #     # Simply complement of D_forget.
+    #     #
+    #     # D_R = D_T \ D_F
+    #     # ============================================================
+
+    #     all_indices = list(
+    #         idx_to_pred.keys()
+    #     )
+
+    #     retain_indices = sorted([
+    #         idx
+    #         for idx in all_indices
+    #         if idx not in selected_flippable
+    #     ])
+
+    #     # ------------------------------------------------------------
+    #     # Retain pseudo-labels
+    #     #
+    #     # Keep the CURRENT prediction.
+    #     # ------------------------------------------------------------
+
+    #     retain_labels = [
+    #         idx_to_pred[idx]
+    #         for idx in retain_indices
+    #     ]
+
+    #     retain_labels_map = {
+    #         idx: idx_to_pred[idx]
+    #         for idx in retain_indices
+    #     }
+
+    #     # ============================================================
+    #     # Forget information
+    #     #
+    #     # Useful for:
+    #     #   - before / after analysis
+    #     #   - entropy analysis
+    #     #   - class transitions
+    #     #   - debugging multi-class experiments
+    #     # ============================================================
+
+    #     forget_info = {}
+
+    #     for idx in forget_indices:
+
+    #         forget_info[idx] = {
+
+    #             # Prediction before forgetting
+    #             "pred_before":
+    #                 idx_to_pred[idx],
+
+    #             # Explicit class that will be suppressed
+    #             "forget_label":
+    #                 idx_to_pred[idx],
+
+    #             # Uncertainty used for selection
+    #             "entropy":
+    #                 entropy_all[idx],
+
+    #             # Complete probability vector
+    #             "probs_before":
+    #                 probs_all[idx],
+
+    #             # GT ONLY FOR ANALYSIS
+    #             "target":
+    #                 idx_to_target[idx],
+    #         }
+
+    #     # ============================================================
+    #     # MONITORING:
+    #     #
+    #     # Accuracy BEFORE forgetting
+    #     #
+    #     # GT is NOT used by the algorithm.
+    #     # ============================================================
+
+    #     forget_correct = sum(
+    #         1
+    #         for idx in forget_indices
+    #         if (
+    #             idx_to_pred[idx]
+    #             == idx_to_target[idx]
+    #         )
+    #     )
+
+    #     forget_total = len(
+    #         forget_indices
+    #     )
+
+    #     forget_acc_before = (
+    #         forget_correct
+    #         / forget_total
+    #         if forget_total > 0
+    #         else 0.0
+    #     )
+
+    #     # ------------------------------------------------------------
+    #     # Retain accuracy
+    #     # ------------------------------------------------------------
+
+    #     retain_correct = sum(
+    #         1
+    #         for idx in retain_indices
+    #         if (
+    #             idx_to_pred[idx]
+    #             == idx_to_target[idx]
+    #         )
+    #     )
+
+    #     retain_total = len(
+    #         retain_indices
+    #     )
+
+    #     retain_acc = (
+    #         retain_correct
+    #         / retain_total
+    #         if retain_total > 0
+    #         else 0.0
+    #     )
+
+    #     # ============================================================
+    #     # Additional uncertainty statistics
+    #     # ============================================================
+
+    #     if forget_total > 0:
+
+    #         forget_entropies = [
+    #             entropy_all[idx]
+    #             for idx in forget_indices
+    #         ]
+
+    #         mean_forget_entropy = float(
+    #             np.mean(
+    #                 forget_entropies
+    #             )
+    #         )
+
+    #         min_forget_entropy = float(
+    #             np.min(
+    #                 forget_entropies
+    #             )
+    #         )
+
+    #         max_forget_entropy = float(
+    #             np.max(
+    #                 forget_entropies
+    #             )
+    #         )
+
+    #     else:
+
+    #         mean_forget_entropy = 0.0
+    #         min_forget_entropy = 0.0
+    #         max_forget_entropy = 0.0
+
+    #     # ------------------------------------------------------------
+    #     # Retain entropy statistics
+    #     # ------------------------------------------------------------
+
+    #     if retain_total > 0:
+
+    #         retain_entropies = [
+    #             entropy_all[idx]
+    #             for idx in retain_indices
+    #         ]
+
+    #         mean_retain_entropy = float(
+    #             np.mean(
+    #                 retain_entropies
+    #             )
+    #         )
+
+    #     else:
+
+    #         mean_retain_entropy = 0.0
+
+    #     # ============================================================
+    #     # Monitoring dictionary
+    #     # ============================================================
+
+    #     results = {
+
+    #         "epoch":
+    #             self.epoch,
+
+    #         "selection":
+    #             selection_description,
+
+    #         "n_target":
+    #             total_samples,
+
+    #         "n_forget":
+    #             forget_total,
+
+    #         "n_retain":
+    #             retain_total,
+
+    #         "forget_acc_before":
+    #             forget_acc_before,
+
+    #         "retain_acc":
+    #             retain_acc,
+
+    #         "mean_forget_entropy":
+    #             mean_forget_entropy,
+
+    #         "mean_retain_entropy":
+    #             mean_retain_entropy,
+
+    #         "KL_global":
+    #             self.KL_global,
+    #     }
+
+    #     # ============================================================
+    #     # Save monitoring TXT
+    #     # ============================================================
+
+    #     out_txt = os.path.join(
+    #         self.args.outd,
+    #         "results_unlearning_acc_global.txt"
+    #     )
+
+    #     with open(
+    #         out_txt,
+    #         "a"
+    #     ) as f:
+
+    #         f.write(
+    #             f"Epoch {self.epoch}\n"
+    #         )
+
+    #         f.write(
+    #             f"Selection : "
+    #             f"{selection_description}\n"
+    #         )
+
+    #         f.write(
+    #             f"Nb target : "
+    #             f"{total_samples}\n"
+    #         )
+
+    #         f.write(
+    #             f"Nb forget : "
+    #             f"{forget_total}\n"
+    #         )
+
+    #         f.write(
+    #             f"Forget acc BEFORE : "
+    #             f"{forget_acc_before:.4f}\n"
+    #         )
+
+    #         f.write(
+    #             f"Mean forget entropy : "
+    #             f"{mean_forget_entropy:.4f}\n"
+    #         )
+
+    #         f.write(
+    #             f"Min forget entropy : "
+    #             f"{min_forget_entropy:.4f}\n"
+    #         )
+
+    #         f.write(
+    #             f"Max forget entropy : "
+    #             f"{max_forget_entropy:.4f}\n"
+    #         )
+
+    #         f.write(
+    #             f"Nb retain : "
+    #             f"{retain_total}\n"
+    #         )
+
+    #         f.write(
+    #             f"Retain acc : "
+    #             f"{retain_acc:.4f}\n"
+    #         )
+
+    #         f.write(
+    #             f"Mean retain entropy : "
+    #             f"{mean_retain_entropy:.4f}\n"
+    #         )
+
+    #         f.write(
+    #             f"KL(U || p_hat) : "
+    #             f"{self.KL_global:.6f}\n"
+    #         )
+
+    #         f.write("\n")
+
+    #     # ============================================================
+    #     # Save history PKL
+    #     # ============================================================
+
+    #     out_pkl = os.path.join(
+    #         self.args.outd,
+    #         "results_unlearning_acc_global.pkl"
+    #     )
+
+    #     if os.path.exists(
+    #         out_pkl
+    #     ):
+
+    #         with open(
+    #             out_pkl,
+    #             "rb"
+    #         ) as f:
+
+    #             history = pkl.load(f)
+
+    #     else:
+
+    #         history = []
+
+    #     history.append(
+    #         results
+    #     )
+
+    #     with open(
+    #         out_pkl,
+    #         "wb"
+    #     ) as f:
+
+    #         pkl.dump(
+    #             history,
+    #             f
+    #         )
+
+    #     # ============================================================
+    #     # Debug / console
+    #     # ============================================================
+
+    #     print(
+    #         "\n"
+    #         "=========================================================="
+    #     )
+
+    #     print(
+    #         "[GLOBAL ENTROPY SELECTION]"
+    #     )
+
+    #     print(
+    #         f"Selection strategy : "
+    #         f"{selection_description}"
+    #     )
+
+    #     print(
+    #         f"Total target       : "
+    #         f"{total_samples}"
+    #     )
+
+    #     print(
+    #         f"Forget             : "
+    #         f"{forget_total}"
+    #     )
+
+    #     print(
+    #         f"Retain             : "
+    #         f"{retain_total}"
+    #     )
+
+    #     print(
+    #         f"Forget acc BEFORE  : "
+    #         f"{forget_acc_before:.4f}"
+    #     )
+
+    #     print(
+    #         f"Retain acc         : "
+    #         f"{retain_acc:.4f}"
+    #     )
+
+    #     print(
+    #         f"Forget H mean      : "
+    #         f"{mean_forget_entropy:.4f}"
+    #     )
+
+    #     print(
+    #         f"Retain H mean      : "
+    #         f"{mean_retain_entropy:.4f}"
+    #     )
+
+    #     print(
+    #         f"KL(U || p_hat)     : "
+    #         f"{self.KL_global:.6f}"
+    #     )
+
+    #     print(
+    #         "=========================================================="
+    #         "\n"
+    #     )
+
+    #     # ============================================================
+    #     # RETURN
+    #     # ============================================================
+    #     #
+    #     # Main objects needed during training:
+    #     #
+    #     # forget_indices
+    #     # forget_labels
+    #     # forget_labels_map
+    #     #
+    #     # retain_indices
+    #     # retain_labels
+    #     # retain_labels_map
+    #     #
+    #     # ============================================================
+
+    #     return (
+    #         forget_indices,       # 0 - ordered D_forget indices
+
+    #         forget_labels,        # 1 - class to suppress,
+    #                             #     aligned with forget_indices
+
+    #         forget_labels_map,    # 2 - idx -> class to suppress
+
+    #         retain_indices,       # 3 - ordered D_retain indices
+
+    #         retain_labels,        # 4 - retained pseudo-labels,
+    #                             #     aligned with retain_indices
+
+    #         retain_labels_map,    # 5 - idx -> retained pseudo-label
+
+    #         idx_to_pred,          # 6 - prediction of every target sample
+
+    #         entropy_all,          # 7 - entropy of every target sample
+
+    #         probs_all,            # 8 - probability vector of every sample
+
+    #         KL_global,            # 9 - monitoring
+
+    #         forget_info,          # 10 - detailed forget-set information
+    #     )
+
+    @torch.no_grad()
+    def select_flippable_indices_entropy_global(
+        self,
+        model,
+        loader,
+        select_imgs_ratio=0.1,
+        random_select_ratio=1.0,
+        entropy_threshold=None,
+        normalize_entropy=True,
+    ):
+        """
+        Global entropy-based selection of forget/retain samples.
+
+        Unlike the original class-dependent version, this function does NOT
+        identify over-predicted classes and does NOT use any class-prior
+        assumption for selecting D_forget.
+
+        D_forget:
+            - top select_imgs_ratio highest-entropy target samples, OR
+            - all samples with entropy >= entropy_threshold.
+
+        D_retain:
+            - all target samples not selected in D_forget.
+
+        Args:
+            model:
+                Current target model.
+
+            loader:
+                Dictionary containing loader['train'].
+
+            select_imgs_ratio:
+                Fraction of the whole target training set selected as D_forget
+                when entropy_threshold is None.
+
+            random_select_ratio:
+                Optional deterministic random sub-sampling of the initially
+                selected high-entropy samples.
+
+            entropy_threshold:
+                If not None, select every image whose entropy is >= threshold.
+                Overrides select_imgs_ratio.
+
+            normalize_entropy:
+                If True:
+                    H(p) = -sum_k p_k log(p_k) / log(K)
+                so entropy lies approximately in [0, 1].
+
+                Recommended for multi-class experiments because the entropy
+                scale then does not depend on K.
+
+        Returns:
+            selected_flippable:
+                set of indices selected for forgetting.
+
+            reinforce_indices:
+                empty set, kept for backward compatibility.
+
+            idx_to_pred:
+                idx -> current top-1 predicted class.
+
+            entropy_all:
+                idx -> entropy.
+
+            flippable_subset:
+                same as selected_flippable.
+
+            stable_selected:
+                all indices not belonging to D_forget.
+
+            stable_labels:
+                current predicted labels of retained samples.
+
+            probs_all:
+                idx -> probability vector.
+
+            KL_global:
+                KL(U || p_hat), kept ONLY for backward compatibility /
+                monitoring. It is NOT used for sample selection.
+
+            assigned_labels_map:
+                forgotten samples -> top-2 prediction
+                retained samples  -> top-1 prediction
+
+                This is kept for compatibility with the previous implementation.
+
+            forget_info:
+                information associated with every forgotten sample.
+        """
+
+        model.eval()
+        loader = loader["train"]
+
+        # ============================================================
+        # Storage
+        # ============================================================
+        entropy_list = []
+
+        entropy_all = {}
+        idx_to_pred = {}
+        idx_to_target = {}
+
+        idx_to_top1 = {}
+        idx_to_top2 = {}
+
+        probs_all = {}
+
+        # ============================================================
+        # Global prediction statistics
+        # Only maintained for backward compatibility / monitoring.
+        # They are NOT involved in D_forget selection.
+        # ============================================================
+        K = self.args.num_classes
+
+        pred_count = torch.zeros(K, dtype=torch.float32)
+        total_samples = 0
+
+        # ============================================================
+        # PASS 1
+        # Compute predictions and entropy for ALL target samples
+        # ============================================================
+        for batch_idx, (
+            images,
+            targets,
+            p_glabel,
+            index,
+            raw_imgs,
+            std_cams,
+            masks,
+            views,
+            _
+        ) in tqdm(
+            enumerate(loader),
+            ncols=constants.NCOLS,
+            total=len(loader)
+        ):
+
+            images = images.cuda(self.args.c_cudaid)
+
+            logits = model(images)
+            probs = F.softmax(logits, dim=1)
+
+            preds = probs.argmax(dim=1)
+
+            C = probs.size(1)
+
+            # --------------------------------------------------------
+            # Global predicted-class distribution
+            # Monitoring only
+            # --------------------------------------------------------
+            for c in preds:
+                pred_count[c.item()] += 1
+
+            total_samples += preds.size(0)
+
+            # --------------------------------------------------------
+            # Top-1 / Top-2
+            # --------------------------------------------------------
+            k = min(2, C)
+
+            _, topk_idx = probs.topk(
+                k=k,
+                dim=1,
+                largest=True,
+                sorted=True
+            )
+
+            # --------------------------------------------------------
+            # Entropy
+            #
+            # H = -sum p log p
+            #
+            # Normalized:
+            #
+            # H_norm = H / log(K)
+            #
+            # => approximately [0, 1]
+            # --------------------------------------------------------
+            entropy = -torch.sum(
+                probs * torch.log(probs + 1e-12),
+                dim=1
+            )
+
+            if normalize_entropy and C > 1:
+                entropy = entropy / np.log(C)
+
+            # --------------------------------------------------------
+            # Store everything sample-wise
+            # --------------------------------------------------------
+            for i in range(images.size(0)):
+
+                idx = index[i]
+
+                pred = int(preds[i].item())
+                gt = int(targets[i].item())
+                ent = float(entropy[i].item())
+
+                idx_to_pred[idx] = pred
+                idx_to_target[idx] = gt
+
+                entropy_all[idx] = ent
+
+                probs_all[idx] = probs[i].detach().cpu()
+
+                top1 = int(topk_idx[i, 0].item())
+
+                if C >= 2:
+                    top2 = int(topk_idx[i, 1].item())
+                else:
+                    top2 = top1
+
+                idx_to_top1[idx] = top1
+                idx_to_top2[idx] = top2
+
+                # ====================================================
+                # KEY DIFFERENCE WITH ORIGINAL METHOD
+                #
+                # EVERY IMAGE is a candidate.
+                #
+                # No:
+                #     freeze_classes
+                #     overpred_class
+                #     predicted-class filtering
+                # ====================================================
+                entropy_list.append((idx, ent))
+
+        # ============================================================
+        # Optional diagnostic KL
+        #
+        # IMPORTANT:
+        # This quantity is NOT used anywhere for selecting D_forget.
+        # It is maintained only so the return signature remains
+        # identical to the previous implementation.
+        # ============================================================
+        if total_samples > 0:
+
+            p_hat = pred_count / float(total_samples)
+
+            U = torch.ones(K, dtype=torch.float32) / K
+
+            KL_global = torch.sum(
+                U * (
+                    torch.log(U + 1e-12)
+                    - torch.log(p_hat + 1e-12)
+                )
+            )
+
+            self.KL_global = KL_global.item()
+
+        else:
+
+            KL_global = torch.tensor(0.0)
+
+            self.KL_global = 0.0
+
+        # ============================================================
+        # Highest entropy first
+        # ============================================================
+        entropy_list.sort(
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        # ============================================================
+        # SELECT D_FORGET
+        # ============================================================
+
+        # ------------------------------------------------------------
+        # Option 1:
+        # H >= H_limit
+        # ------------------------------------------------------------
+        if entropy_threshold is not None:
+
+            preselected_indices = [
+                (idx, ent)
+                for idx, ent in entropy_list
+                if ent >= entropy_threshold
+            ]
+
+            if len(preselected_indices) == 0:
+
+                print(
+                    f"[WARN] No target image has entropy >= "
+                    f"{entropy_threshold:.4f}."
+                )
+
+        # ------------------------------------------------------------
+        # Option 2:
+        # globally select top rho %
+        # ------------------------------------------------------------
+        else:
+
+            assert 0.0 <= select_imgs_ratio <= 1.0
+
+            n_total = len(entropy_list)
+
+            n_select = int(
+                n_total * select_imgs_ratio
+            )
+
+            # Avoid selecting zero samples for a positive ratio
+            # on a small dataset.
+            if select_imgs_ratio > 0 and n_total > 0:
+                n_select = max(1, n_select)
+
+            preselected_indices = entropy_list[:n_select]
+
+        # ============================================================
+        # Optional random sub-sampling
+        # ============================================================
+        assert 0.0 <= random_select_ratio <= 1.0
+
+        rng = py_random.Random(self.seed)
+
+        if (
+            random_select_ratio < 1.0
+            and len(preselected_indices) > 0
+        ):
+
+            final_n = int(
+                len(preselected_indices)
+                * random_select_ratio
+            )
+
+            if random_select_ratio > 0:
+                final_n = max(1, final_n)
+
+            if final_n > 0:
+                selected_indices = rng.sample(
+                    preselected_indices,
+                    final_n
+                )
+            else:
+                selected_indices = []
+
+        else:
+
+            selected_indices = preselected_indices
+
+        # ============================================================
+        # D_FORGET
+        # ============================================================
+        selected_flippable = {
+            idx
+            for idx, _ in selected_indices
+        }
+
+        flippable_subset = selected_flippable
+
+        # ============================================================
+        # Information saved for forgetting
+        #
+        # forget_label = CURRENT predicted class.
+        #
+        # This is particularly important if your loss is:
+        #
+        #     -log(1 - p_y)
+        #
+        # because y is the class whose confidence you want to suppress.
+        # ============================================================
+        forget_info = {
+            idx: {
+
+                "pred_before":
+                    idx_to_pred[idx],
+
+                "forget_label":
+                    idx_to_pred[idx],
+
+                "entropy":
+                    entropy_all[idx],
+
+                "top1":
+                    idx_to_top1[idx],
+
+                "top2":
+                    idx_to_top2[idx],
+
+                "probs":
+                    probs_all[idx],
+
+            }
+            for idx in selected_flippable
+        }
+
+        # ============================================================
+        # Legacy assigned-label map
+        #
+        # Forget -> top2
+        # Retain -> top1
+        #
+        # Kept so existing code does not break.
+        # ============================================================
+        assigned_labels_map = {}
+
+        for idx in idx_to_pred.keys():
+
+            if idx in selected_flippable:
+
+                assigned_labels_map[idx] = (
+                    idx_to_top2[idx]
+                )
+
+            else:
+
+                assigned_labels_map[idx] = (
+                    idx_to_top1[idx]
+                )
+
+        self.assigned_labels_map = assigned_labels_map
+
+        # Legacy placeholder
+        reinforce_indices = set()
+
+        # ============================================================
+        # D_RETAIN
+        #
+        # ALL non-forgotten samples.
+        #
+        # No class balancing.
+        # No prior.
+        # No over-predicted classes.
+        # ============================================================
+        stable_selected = [
+            idx
+            for idx in idx_to_pred.keys()
+            if idx not in selected_flippable
+        ]
+
+        stable_labels = [
+            idx_to_pred[idx]
+            for idx in stable_selected
+        ]
+
+        # ============================================================
+        # ANALYSIS ONLY
+        #
+        # GT is never used for selection/training.
+        # ============================================================
+        forget_correct = sum(
+            1
+            for idx in selected_flippable
+            if idx_to_pred[idx] == idx_to_target[idx]
+        )
+
+        forget_total = len(selected_flippable)
+
+        forget_acc = (
+            forget_correct / forget_total
+            if forget_total > 0
+            else 0.0
+        )
+
+        retain_correct = sum(
+            1
+            for idx in stable_selected
+            if idx_to_pred[idx] == idx_to_target[idx]
+        )
+
+        retain_total = len(stable_selected)
+
+        retain_acc = (
+            retain_correct / retain_total
+            if retain_total > 0
+            else 0.0
+        )
+
+        # ============================================================
+        # Monitoring
+        # ============================================================
+        results = {
+            "retain": retain_acc,
+            "forget": forget_acc,
+            "n_retain": retain_total,
+            "n_forget": forget_total,
+        }
+
+        out_txt = os.path.join(
+            self.args.outd,
+            "results_unlearning_acc.txt"
+        )
+
+        out_pkl = os.path.join(
+            self.args.outd,
+            "results__unlearning_acc.pkl"
+        )
+
+        with open(out_txt, "a") as f:
+
+            f.write(f"Epoch {self.epoch}\n")
+
+            f.write(
+                f"Nb retain : {retain_total}\n"
+            )
+
+            f.write(
+                f"retain acc : {retain_acc:.4f}\n"
+            )
+
+            f.write(
+                f"Nb forget : {forget_total}\n"
+            )
+
+            f.write(
+                f"forget acc : {forget_acc:.4f}\n"
+            )
+
+            if entropy_threshold is not None:
+
+                f.write(
+                    f"Selection mode : H >= "
+                    f"{entropy_threshold}\n"
+                )
+
+            else:
+
+                f.write(
+                    f"Selection mode : top "
+                    f"{select_imgs_ratio * 100:.2f}% entropy\n"
+                )
+
+            f.write("\n")
+
+        # ------------------------------------------------------------
+        # History
+        # ------------------------------------------------------------
+        if os.path.exists(out_pkl):
+
+            with open(out_pkl, "rb") as f:
+                history = pkl.load(f)
+
+        else:
+
+            history = []
+
+        history.append(results)
+
+        with open(out_pkl, "wb") as f:
+            pkl.dump(history, f)
+
+        # ============================================================
+        # Some useful debug information
+        # ============================================================
+        if len(entropy_list) > 0:
+
+            entropy_values = [
+                ent for _, ent in entropy_list
+            ]
+
+            print(
+                f"[Global entropy selection] "
+                f"N={len(entropy_list)} | "
+                f"N_forget={forget_total} | "
+                f"N_retain={retain_total} | "
+                f"H_mean={np.mean(entropy_values):.4f} | "
+                f"H_min={np.min(entropy_values):.4f} | "
+                f"H_max={np.max(entropy_values):.4f}"
+            )
+
+        # ============================================================
+        # SAME RETURN SIGNATURE AS PREVIOUS FUNCTION
+        # ============================================================
+        return (
+            selected_flippable,
+            reinforce_indices,
+            idx_to_pred,
+            entropy_all,
+            flippable_subset,
+            stable_selected,
+            stable_labels,
+            probs_all,
+            KL_global,
+            assigned_labels_map,
+            forget_info
+        )
 
     @torch.no_grad()
     def select_flippable_indices_gt(self,model, loader, n_per_class=2000):
@@ -3493,10 +5188,15 @@ class Trainer(Basic):
                     stable_correct += 1
         stable_acc = stable_correct / stable_total if stable_total > 0 else 0.0
 
+        # results = {
+        #     "retain": flip_acc,
+        #     "forget": stable_acc
+        # }
+
         results = {
-            "retain": flip_acc,
-            "forget": stable_acc
-        }
+             "retain": stable_acc,
+             "forget": flip_acc
+         }
 
         output_path = os.path.join(self.args.outd, "results_unlearning_acc.txt")
         output_pickle = os.path.join(self.args.outd, "results__unlearning_acc.pkl")
@@ -4173,7 +5873,7 @@ class Trainer(Basic):
                 # self.optimizer.step()
 
 
-            if self.args.target_domain_ds_to_compute_stats in [constants.CAMELYON512, constants.CAMELYON17_512, constants.OpenImagesTrgt, constants.GLAS] and batch_idx % self.args.cmpt_batch == 0:
+            if self.args.target_domain_ds_to_compute_stats in [constants.CAMELYON512, constants.CAMELYON17_512, constants.OpenImagesTrgt, constants.GLAS, constants.EBHI] and batch_idx % self.args.cmpt_batch == 0:
                 # self.model.eval()
                 # with torch.no_grad():
                 #     self.compute_acc_on_source_and_target(self.epoch)
@@ -4183,7 +5883,7 @@ class Trainer(Basic):
                 self.model.eval()
                 with torch.no_grad():
 
-                    self.compute_acc_on_domain_came(loader=self.target_domain_loaders[constants.CLVALIDSET],domain="target",split=constants.CLVALIDSET,compute_kl=True)
+                    #self.compute_acc_on_domain_came(loader=self.target_domain_loaders[constants.CLVALIDSET],domain="target",split=constants.CLVALIDSET,compute_kl=True)
                     self.compute_acc_on_domain_came(loader=self.target_domain_loaders[constants.TRAINSET],domain="target",split=constants.TRAINSET,compute_kl=True)
 
                     if self.args.track_test_performance:
@@ -6262,7 +7962,7 @@ class Trainer(Basic):
 
         avg = self.args.multi_iou_eval
         avg |= self.args.dataset in [constants.OpenImages,constants.OpenImagesSrc, constants.OpenImagesTrgt, constants.GLAS,
-                                     constants.CAMELYON512, constants.CAMELYON17_512]
+                                     constants.CAMELYON512, constants.CAMELYON17_512, constants.EBHI]
         if avg:
             loc_score = np.average(cam_performance)
         else:

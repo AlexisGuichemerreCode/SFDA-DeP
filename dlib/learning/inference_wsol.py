@@ -137,7 +137,8 @@ class CAMComputer(object):
                           constants.ILSVRC: BoxEvaluator,
                           constants.GLAS: MaskEvaluator,
                           constants.CAMELYON512: MaskEvaluator,
-                          constants.CAMELYON17_512: MaskEvaluator
+                          constants.CAMELYON17_512: MaskEvaluator,
+                          constants.EBHI: MaskEvaluator,
                           }[dataset_name](metadata=metadata,
                                           dataset_name=dataset_name,
                                           split=split,

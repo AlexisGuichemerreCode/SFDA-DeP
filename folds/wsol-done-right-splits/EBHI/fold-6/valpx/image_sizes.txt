@@ -1,0 +1,30 @@
+corruptions/defocus_blur/High-grade IN/image/GTxc2012779-4-400-004.png,224,224
+corruptions/defocus_blur/Adenocarcinoma/image/GT2016781-1-400-001.png,224,224
+corruptions/defocus_blur/Polyp/image/GT2014792-4-400-001.png,224,224
+corruptions/defocus_blur/Low-grade IN/image/GTXC2015383-2-400-003.png,224,224
+corruptions/defocus_blur/High-grade IN/image/GTDC2102641-1-400-004.png,224,224
+corruptions/defocus_blur/High-grade IN/image/GTXC2015362-9-400-002.png,224,224
+corruptions/defocus_blur/Serrated adenoma/image/GTDC2102188-2-400-003.png,224,224
+corruptions/defocus_blur/Adenocarcinoma/image/GTxc2013496-1-400-002.png,224,224
+corruptions/defocus_blur/Polyp/image/GT2001814-1-400-002.png,224,224
+corruptions/defocus_blur/Normal/image/GT2100275-1-400-004.png,224,224
+corruptions/defocus_blur/Polyp/image/GTXC2110215-1-400-002.png,224,224
+corruptions/defocus_blur/Normal/image/GT2100256-7-400-002.png,224,224
+corruptions/defocus_blur/High-grade IN/image/GTXC2110585-1-400-006.png,224,224
+corruptions/defocus_blur/Normal/image/GT2100256-2-400-001.png,224,224
+corruptions/defocus_blur/Polyp/image/GTXC2015335-7-400-004.png,224,224
+corruptions/defocus_blur/Normal/image/GT2012915-1-400-002.png,224,224
+corruptions/defocus_blur/Low-grade IN/image/GTXC2015335-6-400-005.png,224,224
+corruptions/defocus_blur/Adenocarcinoma/image/GTxc2012888-1-400-024.png,224,224
+corruptions/defocus_blur/Low-grade IN/image/GTXC2014153-2-400-003.png,224,224
+corruptions/defocus_blur/Normal/image/GT2016907-1-400-004.png,224,224
+corruptions/defocus_blur/Adenocarcinoma/image/GT2013084-1-400-001.png,224,224
+corruptions/defocus_blur/Serrated adenoma/image/GT2100092-2-400-001.png,224,224
+corruptions/defocus_blur/Low-grade IN/image/GT2012467-1-400-001.png,224,224
+corruptions/defocus_blur/Low-grade IN/image/GTxc2012529-1-400-004.png,224,224
+corruptions/defocus_blur/Serrated adenoma/image/GTDC2102188-3-400-001.png,224,224
+corruptions/defocus_blur/Serrated adenoma/image/GTXC2014129-4-400-002.png,224,224
+corruptions/defocus_blur/Serrated adenoma/image/GT2014783-1-400-002.png,224,224
+corruptions/defocus_blur/High-grade IN/image/GT2017995-3-400-002.png,224,224
+corruptions/defocus_blur/Adenocarcinoma/image/GTxc2013496-1-400-006.png,224,224
+corruptions/defocus_blur/Polyp/image/GTXC2110530-1-400-001.png,224,224
