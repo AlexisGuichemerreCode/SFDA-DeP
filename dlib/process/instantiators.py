@@ -651,7 +651,7 @@ def get_loss_target(args):
                     multi_label_flag=multi_label_flag,
                     dataset=args.dataset)
             
-            if args.dataset == constants.GLAS or args.dataset in [constants.OpenImagesSrc, constants.OpenImagesTrgt]:
+            if args.dataset == constants.GLAS or args.dataset in [constants.OpenImagesSrc, constants.OpenImagesTrgt, constants.EBHI]:
                 negative_samples = False
             elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and args.neg_samples_partial:
                 negative_samples = False
@@ -678,7 +678,7 @@ def get_loss_target(args):
                     multi_label_flag=multi_label_flag,
                     dataset=args.dataset)
             
-            if args.dataset == constants.GLAS or args.dataset in [constants.OpenImagesSrc, constants.OpenImagesTrgt]:
+            if args.dataset == constants.GLAS or args.dataset in [constants.OpenImagesSrc, constants.OpenImagesTrgt, constants.EBHI]:
                 negative_samples = False
             elif args.dataset in [constants.CAMELYON512, constants.CAMELYON17_512] and args.neg_samples_partial:
                 negative_samples = False

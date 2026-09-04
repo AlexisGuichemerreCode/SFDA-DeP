@@ -1263,7 +1263,7 @@ def get_args(args: dict, eval: bool = False):
             dsname_target_domain = dsname_target_domain.replace('{}_'.format(pre), '')
         if dsname_source_domain.startswith(pre):
             dsname_source_domain = dsname_source_domain.replace('{}_'.format(pre), '')
-        assert dsname_target_domain in [constants.CAMELYON512, constants.GLAS, constants.CAMELYON17_512, constants.OpenImagesTrgt]
+        assert dsname_target_domain in [constants.CAMELYON512, constants.GLAS, constants.CAMELYON17_512, constants.OpenImagesTrgt, constants.EBHI]
         
         args['target_domain_data_paths'] = config.configure_data_paths(args, dsname_target_domain)
 

@@ -1048,7 +1048,7 @@ class UdaCdcl(ElementaryLoss):
 
         target_features = key_arg['target_features']
 
-        loss = self.loss.forward(target_features,pseudo_glabel,self.weights).sum()
+        loss = self.loss.forward(target_features,pseudo_glabel,self.weights).mean()
         
         return loss* self.cdcl_lambda
 

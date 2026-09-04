@@ -1781,11 +1781,8 @@ class Trainer(Basic):
 
                             seeds = self.sl_mask_builder(cams_inter, class_idx=y_pred_batch)
 
-                    else:
-                        fcams = None
-                        seeds = None
 
-                    if args.pixel_wise_classification and args.ece_adapt:
+                    elif args.pixel_wise_classification and args.ece_adapt:
                         out = self.model(images) 
                         _, _, h, w = self.model.encoder_last_features.shape
                         interpolation_mode = 'bilinear'
@@ -5826,6 +5823,7 @@ class Trainer(Basic):
                                                         mask_entropy = mask_entropy,
                                                         forget_label_batch = forget_label_batch
                                                         )
+                    
                     # logits, loss = self._one_step_train_unlearning(images,
                     #                     raw_imgs,
                     #                     targets,
@@ -5839,7 +5837,7 @@ class Trainer(Basic):
                     #                     )
 
             else:
-
+                
                 with autocast(enabled=self.args.amp):
                     logits, loss = self._one_step_train(images,
                                                         raw_imgs,
