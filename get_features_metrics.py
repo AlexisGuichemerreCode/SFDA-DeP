@@ -11,8 +11,8 @@ import argparse
 from dlib.sf_uda import adadsa
 import torch.nn as nn
 
-import numpy as np
 import json
+import numpy as np
 import numpy
 from tqdm import tqdm
 # import pretrainedmodels.utils
@@ -28,6 +28,7 @@ from torch.cuda.amp import autocast
 import matplotlib.pyplot as plt
 from skimage.transform import resize
 from sklearn.manifold import TSNE
+from sklearn.metrics import davies_bouldin_score
 
 #import cuml
 #print("cuML version:", cuml.__version__)
@@ -58,6 +59,7 @@ from dlib.utils.reproducibility import set_seed
 from dlib.process.instantiators import get_model, get_pretrainde_classifier
 
 from dlib.datasets.wsol_loader import get_data_loader
+from dlib.datasets.wsol_loader import get_eval_transforms_global
 from dlib.datasets.wsol_loader import configure_metadata
 from dlib.datasets.wsol_loader import get_class_labels
 from dlib.datasets.wsol_loader import get_image_ids
@@ -65,12 +67,13 @@ from dlib.learning.train_wsol import Basic, PerformanceMeter
 from dlib.utils.tools import get_cpu_device
 from dlib.process.parseit import str2bool
 from dlib.utils.tools import t2n
-
-from dlib.metrics import da_metrics
-
 import cv2
 import json
 from glob import glob
+import torch.nn.functional as F
+from sklearn.neighbors import KNeighborsClassifier
+
+
 
 def cl_forward(args, model, images):
 
@@ -415,8 +418,8 @@ def class_separability_measure(SW, SB, ST):
     return J1, J2
 
 
-def class_separability(mask_source, features, label_source, cam_source, image_id_source, target_method, dataset, parsedargs):
-    _,l,m,n=features.shape
+def class_separability(mask_source, features, label_source, image_id_source, target_method, dataset, parsedargs):
+    l,m,n=features.shape
 
     cancer_features = np.empty((0, l))
     non_cancer_features = np.empty((0, l))
@@ -428,8 +431,8 @@ def class_separability(mask_source, features, label_source, cam_source, image_id
     non_zero_indices = torch.nonzero(mask_source, as_tuple=True)
     zero_indices = torch.nonzero(mask_source == 0, as_tuple=True)
 
-    non_zero_probs = features[0, :, non_zero_indices[0], non_zero_indices[1]]
-    zero_probs = features[0, :, zero_indices[0], zero_indices[1]]
+    non_zero_probs = features[:, non_zero_indices[0], non_zero_indices[1]]
+    zero_probs = features[:, zero_indices[0], zero_indices[1]]
 
     # Convert your PyTorch tensors to NumPy arrays (if necessary)
     non_zero_probs_np = non_zero_probs.detach().cpu().numpy()
@@ -649,10 +652,92 @@ IgnoreKeyLoader.add_constructor(
 )
 
 
+def _compute_accuracy(args, model, loader):
+    num_correct = 0
+    num_images = 0
+
+    for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
+        images = images.cuda()
+        targets = targets.cuda()
+        with torch.no_grad():
+            cl_logits = cl_forward(args, model, images)
+            pred = cl_logits.argmax(dim=1)
+
+        num_correct += (pred == targets).sum().item()
+        num_images += images.size(0)
+
+    classification_acc = num_correct / float(num_images) * 100
+    return classification_acc
+
+def compute_ece(probs, labels, n_bins=15):
+    bin_boundaries = torch.linspace(0, 1, n_bins+1)
+    ece = 0.0
+
+    confidences, predictions = torch.max(probs, dim=1)
+    accuracies = (predictions == labels).float()
+
+    for i in range(n_bins):
+        low = bin_boundaries[i]
+        high = bin_boundaries[i+1]
+        mask = (confidences > low) & (confidences <= high)
+        if mask.sum() > 0:
+            accuracy_in_bin  = accuracies[mask].mean()
+            avg_conf_in_bin  = confidences[mask].mean()
+            ece += (mask.float().mean() * torch.abs(avg_conf_in_bin - accuracy_in_bin))
+    return float(ece)
+
+
+def compute_nll(logits, labels):
+    return float(F.cross_entropy(logits, labels).item())
+
+
+def compute_brier(probs, labels, num_classes):
+    one_hot = torch.nn.functional.one_hot(labels, num_classes=num_classes).float()
+    return float(((probs - one_hot)**2).mean().item())
+
+
+
+def compute_kl_uniform(preds, num_classes):
+    # p(y) estimé empiriquement
+    hist = torch.bincount(preds, minlength=num_classes).float()
+    p = hist / hist.sum()          # distribution empirique des classes
+    u = torch.ones_like(p) / num_classes  # prior uniforme
+    kl = (p * (p / u).log()).sum()
+    return float(kl.item())
+
+
+def compute_margin(probs):
+    top2 = torch.topk(probs, k=2, dim=1).values
+    margin = top2[:,0] - top2[:,1]
+    return float(margin.mean().item()), float(margin.median().item())
+
+
+
+def compute_knn_acc(features, labels, k=5):
+    knn = KNeighborsClassifier(n_neighbors=k)
+    knn.fit(features, labels)
+    pred = knn.predict(features)
+    return float((pred == labels).mean())
+
+
+def save_or_show(filename=None, save=False, save_dir=None):
+    if save and filename is not None and save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        path = os.path.join(save_dir, filename)
+        plt.savefig(path, dpi=300, bbox_inches="tight")
+        plt.close()
+        print(f"[saved] {path}")
+    else:
+        plt.show()
+
+
+
+
 def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_draw_target, checkpoint_type, dataset, cudaid, split, tmp_outd='tmp_outd', parsedargs=None, target_method=None):
 
 
     with open(join(exp_path, 'config_obj_final.yaml'), 'r') as fy:
+    #with open(join(exp_path, 'OpenImagesSrc-0-deit_sat_base_patch16_224-SAT-GAP-cp_best_classification', 'config_model.yaml'), 'r') as fy:
         args_dict = yaml.load(fy, Loader=IgnoreKeyLoader)
         # args_dict = yaml.safe_load(fy)
         args_dict['model']['freeze_encoder'] = False
@@ -704,6 +789,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             args_dict['multiple_layer_pixel_classifier'] = False
             args_dict['detach_pixel_classifier'] = False
             args_dict['one_layer_pixel_classifier'] = False
+            args_dict['cpt_cam_entropy'] = False
         else:
             args_dict['pixel_wise_classification'] = False
             args_dict['anchors_ortogonal'] = False
@@ -742,7 +828,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     #         model.pixel_wise_classification_head.load_state_dict(header_p, strict=True)
 
 
-    if 'PixelCAM' in target_method:
+    if 'PixelCAM' in method_name:
         if "deit" in encoder_name:
             model_sat = torch.load(join(path_cl, 'model.pt'),map_location=get_cpu_device())
 
@@ -760,7 +846,7 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
                                 map_location=get_cpu_device())
             model.pixel_wise_classification_head.load_state_dict(header_p, strict=True)
 
-    elif target_method == 'NEGEV':
+    elif method_name == 'NEGEV':
         encoder_w = torch.load(join(path_cl, 'encoder.pt'),
                             map_location=get_cpu_device())
         model.encoder.super_load_state_dict(encoder_w, strict=True)
@@ -831,50 +917,19 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     ####################################################################################
     DLLogger.flush()
     
-    source_metadata_root = join(constants.RELATIVE_META_ROOT, parsedargs.source_dataset, f"fold-{parsedargs.fold_src_dataset}")
+    metadata_root = join(constants.RELATIVE_META_ROOT, dataset, f"fold-{parsedargs.fold_trg_dataset}")
     #read sys var DATASETSH
     args_dict['data_root'] = os.path.join(os.environ['DATASETSH'], 'datasets')
-    source_domain_data_paths = config.configure_data_paths(args_dict, parsedargs.source_dataset)
+    target_domain_data_paths = config.configure_data_paths(args_dict, dataset)
 
-    target_metadata_root = join('./folds/wsol-done-right-splits', parsedargs.target_dataset, f"fold-{parsedargs.fold_trg_dataset}")
-    #args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
-    target_domain_data_paths = config.configure_data_paths(args_dict, parsedargs.target_dataset)
+    metadata_root_CAME = join('./folds/wsol-done-right-splits', 'CAMELYON512', f"fold-{parsedargs.fold_trg_dataset}")
+    args_dict['data_root'] = '/export/gauss/vision/Aguichemerre/datasets'
+    target_domain_data_paths_CAME = config.configure_data_paths(args_dict, 'CAMELYON512')
 
-    # loaders = get_data_loader(
-    #         data_roots=target_domain_data_paths,
-    #         metadata_root=metadata_root,
-    #         batch_size=32,#args.batch_size,
-    #         workers=args.num_workers,
-    #         resize_size=args.resize_size,
-    #         crop_size=args.crop_size,
-    #         proxy_training_set=args.proxy_training_set,
-    #         num_val_sample_per_class=args.num_val_sample_per_class,
-    #         std_cams_folder=args.std_cams_folder,
-    #         # distributed_eval=False,
-    #         get_splits_eval=['test'],
-    #         #constants.TRAINSET
-    #         eval_batch_size = 32#args.eval_batch_size,
-    #     )
     
-    source_loaders = get_data_loader(
-            data_roots=source_domain_data_paths,
-            metadata_root=source_metadata_root,
-            batch_size=32,#args.batch_size,
-            workers=args.num_workers,
-            resize_size=args.resize_size,
-            crop_size=args.crop_size,
-            proxy_training_set=args.proxy_training_set,
-            num_val_sample_per_class=args.num_val_sample_per_class,
-            std_cams_folder=args.std_cams_folder,
-            # distributed_eval=False,
-            get_splits_eval=[parsedargs.split],
-            #constants.TRAINSET
-            eval_batch_size = 32#args.eval_batch_size,
-        )
-    
-    target_loaders = get_data_loader(
+    loaders = get_data_loader(
             data_roots=target_domain_data_paths,
-            metadata_root=target_metadata_root,
+            metadata_root=metadata_root,
             batch_size=32,#args.batch_size,
             workers=args.num_workers,
             resize_size=args.resize_size,
@@ -888,135 +943,168 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             eval_batch_size = 32#args.eval_batch_size,
         )
     
-
-    # x = torch.randn((1, 2048, 28, 28), device=device, requires_grad=True)
-
-    # step_size = 1.0
-    # noise_scale = 0.01
-    # num_steps = 100
-    # plot_interval = 1 
-    # for step in range(num_steps):
-    #     logits, _ = model.pixel_wise_classification_head(x) 
-    #     energy = -torch.logsumexp(logits, dim=1)
-        
-    #     # Calcul du gradient par rapport à x
-    #     grad_x = torch.autograd.grad(energy, x, grad_outputs=torch.ones_like(energy), create_graph=False)[0]
-
-    #     # Mise à jour avec SGLD
-    #     noise = torch.randn_like(x) * noise_scale
-    #     x = x - step_size * grad_x + noise
-    #     x = x.detach().clone().requires_grad_(True)
-    #     vectors = x.detach().cpu().numpy()
-        
-    #     # Affichage TSNE tous les 'plot_interval' itérations
-    #     if step % plot_interval == 0 or step == num_steps - 1:
-    #         output_dir = os.path.join('visualization', 'energy', dataset, 'sgld')
-    #         os.makedirs(output_dir, exist_ok=True)
-
-    #         weights = model.pixel_wise_classification_head.conv4.weight.data.cpu().numpy()
-    #         weights = weights.reshape(weights.shape[0], -1)
-
-    #         batch_size, vector_dim, height, width = vectors.shape
-    #         vectors_reshaped = vectors.reshape(batch_size, vector_dim, height * width).transpose(0, 2, 1)  
-    #         vectors_flattened = vectors_reshaped.reshape(height * width, vector_dim)  
-
-    #         combined_data = np.vstack([vectors_flattened, weights])
-
-    #         tsne = TSNE(n_components=2, perplexity=1, random_state=42, init="pca")
-
-    #         reduced_vectors = tsne.fit_transform(weights)
-
-    #         plt.figure(figsize=(8, 6))
-    #         plt.scatter(reduced_vectors[:, 0], reduced_vectors[:, 1], alpha=0.6, edgecolors='k')
-    #         plt.title(f"t-SNE à l'itération {step}")
-    #         plt.xlabel("TSNE Dim 1")
-    #         plt.ylabel("TSNE Dim 2")
-    #         plt.grid(True)
-    #         plt.savefig(f"tsne_step_{step}.png", dpi=300)
-    #         plt.close()
-
-    #         reduced_vectors = tsne.fit_transform(combined_data) 
-            
-    #         generated_points = reduced_vectors[:-weights.shape[0], :]
-    #         weight_points = reduced_vectors[-weights.shape[0]:, :]
-
-    #         plt.figure(figsize=(8, 6))
-    #         plt.scatter(generated_points[:, 0], generated_points[:, 1], alpha=0.6, edgecolors='k', label="Generated Samples")
-
-    #         # Afficher le premier poids avec un triangle blanc
-    #         plt.scatter(weight_points[0, 0], weight_points[0, 1], marker="^", s=200, color="white", edgecolors='black', label="First Weight (White Triangle)")
-
-    #         # Afficher le deuxième poids avec un triangle noir
-    #         plt.scatter(weight_points[1, 0], weight_points[1, 1], marker="v", s=200, color="black", edgecolors='black', label="Second Weight (Black Triangle)")
-
-    #         plt.title(f"t-SNE à l'itération {step}")
-    #         plt.xlabel("TSNE Dim 1")
-    #         plt.ylabel("TSNE Dim 2")
-    #         plt.grid(True)
-    #         save_path = os.path.join(output_dir, f"tsne_step_{step}.png")
-    #         plt.savefig(save_path, dpi=300)
-    #         plt.close()
-        
-
-    # cam_computer = CAMComputer(
-    #         args=deepcopy(args),
-    #         model=model,
-    #         loader=loaders['test'],
-    #         metadata_root=os.path.join(metadata_root, 'test'),
-    #         mask_root=args.mask_root,
-    #         iou_threshold_list=args.iou_threshold_list,
-    #         dataset_name=args.dataset,
-    #         split= 'test',
-    #         cam_curve_interval=args.cam_curve_interval,
-    #         multi_contour_eval=args.multi_contour_eval,
-    #         out_folder=args.outd,
-    #     )   
+    
+    
     overlay_images = {}
     input_images = {}
     gt_masks = {}
 
-    if "deit" in encoder_name:
-        num_filters = 192
-    else:
-        num_filters = 2048
 
-    domain_shift_measure = da_metrics.FeatureShiftCalculator(num_filters=num_filters)
+    image_features_all = []
+    image_labels_all = []
+    J2_px = []
+    J2_img = []
+    DBI_img = []
+
+    cam_computer = CAMComputer(
+                        args=deepcopy(args),
+                        model=model,
+                        loader=loaders[parsedargs.split],
+                        metadata_root=os.path.join(metadata_root, parsedargs.split),
+                        mask_root=args.mask_root,
+                        iou_threshold_list=args.iou_threshold_list,
+                        dataset_name=args.dataset,
+                        split= parsedargs.split,
+                        cam_curve_interval=args.cam_curve_interval,
+                        multi_contour_eval=args.multi_contour_eval,
+                        out_folder=args.outd,
+                    )
+    
+
+    acc_cl = _compute_accuracy(args, model, loaders[parsedargs.split])
+    cam_performance = cam_computer.compute_and_evaluate_cams()
+    cam_perf_pxap = cam_computer.evaluator.perf_gist[constants.MTR_PXAP]
+ 
+    print(f"Classification Accuracy on {parsedargs.split} set: {acc_cl:.2f}%")
+    print(f"CAM Performance PxAP on {parsedargs.split} set: {cam_perf_pxap:.2f}")
+
+    entropies = []
+    preds = []
+    gts = []     
+
+    logits_all = []
+    probs_all  = []
+    preds_all  = []
+
 
     for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views, _) in tqdm(
-        enumerate(source_loaders[split]), ncols=constants.NCOLS,
-        total=len(source_loaders[split])):
+        enumerate(loaders[split]), ncols=constants.NCOLS,
+        total=len(loaders[split])):
         image_size = images.shape[2:]
         images = images.to(device)
         targets = targets.to(device)
-
-        out = model(images)
         
+
+        GroundTruth = []
+
+        # with torch.no_grad():
+        #    out = model(images.cuda())
+        #    pixel_features = model.encoder_last_features
+        # GroundTruth = []
+        # for image, target, image_id in zip(images, targets, index):
+        #     #if image_id == "Warwick_QU_Dataset_(Released_2016_07_08)/train_2.bmp":
+        #         #print("wait")
+
+        #     #print(image_id)
+
+        #     image_size = images.shape[2:]
+        #     if target.item() == 1:
+        #         with torch.set_grad_enabled(cam_computer.req_grad):
+
+        #             cam_performance = cam_computer.compute_and_evaluate_cams_one_image(image, target, image_id, image_size)
+        #             cam_perf_pxap = cam_computer.evaluator.perf_gist[constants.MTR_PXAP]
+        #             print(f"Image ID: {image_id} - PxAP: {cam_perf_pxap}")
+
         with torch.no_grad():
-            src_img_features = model.lin_ft
+            out = model(images.cuda())
+            img_features = model.lin_ft.detach().cpu()
+            pixel_features = model.encoder_last_features.detach().cpu()  # [1, C, H, W]
 
-        domain_shift_measure.accumulate(src_img_features, domain='source')
 
-    for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views, _) in tqdm(
-        enumerate(target_loaders[split]), ncols=constants.NCOLS,
-        total=len(target_loaders[split])):
-        image_size = images.shape[2:]
-        images = images.to(device)
-        targets = targets.to(device)
+            image_features_all.append(img_features)
+            image_labels_all.append(targets)
 
-        out = model(images)
-        
-        with torch.no_grad():
-            trg_img_features = model.lin_ft
+            logits = model(images.cuda())
+            probs  = torch.softmax(logits, dim=1)
 
-        domain_shift_measure.accumulate(trg_img_features, domain='target')
+            logits_all.append(logits.cpu())
+            probs_all.append(probs.cpu())
+            preds_all.append(torch.argmax(probs, dim=1).cpu())
 
+
+    logits_all = torch.cat(logits_all, dim=0)
+    probs_all  = torch.cat(probs_all,  dim=0)
+    preds_all  = torch.cat(preds_all,  dim=0)
+    labels_all = torch.cat(image_labels_all, dim=0)
+
+
+    ############################################################
+    # === Compute metrics (déjà dans ton code) ===
+    ############################################################
+
+    features_all = torch.cat(image_features_all, dim=0).cpu().numpy()  # [N, D]
+    labels_all   = torch.cat(image_labels_all, dim=0).cpu()
+
+    # Scatter matrices
+    SW, SB, ST = calculate_scatter_matrices(features_all, labels_all)
+
+    # Separability measures
+    J1_img_val, J2_img_val = class_separability_measure(SW, SB, ST)
+
+    # Davies–Bouldin index
+    DBI_img_val = davies_bouldin_score(features_all, labels_all)
+
+    mean_J2_px = np.mean(J2_px)
+
+
+
+    num_classes = int(torch.max(labels_all).item() + 1)
+
+    # --- Performance Metrics ---
+    from sklearn.metrics import f1_score, balanced_accuracy_score, confusion_matrix
+
+    # --- Versions Tensor (PyTorch) ---
+    labels_t = labels_all          # tensor [N]
+    preds_t  = preds_all           # tensor [N]
+    probs_t  = probs_all           # tensor [N, K]
+    logits_t = logits_all          # tensor [N, K]
+
+    # --- Versions numpy (pour sklearn) ---
+    labels_np = labels_t.numpy()
+    preds_np  = preds_t.numpy()
+
+    f1_global   = f1_score(labels_np, preds_np, average='macro')
+    f1_perclass = f1_score(labels_np, preds_np, average=None)
+    bal_acc     = balanced_accuracy_score(labels_np, preds_np)
+    conf_mat    = confusion_matrix(labels_np, preds_np)
+
+    # --- Calibration Metrics ---
+    ece_val   = compute_ece(probs_t, labels_t)
+    nll_val   = compute_nll(logits_t, labels_t)
+    brier_val = compute_brier(probs_t, labels_t, num_classes)
+
+    # --- Distribution Metrics ---
+    kl_uniform = compute_kl_uniform(preds_t, num_classes)
+
+    # --- Margin ---
+    margin_mean, margin_median = compute_margin(probs_t)
+
+    # --- k-NN accuracy ---
+    knn_acc = compute_knn_acc(features_all, labels_np, k=5)
 
     ############################################################
     # === Build output directory structure ===
     ############################################################
-    root_dir = "/export/livia/home/vision/Aguichemerre/iclr_2027_results/metrics_domain_shift"
+    root_dir = "/export/livia/home/vision/Aguichemerre/iclr_2027_results/metrics_separability"
 
-    dataset_dir = os.path.join(root_dir, parsedargs.source_dataset, str(parsedargs.fold_src_dataset),parsedargs.wsol_method)
+    dataset_dir = os.path.join(
+            root_dir,
+            parsedargs.source_dataset,
+            f"fold{parsedargs.fold_src_dataset}",
+            parsedargs.target_dataset,
+            f"fold{parsedargs.fold_trg_dataset}",
+            parsedargs.wsol_method
+        )
     os.makedirs(dataset_dir, exist_ok=True)
 
 
@@ -1025,29 +1113,94 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     # === Build output filename dynamically ===
     ############################################################
 
-    filename = f"{parsedargs.target_dataset}__fold{parsedargs.fold_trg_dataset}__{method_name}__{parsedargs.sfda_method}__{parsedargs.split}.json"
+    filename = (
+        f"{parsedargs.source_dataset}"
+        f"__fold{parsedargs.fold_src_dataset}"
+        f"__to__{parsedargs.target_dataset}"
+        f"__fold{parsedargs.fold_trg_dataset}"
+        f"__{split}"
+        f"__{method_name}"
+        f"__{parsedargs.sfda_method}"
+        f"__{parsedargs.split}.json"
+    )
     output_path = os.path.join(dataset_dir, filename)
-    
-    
-    shift_score = domain_shift_measure.domain_shift()
+
+
 
     ############################################################
-    # === Save individual JSON ===
+    # === Prepare metrics dictionary ===
     ############################################################
+
+    metrics = {
+    # --- Classification / Localization ---
+    "accuracy_cl": float(acc_cl),
+    "pxap": float(cam_perf_pxap),
+
+    # --- Separability ---
+    "j1_img": float(J1_img_val),
+    "j2_img": float(J2_img_val),
+    "dbi_img": float(DBI_img_val),
+    "mean_j2_px": float(mean_J2_px),
+
+    # --- Meta info ---
+    "source_dataset": parsedargs.source_dataset,
+    "source_fold": int(parsedargs.fold_src_dataset),
+
+    "target_dataset": parsedargs.target_dataset,
+    "target_fold": int(parsedargs.fold_trg_dataset),
+
+    "model": target_method,
+    "wsol_method": parsedargs.wsol_method,
+    "sfda_method": parsedargs.sfda_method,
+    "checkpoint": parsedargs.checkpoint_type,
+    "split": parsedargs.split,
+
+    # --- F1 / balanced accuracy ---
+    "f1_global": float(f1_global),
+    "f1_perclass": f1_perclass.tolist(),       # numpy → list
+    "balanced_accuracy": float(bal_acc),
+    "confusion_matrix": conf_mat.tolist(),
+
+    # --- Calibration ---
+    "ece": float(ece_val),
+    "nll": float(nll_val),
+    "brier": float(brier_val),
+
+    # --- Distribution metrics ---
+    "kl_uniform": float(kl_uniform),
+
+    # --- Margin ---
+    "margin_mean": float(margin_mean),
+    "margin_median": float(margin_median),
+
+    # --- k-NN ---
+    "knn_acc": float(knn_acc),
+    }
+
+
+
+    ############################################################
+    # === Save JSON file ===
+    ############################################################
+
     with open(output_path, "w") as f:
-        json.dump(shift_score, f, indent=4)
+        json.dump(metrics, f, indent=4)
 
+    print(f"\n[OK] Metrics saved → {output_path}\n")
 
+        ############################################################
+    # === Append metrics to global TXT file ===
     ############################################################
-    # === Append result to global TXT file ===
-    ############################################################
+
+    features_metrics_root = "/export/livia/home/vision/Aguichemerre/iclr_2027_results/metrics_separability/features_metrics"
+    os.makedirs(features_metrics_root, exist_ok=True)
+
     txt_output_path = os.path.join(
-        root_dir,
-        "domain_shift_results.txt"
+        features_metrics_root,
+        "features_metrics.txt"
     )
 
     with open(txt_output_path, "a") as f:
-
         f.write("*" * 80 + "\n")
 
         f.write(
@@ -1068,22 +1221,243 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
 
         f.write("\n")
 
-        f.write("Domain shift metrics:\n")
+        # -------------------------------------------------------
+        # Classification / Localization
+        # -------------------------------------------------------
+        f.write("Classification / Localization:\n")
+        f.write(f"Accuracy: {float(acc_cl)}\n")
+        f.write(f"PxAP: {float(cam_perf_pxap)}\n")
 
-        if isinstance(shift_score, dict):
-            for metric_name, metric_value in shift_score.items():
-                f.write(f"{metric_name}: {metric_value}\n")
-        else:
-            f.write(f"{shift_score}\n")
+        f.write("\n")
+
+        # -------------------------------------------------------
+        # Feature Separability
+        # -------------------------------------------------------
+        f.write("Feature Separability:\n")
+        f.write(f"J1 image: {float(J1_img_val)}\n")
+        f.write(f"J2 image: {float(J2_img_val)}\n")
+        f.write(f"DBI image: {float(DBI_img_val)}\n")
+        f.write(f"Mean J2 pixel: {float(mean_J2_px)}\n")
+
+        f.write("\n")
+
+        # -------------------------------------------------------
+        # Classification metrics
+        # -------------------------------------------------------
+        f.write("Classification Metrics:\n")
+        f.write(f"F1 macro: {float(f1_global)}\n")
+        f.write(f"F1 per class: {f1_perclass.tolist()}\n")
+        f.write(f"Balanced accuracy: {float(bal_acc)}\n")
+        f.write(f"Confusion matrix: {conf_mat.tolist()}\n")
+
+        f.write("\n")
+
+        # -------------------------------------------------------
+        # Calibration
+        # -------------------------------------------------------
+        f.write("Calibration Metrics:\n")
+        f.write(f"ECE: {float(ece_val)}\n")
+        f.write(f"NLL: {float(nll_val)}\n")
+        f.write(f"Brier: {float(brier_val)}\n")
+
+        f.write("\n")
+
+        # -------------------------------------------------------
+        # Prediction distribution
+        # -------------------------------------------------------
+        f.write("Prediction Distribution:\n")
+        f.write(f"KL uniform: {float(kl_uniform)}\n")
+
+        f.write("\n")
+
+        # -------------------------------------------------------
+        # Confidence / margin
+        # -------------------------------------------------------
+        f.write("Margin Metrics:\n")
+        f.write(f"Margin mean: {float(margin_mean)}\n")
+        f.write(f"Margin median: {float(margin_median)}\n")
+
+        f.write("\n")
+
+        # -------------------------------------------------------
+        # Feature neighborhood
+        # -------------------------------------------------------
+        f.write("Feature Neighborhood:\n")
+        f.write(f"k-NN accuracy: {float(knn_acc)}\n")
 
         f.write("*" * 80 + "\n\n")
 
 
-    print(f"JSON saved to: {output_path}")
-    print(f"TXT results appended to: {txt_output_path}")
+        print(f"[OK] Features metrics appended → {txt_output_path}")
 
-    return 0
+
+    return overlay_images, input_images, method_name, gt_masks
+
+    # save = True
+    # save_dir = "results/entropy_plots"
+    # loader = loaders['train']
+    # loader.dataset.transform = get_eval_transforms_global(args.crop_size)
     
+    # for batch_idx, (images, targets, p_glabel, index, raw_imgs, std_cams, _, views, _) \
+    #         in tqdm(enumerate(loader), total=len(loader)):
+
+    #     images = images.to(device)
+    #     targets = targets.to(device)
+
+    #     with torch.no_grad():
+    #         logits = model(images)
+    #         probs = F.softmax(logits, dim=1)
+
+    #         # Entropy for each image: H = -sum(p log p)
+    #         entropy = -torch.sum(probs * torch.log(probs + 1e-12), dim=1)
+
+    #         pred = torch.argmax(probs, dim=1)
+
+    #     entropies.append(entropy.cpu())
+    #     preds.append(pred.cpu())
+    #     gts.append(targets.cpu())
+
+    # # stack
+    # entropies = torch.cat(entropies).numpy()
+    # preds = torch.cat(preds).numpy()
+    # gts = torch.cat(gts).numpy()
+
+    # import matplotlib.pyplot as plt
+
+    # entropy_normal = entropies[gts == 0]
+    # entropy_cancer = entropies[gts == 1]
+
+    # plt.figure(figsize=(6,4))
+    # plt.hist(entropy_normal, bins=40, alpha=0.6, label="Normal")
+    # plt.hist(entropy_cancer, bins=40, alpha=0.6, label="Cancer")
+    # plt.xlabel("Entropy")
+    # plt.ylabel("Count")
+    # plt.legend()
+    # plt.title("Entropy distribution per true class")
+    # save_or_show("entropy_histogram.png", save=save, save_dir=save_dir)
+
+    # ratios = np.arange(0.1, 1.01, 0.1)
+
+    # acc_curve_pred0 = []  # predicted normal
+    # acc_curve_pred1 = []  # predicted cancer
+    # acc_curve_all  = []   # overall
+
+    # # tri selon entropie
+    # order = np.argsort(entropies)
+
+    # ent_sorted = entropies[order]
+    # pred_sorted = preds[order]
+    # gt_sorted = gts[order]
+
+    # for r in ratios:
+    #     k = int(len(ent_sorted) * r)
+    #     pred_r = pred_sorted[:k]
+    #     gt_r = gt_sorted[:k]
+
+    #     # overall accuracy
+    #     acc_curve_all.append((pred_r == gt_r).mean())
+
+    #     # accuracy for predicted normal
+    #     idx0 = pred_r == 0
+    #     if idx0.sum() > 0:
+    #         acc_curve_pred0.append((pred_r[idx0] == gt_r[idx0]).mean())
+    #     else:
+    #         acc_curve_pred0.append(np.nan)
+
+    #     # accuracy for predicted cancer
+    #     idx1 = pred_r == 1
+    #     if idx1.sum() > 0:
+    #         acc_curve_pred1.append((pred_r[idx1] == gt_r[idx1]).mean())
+    #     else:
+    #         acc_curve_pred1.append(np.nan)
+
+
+    #     plt.figure(figsize=(6,4))
+
+    # plt.plot(ratios*100, acc_curve_all, '-o', label="Overall")
+    # plt.plot(ratios*100, acc_curve_pred0, '-o', label="Predicted Normal")
+    # plt.plot(ratios*100, acc_curve_pred1, '-o', label="Predicted Cancer")
+
+    # plt.xlabel("Selected images (%)")
+    # plt.ylabel("Accuracy")
+    # plt.title("Accuracy vs entropy-based selection")
+    # plt.legend()
+    # plt.grid(True)
+    
+
+    # save_or_show("accuracy_vs_ratio.png", save=save, save_dir=save_dir)
+
+    # ratios = np.arange(0.1, 1.01, 0.1)
+
+    # acc_curve_balanced = []
+    # acc_curve_class0 = []
+    # acc_curve_class1 = []
+
+    # # Séparer par classe (pred)
+    # mask0 = preds == 0       # prédicted normal
+    # mask1 = preds == 1       # predicted cancer
+
+    # ent0 = entropies[mask0]
+    # ent1 = entropies[mask1]
+    # gt0  = gts[mask0]
+    # gt1  = gts[mask1]
+    # pred0 = preds[mask0]
+    # pred1 = preds[mask1]
+
+    # # Trier par entropie (du plus confiant au moins confiant)
+    # idx0 = np.argsort(ent0)
+    # idx1 = np.argsort(ent1)
+
+    # ent0_sorted = ent0[idx0]
+    # ent1_sorted = ent1[idx1]
+    # gt0_sorted  = gt0[idx0]
+    # gt1_sorted  = gt1[idx1]
+    # pred0_sorted = pred0[idx0]
+    # pred1_sorted = pred1[idx1]
+
+    # n0 = len(ent0_sorted)
+    # n1 = len(ent1_sorted)
+
+    # for r in ratios:
+    #     # Nombre d’images que représente r%
+    #     k0 = int(n0 * r)
+    #     k1 = int(n1 * r)
+
+    #     # On prend le minimum pour équilibrer les deux classes
+    #     m = min(k0, k1)
+
+    #     if m == 0:
+    #         acc_curve_balanced.append(np.nan)
+    #         acc_curve_class0.append(np.nan)
+    #         acc_curve_class1.append(np.nan)
+    #         continue
+
+    #     # Sélection équilibrée
+    #     pred_sel  = np.concatenate([pred0_sorted[:m], pred1_sorted[:m]])
+    #     gt_sel    = np.concatenate([gt0_sorted[:m],   gt1_sorted[:m]])
+
+    #     # Accuracy globale
+    #     acc_curve_balanced.append((pred_sel == gt_sel).mean())
+
+    #     # Accuracy spécifique par classe
+    #     acc_curve_class0.append((pred0_sorted[:m] == gt0_sorted[:m]).mean())
+    #     acc_curve_class1.append((pred1_sorted[:m] == gt1_sorted[:m]).mean())
+
+
+    # # Plot
+    # plt.figure(figsize=(6,4))
+    # plt.plot(ratios*100, acc_curve_balanced, '-o', label="Balanced (per class)")
+    # plt.plot(ratios*100, acc_curve_class0, '-o', label="Normal class accuracy")
+    # plt.plot(ratios*100, acc_curve_class1, '-o', label="Cancer class accuracy")
+
+    # plt.xlabel("Selected % (per class)")
+    # plt.ylabel("Accuracy")
+    # plt.title("Balanced accuracy vs. entropy-based selection")
+    # plt.legend()
+    # plt.grid(True)
+
+    # save_or_show("balanced_accuracy_vs_ratio.png", save=save, save_dir=save_dir)
+        
 def fast_eval():
     t0 = dt.datetime.now()
 
@@ -1094,18 +1468,44 @@ def fast_eval():
     parser.add_argument("--encoder_name", type=str, default=None)
     parser.add_argument("--dataset_type", type=str, default=None)
     # parser.add_argument("--exp_path", type=str, default=None)
-    parser.add_argument('--image_ids_to_draw', nargs='+', type=str, default=None)
-    parser.add_argument('--image_ids_to_draw_target', nargs='+', type=str, default=None)
     parser.add_argument("--tmp_outd", type=str, default='tmp_outd')
     parser.add_argument('--noise_level_for_eval_with_noisy_bbox', nargs='+',
                         type=int, default=[5, 10, 15, 20, 25, 30, 35 ,40, 45, 50])
-    parser.add_argument("--fold_src_dataset", type=int, default=0, help="fold.")
-    parser.add_argument("--fold_trg_dataset", type=int, default=0, help="fold.")
-    parser.add_argument("--target_dataset", type=str, default=None,
-                       help="Name of the dataset.")
-    parser.add_argument("--source_dataset", type=str, default=None, help="Source dataset")
+    #parser.add_argument("--target_dataset", type=str, default=None,
+    #                    help="Name of the dataset.", required=True, choices=[constants.CAMELYON512, constants.GLAS])
+    parser.add_argument('--image_ids_to_draw', nargs='+', type=str, default=None)
+    parser.add_argument('--image_ids_to_draw_target', nargs='+', type=str, default=None)
+    #parser.add_argument("--source_dataset", type=str, default=None, help="Source dataset")
     #parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
     parser.add_argument("--path_pre_trained_source", type=str, default=None, help="Path to the pre-trained source model.")
+    #parser.add_argument("--fold_dataset", type=int, default=0, help="fold.")
+    parser.add_argument(
+        "--source_dataset",
+        type=str,
+        default=None,
+        help="Source dataset"
+    )
+
+    parser.add_argument(
+        "--fold_src_dataset",
+        type=int,
+        default=0,
+        help="Source dataset fold"
+    )
+
+    parser.add_argument(
+        "--target_dataset",
+        type=str,
+        default=None,
+        help="Target dataset"
+    )
+
+    parser.add_argument(
+        "--fold_trg_dataset",
+        type=int,
+        default=0,
+        help="Target dataset fold"
+    )
     parser.add_argument("--sfda_method", type=str, default=0, help="fold.")
     parser.add_argument("--wsol_method", type=str, default='wsol', help="fold.")
     
@@ -1134,8 +1534,8 @@ def fast_eval():
     for checkpoint_type_extended in base_checkpoint_types:
         checkpoint_type = checkpoint_type_extended
         
+        #split = parsedargs.split
         split = parsedargs.split
-        #split = "train"
         # exp_path = parsedargs.exp_path
         # # checkpoint_type = parsedargs.checkpoint_type
         # # tmp_outd = join(parsedargs.tmp_outd, os.path.split(exp_path)[-1])#, 'split_'+split+'_'+checkpoint_type)
@@ -1167,7 +1567,20 @@ def fast_eval():
 
 
             #Get features at the pixel level
-            get_features(exp_path=exp_path, sf_uda_source_folder=parsedargs.path_pre_trained_source,image_ids_to_draw=parsedargs.image_ids_to_draw,image_ids_to_draw_target=parsedargs.image_ids_to_draw_target, checkpoint_type=checkpoint_type, dataset=parsedargs.source_dataset, cudaid=parsedargs.cudaid, split=split, tmp_outd='tmp_outd', parsedargs=parsedargs, target_method=target_method)
+            overlay_images, input_images, method_name, gt_masks = get_features(
+                        exp_path=exp_path,
+                        sf_uda_source_folder=parsedargs.path_pre_trained_source,
+                        image_ids_to_draw=parsedargs.image_ids_to_draw,
+                        image_ids_to_draw_target=parsedargs.image_ids_to_draw_target,
+                        checkpoint_type=checkpoint_type,
 
+                        dataset=parsedargs.target_dataset,
+
+                        cudaid=parsedargs.cudaid,
+                        split=split,
+                        tmp_outd="tmp_outd",
+                        parsedargs=parsedargs,
+                        target_method=target_method
+                    )
 if __name__ == '__main__':
     fast_eval()

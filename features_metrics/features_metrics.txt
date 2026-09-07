@@ -1,0 +1,82 @@
+********************************************************************************
+Source dataset: GLAS | Fold: 0
+Target dataset: CAMELYON17_512 | Fold: 1
+WSOL method: PixelCAM
+Method: PixelCAM
+SFDA method: sfde
+Checkpoint: best_classification
+Split: test
+
+Classification / Localization:
+Accuracy: 58.720930232558146
+PxAP: 27.16290482699455
+
+Feature Separability:
+J1 image: 0.06045533539074002
+J2 image: 0.05700885053789756
+DBI image: 2.9477026191072357
+Mean J2 pixel: nan
+
+Classification Metrics:
+F1 macro: 0.5439028944911297
+F1 per class: [0.40336134453781514, 0.6844444444444444]
+Balanced accuracy: 0.5872093023255814
+Confusion matrix: [[24, 62], [9, 77]]
+
+Calibration Metrics:
+ECE: 0.3712192177772522
+NLL: 1.5629745721817017
+Brier: 0.36849039793014526
+
+Prediction Distribution:
+KL uniform: 0.20423778891563416
+
+Margin Metrics:
+Margin mean: 0.8894419074058533
+Margin median: 0.9834617376327515
+
+Feature Neighborhood:
+k-NN accuracy: 0.9127906976744186
+********************************************************************************
+
+********************************************************************************
+Source dataset: GLAS | Fold: 0
+Target dataset: CAMELYON17_512 | Fold: 1
+WSOL method: PixelCAM
+Method: PixelCAM
+SFDA method: sfde
+Checkpoint: best_classification
+Split: test
+
+Classification / Localization:
+Accuracy: 58.720930232558146
+PxAP: 27.162872515959123
+
+Feature Separability:
+J1 image: 0.06045533539074002
+J2 image: 0.05700885053789756
+DBI image: 2.9477026191072357
+Mean J2 pixel: nan
+
+Classification Metrics:
+F1 macro: 0.5439028944911297
+F1 per class: [0.40336134453781514, 0.6844444444444444]
+Balanced accuracy: 0.5872093023255814
+Confusion matrix: [[24, 62], [9, 77]]
+
+Calibration Metrics:
+ECE: 0.3712192177772522
+NLL: 1.5629745721817017
+Brier: 0.36849039793014526
+
+Prediction Distribution:
+KL uniform: 0.20423778891563416
+
+Margin Metrics:
+Margin mean: 0.8894419074058533
+Margin median: 0.9834617376327515
+
+Feature Neighborhood:
+k-NN accuracy: 0.9127906976744186
+********************************************************************************
+

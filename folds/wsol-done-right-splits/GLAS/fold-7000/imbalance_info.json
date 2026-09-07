@@ -1,0 +1,53 @@
+{
+  "fold_id": "7000",
+  "source_fold": "fold-0",
+  "source_fold_id": "0",
+  "majority_percent": 70,
+  "majority_class": 0,
+  "majority_name": "normal",
+  "minority_class": 1,
+  "minority_name": "cancer",
+  "train": {
+    "n_total": 29,
+    "normal_count": 20,
+    "cancer_count": 9,
+    "normal_fraction": 0.6896551724137931,
+    "cancer_fraction": 0.3103448275862069,
+    "selected_image_ids": [
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_11.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_15.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_20.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_21.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_3.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_30.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_32.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_34.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_37.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_4.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_40.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_42.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_46.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_47.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_49.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_53.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_56.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_59.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_6.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_62.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_66.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_67.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_69.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_71.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_79.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_8.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_81.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_84.bmp",
+      "Warwick_QU_Dataset_(Released_2016_07_08)/train_9.bmp"
+    ]
+  },
+  "unchanged_splits": [
+    "test",
+    "valcl",
+    "valpx"
+  ]
+}
