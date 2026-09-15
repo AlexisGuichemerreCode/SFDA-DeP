@@ -941,7 +941,9 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'esfda_flip_labels': False,  # flip labels of the images
         'esfda_flip_labels_v2': False,  # flip labels of the images
         'esfda_flip_labels_v3': False,  # flip labels of the images
+        'esfda_flip_labels_v4': False,
         'CEForget_lambda': 0.1,  # lambda of this term. >= 0.
+        'CEForget_entropy_lambda': 1.0,
 
         'esfda_notflip_labels': False,  # do not flip labels of the images
         'CERetain_lambda': 0.1,  # lambda of this term. >= 0.

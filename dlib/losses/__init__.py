@@ -47,6 +47,7 @@ from dlib.losses.core import CENotFlipLoss
 from dlib.losses.unlearning_sfda import ForgetClassSuppressionLoss
 from dlib.losses.core import CEForgetLoss
 from dlib.losses.core import CEMaxForgetLoss
+from dlib.losses.core import CEForgetEntropyLoss
 from dlib.losses.core import EntropyFcamsLoss
 
 from dlib.losses.sf_uda import UdaCrossEntropyImgPseudoLabels

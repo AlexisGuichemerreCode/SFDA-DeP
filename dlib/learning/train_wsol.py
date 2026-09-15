@@ -32,6 +32,7 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.metrics import roc_auc_score, average_precision_score, roc_curve, precision_recall_curve
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
+from sklearn.metrics import balanced_accuracy_score
 
 
 root_dir = dirname(dirname(dirname(abspath(__file__))))
@@ -373,6 +374,8 @@ class Trainer(Basic):
         # ============================================================
 
         self.store_loss = []
+        self.store_forget_suppress_loss = []
+        self.store_forget_entropy_loss = []
 
 
 
@@ -1375,6 +1378,7 @@ class Trainer(Basic):
 
 
                     probs = torch.softmax(cl_logits, dim=1)      # [B, C]
+                    key_arg["probs"] = probs
                     pred_class = probs.argmax(dim=1)             # [B]
                     entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1)  # [B]
 
@@ -3013,8 +3017,8 @@ class Trainer(Basic):
         stable_acc = stable_correct / stable_total if stable_total > 0 else 0.0
 
         results = {
-            "retain": flip_acc,
-            "forget": stable_acc
+            "retain": stable_acc,
+            "forget": flip_acc
         }
 
         # Save metrics
@@ -3024,9 +3028,9 @@ class Trainer(Basic):
         with open(out_txt, "a") as f:
             f.write(f"Epoch {self.epoch}\n")
             f.write(f"Nb retain : {len(stable_selected)}\n")
-            f.write(f"retain acc : {flip_acc:.4f}\n")
+            f.write(f"retain acc : {stable_acc:.4f}\n")
             f.write(f"Nb forget : {len(flippable_subset)}\n")
-            f.write(f"forget acc : {stable_acc:.4f}\n")
+            f.write(f"forget acc : {flip_acc:.4f}\n")
             f.write("\n")
 
         # Load previous results if exists
@@ -5808,7 +5812,7 @@ class Trainer(Basic):
 
             self.optimizer.zero_grad(set_to_none=True)
 
-            if self.args.esfda and self.args.esfda_entropy_partial:
+            if (self.args.esfda):
                 with autocast(enabled=self.args.amp):
                     logits, loss = self._one_step_train_unlearning(images,
                                                         raw_imgs,
@@ -5862,6 +5866,13 @@ class Trainer(Basic):
             num_images += images.size(0)
 
             self.store_loss.append((loss.detach().squeeze() * images.size(0)).item())
+
+            for loss_module in self.loss.losses:
+                if hasattr(loss_module, 'last_suppress_loss'):
+                    self.store_forget_suppress_loss.append(
+                        loss_module.last_suppress_loss.item())
+                    self.store_forget_entropy_loss.append(
+                        loss_module.last_entropy_loss.item())
 
             if loss.requires_grad:
                 scaler.scale(loss).backward()
@@ -6075,6 +6086,32 @@ class Trainer(Basic):
 
         torch.cuda.empty_cache()
         return classification_acc.item()
+
+    def _compute_balanced_accuracy(self, loader):
+        torch.cuda.empty_cache()
+
+        all_preds = []
+        all_targets = []
+
+        for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
+            images = images.cuda(self.args.c_cudaid)
+            targets = targets.cuda(self.args.c_cudaid)
+
+            with torch.no_grad():
+                cl_logits = self.cl_forward(images)
+                pred = cl_logits.argmax(dim=1)
+
+            all_preds.extend(pred.detach().cpu().tolist())
+            all_targets.extend(targets.detach().cpu().tolist())
+
+        balanced_acc = balanced_accuracy_score(
+            all_targets,
+            all_preds
+        ) * 100.0
+
+        torch.cuda.empty_cache()
+
+        return balanced_acc
 
     def _compute_accuracy_binary_metrics(self, loader):
         torch.cuda.empty_cache()
@@ -7892,7 +7929,10 @@ class Trainer(Basic):
         accuracy = 0.0
         precision, recall, f1 = 0.0, 0.0, 0.0
         if self.args.task != constants.SEG:
-            accuracy = self._compute_accuracy(loader=self.loaders[splitcl])
+            if self.args.dataset in [constants.EBHI]:
+                accuracy = self._compute_balanced_accuracy(loader=self.loaders[splitcl])
+            else:
+                accuracy = self._compute_accuracy(loader=self.loaders[splitcl])
             #accuracy,precision, recall, f1 = self._compute_accuracy_binary_metrics(loader=self.loaders[splitcl])
 
         self.performance_meters[

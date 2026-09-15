@@ -752,8 +752,10 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_flip_labels', type=str2bool, default=None,)
     parser.add_argument('--esfda_flip_labels_v2', type=str2bool, default=None,)
     parser.add_argument('--esfda_flip_labels_v3', type=str2bool, default=None,)
+    parser.add_argument('--esfda_flip_labels_v4', type=str2bool, default=None,)
 
     parser.add_argument('--CEForget_lambda', type=float, default=None,)
+    parser.add_argument('--CEForget_entropy_lambda', type=float, default=None,)
 
 
     parser.add_argument('--fine_tuning', type=str2bool, default=None,)

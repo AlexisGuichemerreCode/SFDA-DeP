@@ -466,7 +466,8 @@ def get_loss_target(args):
             masterloss.add(Cal_Loss)
 
         if args.esfda:
-            if args.esfda_entropy_partial:
+            if (args.esfda_entropy_partial or
+                    getattr(args, 'esfda_flip_labels_v4', False)):
                 # Partial_Entropy_Loss = losses.PartialEntropy(
                 #     cuda_id=args.c_cudaid,
                 #     support_background=support_background,
@@ -503,6 +504,17 @@ def get_loss_target(args):
                         multi_label_flag=multi_label_flag)
                     CEFlipLoss.set_it(lambda_=args.CEForget_lambda)
                     masterloss.add(CEFlipLoss)
+
+                if args.esfda_flip_labels_v4:
+                    CEForgetEntropy = losses.CEForgetEntropyLoss(
+                        cuda_id=args.c_cudaid,
+                        support_background=support_background,
+                        multi_label_flag=multi_label_flag)
+                    CEForgetEntropy.set_it(
+                        lambda_=args.CEForget_lambda,
+                        entropy_lambda=getattr(
+                            args, 'CEForget_entropy_lambda', 1.0))
+                    masterloss.add(CEForgetEntropy)
 
                 if args.esfda_notflip_labels:
                     CENotFlipLoss = losses.CENotFlipLoss(

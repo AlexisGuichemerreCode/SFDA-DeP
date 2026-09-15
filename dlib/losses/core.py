@@ -55,6 +55,7 @@ __all__ = [
     'CEFlipLoss',
     'CEForgetLoss',
     'CEMaxForgetLoss',
+    'CEForgetEntropyLoss',
     'EntropyFcamsLoss',
 ]
 
@@ -479,6 +480,88 @@ class CEMaxForgetLoss(ElementaryLoss):
         # Maximize CE  (=> minimize log(p_c))
         # -----------------------------
         return - self.lambda_ * ce_loss
+
+
+class CEForgetEntropyLoss(ElementaryLoss):
+    """Minimize entropy over classes other than the forgotten class."""
+
+    def __init__(self, **kwargs):
+        super(CEForgetEntropyLoss, self).__init__(**kwargs)
+        self.entropy_lambda_: float = 1.0
+        self.eps: float = 1e-8
+        self.already_set = False
+        self.last_suppress_loss = self._zero.detach()
+        self.last_entropy_loss = self._zero.detach()
+
+    def set_it(self, lambda_: float, entropy_lambda: float = 1.0,
+               eps: float = 1e-8):
+        assert isinstance(entropy_lambda, float) and entropy_lambda >= 0.0
+        assert eps > 0.0
+        self.entropy_lambda_ = entropy_lambda
+        self.eps = eps
+        self.already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+        super(CEForgetEntropyLoss, self).forward(epoch=epoch)
+        assert self.already_set
+
+        self.last_suppress_loss = self._zero.detach()
+        self.last_entropy_loss = self._zero.detach()
+
+        if not self.is_on():
+            return self._zero
+
+        assert cl_logits is not None
+        assert key_arg is not None
+        assert "cal_mask_forget" in key_arg
+        assert "forget_label_batch" in key_arg
+
+        forget_mask = torch.as_tensor(
+            key_arg["cal_mask_forget"],
+            dtype=torch.bool,
+            device=cl_logits.device
+        )
+        if not forget_mask.any():
+            return self._zero
+
+        forget_class = key_arg["forget_label_batch"].to(
+            cl_logits.device).long()[forget_mask]
+
+        probs = key_arg.get("probs")
+        if probs is None:
+            probs = torch.softmax(cl_logits, dim=1)
+        assert probs.shape == cl_logits.shape
+        probs = probs[forget_mask]
+        p_forget = probs.gather(1, forget_class.unsqueeze(1)).squeeze(1)
+        remaining_mass = (1.0 - p_forget).clamp_min(self.eps)
+
+        keep_mask = torch.ones_like(probs, dtype=torch.bool)
+        keep_mask.scatter_(1, forget_class.unsqueeze(1), False)
+        remaining_probs = probs.masked_fill(~keep_mask, 0.0)
+        remaining_probs = remaining_probs / remaining_mass.unsqueeze(1)
+        entropy_loss = -(
+            remaining_probs *
+            torch.log(remaining_probs.clamp_min(self.eps))
+        ).sum(dim=1).mean()
+
+        self.last_entropy_loss = entropy_loss.detach()
+        return self.entropy_lambda_ * entropy_loss
 
 
 class CEFlipLoss(ElementaryLoss):
