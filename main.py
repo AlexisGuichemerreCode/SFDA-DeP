@@ -213,6 +213,9 @@ def main():
     if args.task != constants.SEG:
         chpts = [constants.BEST_CL]
 
+        if args.dataset == constants.EBHI:
+            chpts.append(constants.BEST_F1)
+
         if args.localization_avail:
             chpts = [constants.BEST_LOC] + chpts
     else:
@@ -227,6 +230,8 @@ def main():
             epoch = trainer.args.best_loc_epoch
         elif eval_checkpoint_type == constants.BEST_CL:
             epoch = trainer.args.best_cl_epoch
+        elif eval_checkpoint_type == constants.BEST_F1:
+            epoch = trainer.args.best_f1_epoch
         else:
             raise NotImplementedError
 

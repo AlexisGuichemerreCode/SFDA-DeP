@@ -582,6 +582,7 @@ class Trainer(Basic):
 
         self.best_loc_model = deepcopy(self.model).to(self.cpu_device).eval()
         self.best_cl_model = deepcopy(self.model).to(self.cpu_device).eval()
+        self.best_f1_model = deepcopy(self.model).to(self.cpu_device).eval()
 
         self.perf_meters_backup = None
         self.perf_gist_backup = None
@@ -5995,7 +5996,7 @@ class Trainer(Basic):
         assert isinstance(checkpoint_type, str)
         assert checkpoint_type != ''
 
-        assert checkpoint_type in [constants.BEST_LOC, constants.BEST_CL]
+        assert checkpoint_type in [constants.BEST_LOC, constants.BEST_CL, constants.BEST_F1]
 
         tag = '_{}'.format(checkpoint_type)
 
@@ -6112,6 +6113,33 @@ class Trainer(Basic):
         torch.cuda.empty_cache()
 
         return balanced_acc
+
+    def _compute_f1(self, loader):
+        torch.cuda.empty_cache()
+
+        all_preds = []
+        all_targets = []
+
+        for i, (images, targets, _, _, _, _, _, _,_) in enumerate(loader):
+            images = images.cuda(self.args.c_cudaid)
+            targets = targets.cuda(self.args.c_cudaid)
+
+            with torch.no_grad():
+                logits = self.cl_forward(images)
+                preds = logits.argmax(dim=1)
+
+            all_preds.extend(preds.cpu().tolist())
+            all_targets.extend(targets.cpu().tolist())
+
+        f1 = f1_score(
+            all_targets,
+            all_preds,
+            average="macro",
+            zero_division=0,
+        )
+
+        torch.cuda.empty_cache()
+        return f1
 
     def _compute_accuracy_binary_metrics(self, loader):
         torch.cuda.empty_cache()
@@ -7931,6 +7959,7 @@ class Trainer(Basic):
         if self.args.task != constants.SEG:
             if self.args.dataset in [constants.EBHI]:
                 accuracy = self._compute_balanced_accuracy(loader=self.loaders[splitcl])
+                f1 = self._compute_f1(loader=self.loaders[splitcl])
             else:
                 accuracy = self._compute_accuracy(loader=self.loaders[splitcl])
             #accuracy,precision, recall, f1 = self._compute_accuracy_binary_metrics(loader=self.loaders[splitcl])
@@ -7960,7 +7989,7 @@ class Trainer(Basic):
         elif split == constants.TESTSET:
             if checkpoint_type == constants.BEST_LOC:
                 best_valid_tau = self.best_valid_tau_loc
-            elif checkpoint_type == constants.BEST_CL:
+            elif checkpoint_type in [constants.BEST_CL, constants.BEST_F1]:
                 best_valid_tau = self.best_valid_tau_cl
             else:
                 raise NotImplementedError
@@ -8052,6 +8081,7 @@ class Trainer(Basic):
                     checkpoint_type=checkpoint_type)
 
         torch.cuda.empty_cache()
+
 
     def plot_loc_perf_curves(self, curves: dict, fdout: str, title: str,
                              checkpoint_type: str):
@@ -8579,6 +8609,10 @@ class Trainer(Basic):
                 constants.CLASSIFICATION_MTR].best_epoch
             self.args.best_cl_epoch = best_cl_epoch
 
+            if self.args.dataset == constants.EBHI:
+                self.args.best_f1_epoch = self.performance_meters[split][
+                    constants.F1_MTR].best_epoch
+
     def save_checkpoints(self):
         if self.args.localization_avail:
             split = constants.PXVALIDSET
@@ -8597,13 +8631,22 @@ class Trainer(Basic):
             self._save_model(checkpoint_type=constants.BEST_CL,
                              epoch=best_epoch)
 
+            if self.args.dataset == constants.EBHI:
+                best_f1_epoch = self.performance_meters[split][
+                    constants.F1_MTR].best_epoch
+                self._save_model(checkpoint_type=constants.BEST_F1,
+                                 epoch=best_f1_epoch)
+
     def _save_model(self, checkpoint_type, epoch):
-        assert checkpoint_type in [constants.BEST_LOC, constants.BEST_CL]
+        assert checkpoint_type in [constants.BEST_LOC, constants.BEST_CL,
+                                   constants.BEST_F1]
 
         if checkpoint_type == constants.BEST_CL:
             _model = deepcopy(self.best_cl_model).to(self.cpu_device).eval()
         elif checkpoint_type == constants.BEST_LOC:
             _model = deepcopy(self.best_loc_model).to(self.cpu_device).eval()
+        elif checkpoint_type == constants.BEST_F1:
+            _model = deepcopy(self.best_f1_model).to(self.cpu_device).eval()
         else:
             raise NotImplementedError
 
@@ -9096,6 +9139,12 @@ class Trainer(Basic):
 
         return cnd
 
+    def _is_best_model_f1(self, epoch: int) -> bool:
+        cnd = self.args.dataset == constants.EBHI
+        cnd &= (self.performance_meters[constants.CLVALIDSET][
+                    constants.F1_MTR].best_epoch) == epoch
+        return cnd
+
     def model_selection(self, epoch):
 
         if self.args.method != constants.METHOD_MAXMIN:
@@ -9117,8 +9166,13 @@ class Trainer(Basic):
                     constants.PXVALIDSET][epoch][constants.MTR_BESTTAU][0]
                 self.args.best_valid_tau_cl = self.best_valid_tau_cl
 
+        if self._is_best_model_f1(epoch):
+            self.best_f1_model = deepcopy(self.model).to(
+                self.cpu_device).eval()
+
     def load_checkpoint(self, checkpoint_type):
-        assert checkpoint_type in [constants.BEST_LOC, constants.BEST_CL]
+        assert checkpoint_type in [constants.BEST_LOC, constants.BEST_CL,
+                       constants.BEST_F1]
         tag = get_tag(self.args, checkpoint_type=checkpoint_type)
         path = join(self.args.outd, tag)
 

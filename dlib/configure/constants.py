@@ -415,10 +415,12 @@ RESIZE_SIZE = 256
 # ================= check points
 BEST_CL = 'best_classification'
 BEST_LOC = 'best_localization'
+BEST_F1 = 'best_f1'
 
 COLOUR_BEST_CP = {
     BEST_CL: 'blue',
-    BEST_LOC: 'lawngreen'
+    BEST_LOC: 'lawngreen',
+    BEST_F1: 'darkorange'
 }
 
 EVAL_CHECKPOINT = {

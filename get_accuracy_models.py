@@ -82,6 +82,7 @@ import torch.nn.functional as F
 from sklearn.neighbors import KNeighborsClassifier
 from collections import Counter
 
+from sklearn.metrics import f1_score
 
 
 
@@ -116,6 +117,82 @@ def cl_forward(args, model, images):
 
 #     classification_acc = num_correct / float(num_images) * 100
 #     return classification_acc
+
+def _compute_accuracy_f1(args, model, loader, num_classes=2):
+    num_correct = 0
+    num_images = 0
+
+    pred_counter = Counter()
+
+    # Pour calculer le F1 sur tout le dataset
+    all_preds = []
+    all_targets = []
+
+    for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
+        images = images.cuda(non_blocking=True)
+        targets = targets.cuda(non_blocking=True)
+
+        with torch.no_grad():
+            cl_logits = cl_forward(args, model, images)
+            pred = cl_logits.argmax(dim=1)
+
+        # Standard accuracy
+        num_correct += (pred == targets).sum().item()
+        num_images += images.size(0)
+
+        # Count predictions
+        pred_counter.update(pred.cpu().tolist())
+
+        # Store predictions / GT for F1
+        all_preds.extend(pred.cpu().tolist())
+        all_targets.extend(targets.cpu().tolist())
+
+    # ==========================================================
+    # STANDARD ACCURACY
+    # ==========================================================
+    classification_acc = num_correct / float(num_images) * 100
+
+    # ==========================================================
+    # MACRO F1
+    # ==========================================================
+    macro_f1 = f1_score(
+        all_targets,
+        all_preds,
+        average="macro",
+        zero_division=0
+    ) * 100.0
+
+    # ==========================================================
+    # Prediction distribution
+    # ==========================================================
+    pred_counts = torch.zeros(num_classes, dtype=torch.float32)
+
+    for k, v in pred_counter.items():
+        if 0 <= k < num_classes:
+            pred_counts[k] = float(v)
+
+    total_preds = pred_counts.sum().clamp_min(1.0)
+    pred_percents = (pred_counts / total_preds) * 100.0
+
+    over_pred_class = int(pred_counts.argmax().item())
+    under_pred_class = int(pred_counts.argmin().item())
+
+    max_pred = pred_counts.max().item()
+    min_pred = pred_counts.min().item()
+
+    ratio_pred = max_pred / (min_pred + 1e-6)
+
+    return (
+        classification_acc,
+        ratio_pred,
+        pred_counts,
+        pred_percents,
+        over_pred_class,
+        under_pred_class,
+        macro_f1,
+    )
+
+
 
 def _compute_accuracy(args, model, loader, num_classes=2):
     num_correct = 0
@@ -2116,7 +2193,17 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         classification_acc = _compute_accuracy(
             args, model, loaders[parsedargs.split], num_classes=args.num_classes
         )[0]
-    
+
+        metrics = _compute_accuracy_f1(
+            args,
+            model,
+            loaders[parsedargs.split],
+            num_classes=args.num_classes
+        )
+
+        classification_acc = metrics[0]
+        macro_f1 = metrics[6]
+            
     
    
     print(f"Classification Accuracy on {parsedargs.split} set: {classification_acc:.2f}%")
