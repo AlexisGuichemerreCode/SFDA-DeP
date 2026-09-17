@@ -82,7 +82,13 @@ import torch.nn.functional as F
 from sklearn.neighbors import KNeighborsClassifier
 from collections import Counter
 
-from sklearn.metrics import f1_score
+from sklearn.metrics import (
+    f1_score,
+    balanced_accuracy_score,
+    precision_score,
+    recall_score,
+    confusion_matrix
+)
 
 
 
@@ -118,15 +124,26 @@ def cl_forward(args, model, images):
 #     classification_acc = num_correct / float(num_images) * 100
 #     return classification_acc
 
-def _compute_accuracy_f1(args, model, loader, num_classes=2):
+def _compute_accuracy_f1(args, model, loader, num_classes=6):
+    """
+    Compute global classification metrics, prediction distribution,
+    and per-class accuracy.
+
+    Per-class accuracy is:
+        correct predictions for class c / number of GT samples of class c
+
+    In single-label multiclass classification, this is equivalent
+    to the recall of each class.
+    """
+
     num_correct = 0
     num_images = 0
 
+    all_targets = []
+    all_preds = []
     pred_counter = Counter()
 
-    # Pour calculer le F1 sur tout le dataset
-    all_preds = []
-    all_targets = []
+    model.eval()
 
     for i, (images, targets, _, _, _, _, _, _, _) in enumerate(loader):
         images = images.cuda(non_blocking=True)
@@ -136,35 +153,102 @@ def _compute_accuracy_f1(args, model, loader, num_classes=2):
             cl_logits = cl_forward(args, model, images)
             pred = cl_logits.argmax(dim=1)
 
-        # Standard accuracy
         num_correct += (pred == targets).sum().item()
         num_images += images.size(0)
 
-        # Count predictions
-        pred_counter.update(pred.cpu().tolist())
+        pred_cpu = pred.detach().cpu()
+        targets_cpu = targets.detach().cpu()
 
-        # Store predictions / GT for F1
-        all_preds.extend(pred.cpu().tolist())
-        all_targets.extend(targets.cpu().tolist())
+        all_preds.extend(pred_cpu.tolist())
+        all_targets.extend(targets_cpu.tolist())
 
-    # ==========================================================
-    # STANDARD ACCURACY
-    # ==========================================================
-    classification_acc = num_correct / float(num_images) * 100
+        pred_counter.update(pred_cpu.tolist())
 
-    # ==========================================================
-    # MACRO F1
-    # ==========================================================
+    # ============================================================
+    # GLOBAL METRICS
+    # ============================================================
+
+    classification_acc = (
+        num_correct / float(num_images) * 100.0
+        if num_images > 0 else 0.0
+    )
+
+    labels = list(range(num_classes))
+
+    balanced_acc = balanced_accuracy_score(
+        all_targets,
+        all_preds
+    ) * 100.0
+
     macro_f1 = f1_score(
         all_targets,
         all_preds,
+        labels=labels,
         average="macro",
         zero_division=0
     ) * 100.0
 
-    # ==========================================================
-    # Prediction distribution
-    # ==========================================================
+    macro_precision = precision_score(
+        all_targets,
+        all_preds,
+        labels=labels,
+        average="macro",
+        zero_division=0
+    ) * 100.0
+
+    macro_recall = recall_score(
+        all_targets,
+        all_preds,
+        labels=labels,
+        average="macro",
+        zero_division=0
+    ) * 100.0
+
+    # ============================================================
+    # PER-CLASS METRICS
+    # ============================================================
+
+    per_class_accuracy = recall_score(
+        all_targets,
+        all_preds,
+        labels=labels,
+        average=None,
+        zero_division=0
+    ) * 100.0
+
+    per_class_precision = precision_score(
+        all_targets,
+        all_preds,
+        labels=labels,
+        average=None,
+        zero_division=0
+    ) * 100.0
+
+    per_class_f1 = f1_score(
+        all_targets,
+        all_preds,
+        labels=labels,
+        average=None,
+        zero_division=0
+    ) * 100.0
+
+    # ============================================================
+    # TRUE DISTRIBUTION
+    # ============================================================
+
+    true_counts = torch.zeros(num_classes, dtype=torch.float32)
+
+    for target in all_targets:
+        if 0 <= target < num_classes:
+            true_counts[target] += 1.0
+
+    total_targets = true_counts.sum().clamp_min(1.0)
+    true_percents = true_counts / total_targets * 100.0
+
+    # ============================================================
+    # PREDICTION DISTRIBUTION
+    # ============================================================
+
     pred_counts = torch.zeros(num_classes, dtype=torch.float32)
 
     for k, v in pred_counter.items():
@@ -172,27 +256,70 @@ def _compute_accuracy_f1(args, model, loader, num_classes=2):
             pred_counts[k] = float(v)
 
     total_preds = pred_counts.sum().clamp_min(1.0)
-    pred_percents = (pred_counts / total_preds) * 100.0
+    pred_percents = pred_counts / total_preds * 100.0
 
     over_pred_class = int(pred_counts.argmax().item())
     under_pred_class = int(pred_counts.argmin().item())
 
     max_pred = pred_counts.max().item()
     min_pred = pred_counts.min().item()
-
     ratio_pred = max_pred / (min_pred + 1e-6)
 
-    return (
-        classification_acc,
-        ratio_pred,
-        pred_counts,
-        pred_percents,
-        over_pred_class,
-        under_pred_class,
-        macro_f1,
-    )
+    # ============================================================
+    # PRINT
+    # ============================================================
 
+    print("\n" + "=" * 80)
+    print("CLASSIFICATION METRICS")
+    print("=" * 80)
 
+    print(f"Classification Accuracy : {classification_acc:.2f}%")
+    print(f"Balanced Accuracy       : {balanced_acc:.2f}%")
+    print(f"Macro-F1                : {macro_f1:.2f}%")
+    print(f"Macro-Precision         : {macro_precision:.2f}%")
+    print(f"Macro-Recall            : {macro_recall:.2f}%")
+
+    print("\n" + "=" * 80)
+    print("PER-CLASS ACCURACY / RECALL")
+    print("=" * 80)
+
+    for c in range(num_classes):
+        print(
+            f"Class {c}: "
+            f"Accuracy/Recall={per_class_accuracy[c]:.2f}% | "
+            f"Precision={per_class_precision[c]:.2f}% | "
+            f"F1={per_class_f1[c]:.2f}% | "
+            f"GT={int(true_counts[c].item())} ({true_percents[c].item():.2f}%) | "
+            f"Pred={int(pred_counts[c].item())} ({pred_percents[c].item():.2f}%)"
+        )
+
+    print("\n" + "=" * 80)
+    print("SANITY CHECK")
+    print("=" * 80)
+    print(f"Balanced Accuracy       : {balanced_acc:.4f}%")
+    print(f"Mean per-class accuracy : {float(np.mean(per_class_accuracy)):.4f}%")
+    print("=" * 80 + "\n")
+
+    return {
+        "classification_accuracy": classification_acc,
+        "balanced_accuracy": balanced_acc,
+        "macro_f1": macro_f1,
+        "macro_precision": macro_precision,
+        "macro_recall": macro_recall,
+
+        "per_class_accuracy": per_class_accuracy,
+        "per_class_precision": per_class_precision,
+        "per_class_f1": per_class_f1,
+
+        "true_counts": true_counts,
+        "true_percents": true_percents,
+
+        "pred_counts": pred_counts,
+        "pred_percents": pred_percents,
+        "over_pred_class": over_pred_class,
+        "under_pred_class": under_pred_class,
+        "ratio_pred": ratio_pred,
+    }
 
 def _compute_accuracy(args, model, loader, num_classes=2):
     num_correct = 0
@@ -2185,15 +2312,26 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     
 
     cam_performance = cam_computer.compute_and_evaluate_cams()
+
+    # Defaults for TEDLOC branch
+    balanced_acc = None
+    macro_f1 = None
+    macro_precision = None
+    macro_recall = None
+    per_class_accuracy = None
+    per_class_precision = None
+    per_class_f1 = None
+    true_counts = None
+    true_percents = None
+    pred_counts = None
+    pred_percents = None
+
     if str(parsedargs.wsol_method).upper() == "TEDLOC":
         classification_acc = _compute_accuracy_CLIPDISTILL_TXTENC(
             args, model, loaders[parsedargs.split]
         )
-    else:
-        classification_acc = _compute_accuracy(
-            args, model, loaders[parsedargs.split], num_classes=args.num_classes
-        )[0]
 
+    else:
         metrics = _compute_accuracy_f1(
             args,
             model,
@@ -2201,12 +2339,62 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
             num_classes=args.num_classes
         )
 
-        classification_acc = metrics[0]
-        macro_f1 = metrics[6]
-            
-    
-   
+        classification_acc = metrics["classification_accuracy"]
+        balanced_acc = metrics["balanced_accuracy"]
+        macro_f1 = metrics["macro_f1"]
+        macro_precision = metrics["macro_precision"]
+        macro_recall = metrics["macro_recall"]
+
+        per_class_accuracy = metrics["per_class_accuracy"]
+        per_class_precision = metrics["per_class_precision"]
+        per_class_f1 = metrics["per_class_f1"]
+
+        true_counts = metrics["true_counts"]
+        true_percents = metrics["true_percents"]
+        pred_counts = metrics["pred_counts"]
+        pred_percents = metrics["pred_percents"]
+
+        if str(parsedargs.target_dataset).upper() == "EBHI" and args.num_classes == 6:
+            class_names = [
+                "Normal",
+                "Polyp",
+                "Low-grade IN",
+                "High-grade IN",
+                "Serrated adenoma",
+                "Adenocarcinoma",
+            ]
+        else:
+            class_names = [
+                f"Class {c}"
+                for c in range(args.num_classes)
+            ]
+
+        print("\n" + "=" * 80)
+        print("PER-CLASS RESULTS")
+        print("=" * 80)
+
+        for c, class_name in enumerate(class_names):
+            print(
+                f"{class_name:20s} | "
+                f"Acc/Recall: {per_class_accuracy[c]:6.2f}% | "
+                f"Precision: {per_class_precision[c]:6.2f}% | "
+                f"F1: {per_class_f1[c]:6.2f}% | "
+                f"GT: {int(true_counts[c].item()):4d} "
+                f"({true_percents[c].item():6.2f}%) | "
+                f"Pred: {int(pred_counts[c].item()):4d} "
+                f"({pred_percents[c].item():6.2f}%)"
+            )
+
+        print("=" * 80 + "\n")
+
     print(f"Classification Accuracy on {parsedargs.split} set: {classification_acc:.2f}%")
+
+    if balanced_acc is not None:
+        print(f"Balanced Accuracy on {parsedargs.split} set: {balanced_acc:.2f}%")
+        print(f"Macro-F1 on {parsedargs.split} set: {macro_f1:.2f}%")
+        print(f"Macro-Precision on {parsedargs.split} set: {macro_precision:.2f}%")
+        print(f"Macro-Recall on {parsedargs.split} set: {macro_recall:.2f}%")
+
     print(f"CAM Performance PxAP on {parsedargs.split} set: {cam_performance:.2f}")
 
     output_root = (
@@ -2234,6 +2422,48 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
         "pxap": float(cam_performance),
     }
 
+    if balanced_acc is not None:
+        results.update({
+            "balanced_accuracy": float(balanced_acc),
+            "macro_f1": float(macro_f1),
+            "macro_precision": float(macro_precision),
+            "macro_recall": float(macro_recall),
+
+            "per_class_accuracy": [
+                float(x) for x in per_class_accuracy
+            ],
+            "per_class_precision": [
+                float(x) for x in per_class_precision
+            ],
+            "per_class_f1": [
+                float(x) for x in per_class_f1
+            ],
+
+            "true_counts": [
+                int(x.item()) for x in true_counts
+            ],
+            "true_percentages": [
+                float(x.item()) for x in true_percents
+            ],
+
+            "pred_counts": [
+                int(x.item()) for x in pred_counts
+            ],
+            "pred_percentages": [
+                float(x.item()) for x in pred_percents
+            ],
+        })
+
+        if str(parsedargs.target_dataset).upper() == "EBHI" and args.num_classes == 6:
+            results["class_names"] = [
+                "Normal",
+                "Polyp",
+                "Low-grade IN",
+                "High-grade IN",
+                "Serrated adenoma",
+                "Adenocarcinoma",
+            ]
+
     with open(per_image_metrics_path, "w") as f:
         json.dump(results, f, indent=4)
 
@@ -2242,6 +2472,41 @@ def get_features(exp_path, sf_uda_source_folder,image_ids_to_draw,image_ids_to_d
     with open(results_path, "w") as f:
         f.write(f"Classification Accuracy: {classification_acc:.2f}%\n")
         f.write(f"CAM Performance PxAP: {cam_performance:.2f}\n")
+
+        if balanced_acc is not None:
+            f.write(f"Balanced Accuracy: {balanced_acc:.2f}%\n")
+            f.write(f"Macro-F1: {macro_f1:.2f}%\n")
+            f.write(f"Macro-Precision: {macro_precision:.2f}%\n")
+            f.write(f"Macro-Recall: {macro_recall:.2f}%\n")
+
+            f.write("\nPer-class metrics:\n")
+
+            if str(parsedargs.target_dataset).upper() == "EBHI" and args.num_classes == 6:
+                class_names_to_save = [
+                    "Normal",
+                    "Polyp",
+                    "Low-grade IN",
+                    "High-grade IN",
+                    "Serrated adenoma",
+                    "Adenocarcinoma",
+                ]
+            else:
+                class_names_to_save = [
+                    f"Class {c}"
+                    for c in range(args.num_classes)
+                ]
+
+            for c, class_name in enumerate(class_names_to_save):
+                f.write(
+                    f"{class_name}: "
+                    f"Accuracy/Recall={per_class_accuracy[c]:.2f}% | "
+                    f"Precision={per_class_precision[c]:.2f}% | "
+                    f"F1={per_class_f1[c]:.2f}% | "
+                    f"GT={int(true_counts[c].item())} "
+                    f"({true_percents[c].item():.2f}%) | "
+                    f"Pred={int(pred_counts[c].item())} "
+                    f"({pred_percents[c].item():.2f}%)\n"
+                )
 
     print(f"Results saved to: {results_path}")
 

@@ -523,6 +523,17 @@ def get_loss_target(args):
                         multi_label_flag=multi_label_flag)
                     CENotFlipLoss.set_it(lambda_=args.CERetain_lambda, esfda_flip_labels_weight = args.esfda_flip_labels_weight, esfda_weight_entropy = args.esfda_weight_entropy)
                     masterloss.add(CENotFlipLoss)
+
+                if args.div_pseudo_lb:
+                    div_loss = losses.UdaDiversityTargetClass(
+                        cuda_id=args.c_cudaid,
+                        lambda_=args.div_pseudo_lb_lambda,
+                        support_background=support_background,
+                        multi_label_flag=multi_label_flag,
+                        start_epoch=args.div_pseudo_lb_start_ep,
+                        end_epoch=args.div_pseudo_lb_end_ep
+                    )
+                    masterloss.add(div_loss)
             
             if args.esfda_loc:
                 UnlearningFattention_loss = losses.SelfUnLearningFattention(
