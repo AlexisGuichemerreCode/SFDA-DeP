@@ -90,7 +90,7 @@ def load_source_model(
     tmp_outd="tmp_outd",
 ):
     """
-    Load one GLAS source model (PixelCAM, SAT, or DeepMIL).
+    Load one source model (PixelCAM/EnergyCAM, SAT, or DeepMIL).
 
     Returns
     -------
@@ -98,7 +98,7 @@ def load_source_model(
         Model/config arguments loaded from the source checkpoint.
     args_dict:
         Dict corresponding to config_model.yaml. We reuse it to create
-        CAMELYON17 target dataloaders.
+        target dataloaders.
     model:
         Loaded source model.
     method_name:
@@ -161,7 +161,12 @@ def load_source_model(
     # --------------------------------------------------------
     model = get_model(args)[0]
 
-    if "PixelCAM" in method_name:
+    is_pixelcam_family = (
+        "PixelCAM" in method_name
+        or "EnergyCAM" in method_name
+    )
+
+    if is_pixelcam_family:
         if "deit" in encoder_name:
             model_state = torch.load(
                 join(path_cl, "model.pt"),
@@ -181,8 +186,20 @@ def load_source_model(
             )
             model.classification_head.load_state_dict(header_w, strict=True)
 
-            pixel_head_path = join(path_cl, "pixel_wise_classification_head.pt")
-            if os.path.isfile(pixel_head_path):
+            pixel_head_path = join(
+                path_cl,
+                "pixel_wise_classification_head.pt",
+            )
+
+            # The auxiliary pixel classifier is optional. It is only
+            # instantiated/loaded for the PixelCAM family. The hasattr
+            # guard prevents crashes for checkpoints/models that do not
+            # expose this head.
+            if (
+                pixel_wise_classification
+                and hasattr(model, "pixel_wise_classification_head")
+                and os.path.isfile(pixel_head_path)
+            ):
                 header_p = torch.load(
                     pixel_head_path,
                     map_location=get_cpu_device(),
@@ -190,7 +207,17 @@ def load_source_model(
                 model.pixel_wise_classification_head.load_state_dict(
                     header_p,
                     strict=True,
-                )cr
+                )
+                print(
+                    "Loaded pixel-wise classification head from: "
+                    f"{pixel_head_path}"
+                )
+            elif pixel_wise_classification:
+                print(
+                    "Pixel-wise classification requested for "
+                    f"{method_name}, but no compatible saved pixel head "
+                    "was found. Continuing with the classification model."
+                )
 
     elif method_name == "NEGEV":
         encoder_w = torch.load(
@@ -319,10 +346,10 @@ def build_target_loader(
 
 
 # ============================================================
-# Pixel metric for one (source model, target fold)
+# Background metric for one (source model, target fold)
 # ============================================================
 
-def compute_foreground_precision_curve(
+def compute_background_precision_curve(
     model,
     eval_args,
     loader,
@@ -331,17 +358,23 @@ def compute_foreground_precision_curve(
     data_root,
     split,
     cudaid,
+    positive_class=1,
 ):
     """
-    Same metric as in your current script:
+    Background counterpart of the foreground metric.
 
-      1. Keep cancer images only.
-      2. Compute the CAM for class 1.
-      3. Rank pixels from largest CAM score to smallest.
-      4. For Top 1%, ..., Top 100%, compute the fraction of selected
-         pixels that belong to the GT foreground.
+      1. Keep cancer/positive images only, so that a GT tumor mask exists.
+      2. Compute the CAM for the positive/cancer class.
+      3. Define GT background as the complement of the tumor mask.
+      4. Rank CAM pixels from LOWEST activation to HIGHEST activation.
+      5. For the lowest 1%, ..., 100% of CAM pixels, compute the fraction
+         that belong to the GT background.
 
-    This is Precision@Top-k% of CAM pixels, not global pixel accuracy.
+    Thus, this measures how reliable low-activation regions of the
+    positive-class CAM are as background regions.
+
+    This is background precision among the lowest-activation CAM pixels,
+    not global pixel accuracy.
     """
     device = torch.device(f"cuda:{cudaid}")
 
@@ -375,14 +408,14 @@ def compute_foreground_precision_curve(
         targets = targets.to(device)
 
         for image, target, image_id in zip(images, targets, image_ids):
-            # Cancer images only, exactly like your current code.
-            if target.item() != 1:
+            # Positive/cancer images only: a lesion mask is needed to define GT background.
+            if target.item() != positive_class:
                 continue
 
             with torch.set_grad_enabled(cam_computer.req_grad):
                 cam, _ = cam_computer.get_cam_one_sample(
                     image=image.unsqueeze(0),
-                    target=1,
+                    target=positive_class,
                 )
 
             cam = cam.detach().float().squeeze()
@@ -416,28 +449,29 @@ def compute_foreground_precision_curve(
             gt_mask = (gt_mask > 0).float()
 
             # ----------------------------------------------------
-            # Same ranking logic as your existing script.
-            # Normalization does not change the rank as long as the
-            # denominator is positive.
+            # Background is the complement of the GT tumor mask.
             # ----------------------------------------------------
-            eps = 1e-6
-            cam_prob = cam + eps
+            gt_background = 1.0 - gt_mask
 
-            denom = cam_prob.sum()
-            if torch.abs(denom) > eps:
-                cam_prob = cam_prob / denom
+            # ----------------------------------------------------
+            # For the positive-class CAM, LOW activations are the
+            # most background-like pixels. Therefore we sort in
+            # ASCENDING order.
+            #
+            # No normalization is required because only the pixel
+            # ordering matters.
+            # ----------------------------------------------------
+            cam_flat = cam.flatten()
+            bg_flat = gt_background.flatten()
 
-            probs_flat = cam_prob.flatten()
-            gt_flat = gt_mask.flatten()
-
-            n_pixels = probs_flat.numel()
+            n_pixels = cam_flat.numel()
 
             sorted_indices = torch.argsort(
-                probs_flat,
-                descending=True,
+                cam_flat,
+                descending=False,
             )
-            sorted_gt = gt_flat[sorted_indices]
-            cumulative_fg = torch.cumsum(sorted_gt, dim=0)
+            sorted_bg = bg_flat[sorted_indices]
+            cumulative_bg = torch.cumsum(sorted_bg, dim=0)
 
             precision_curve = []
 
@@ -449,8 +483,8 @@ def compute_foreground_precision_curve(
                 )
                 k = max(1, min(k, n_pixels))
 
-                true_fg = cumulative_fg[k - 1]
-                precision_at_k = true_fg / float(k)
+                true_bg = cumulative_bg[k - 1]
+                precision_at_k = true_bg / float(k)
 
                 precision_curve.append(
                     precision_at_k.item()
@@ -460,7 +494,7 @@ def compute_foreground_precision_curve(
 
     if len(all_precision_curves) == 0:
         raise RuntimeError(
-            f"No cancer image was evaluated for "
+            f"No positive/cancer image was evaluated for "
             f"{target_dataset} fold {eval_args.fold}."
         )
 
@@ -475,49 +509,69 @@ def compute_foreground_precision_curve(
     return percentages, mean_precision, std_precision, all_precision_curves.shape[0]
 
 
+
 # ============================================================
-# 3 x 5 plot
+# Generic plotting
 # ============================================================
+
+def display_dataset_name(dataset_name):
+    if dataset_name == "CAMELYON17_512":
+        return "CAMELYON17"
+    if dataset_name == "CAMELYON512":
+        return "CAMELYON16"
+    return dataset_name
+
+
+def display_domain(dataset_name, fold=None):
+    name = display_dataset_name(dataset_name)
+
+    if dataset_name == "CAMELYON17_512" and fold is not None:
+        return f"{name} center {fold}"
+
+    return name
+
 
 def plot_grid(
     results,
     method_order,
-    folds,
+    target_folds,
     output_path,
-    source_dataset="GLAS",
-    target_dataset="CAMELYON17_512",
+    source_dataset,
+    source_fold,
+    target_dataset,
 ):
     """
-    Rows:
-        PixelCAM
-        SAT
-        DeepMIL
+    Generic grid:
+        rows    = WSOL methods
+        columns = target folds
 
-    Columns:
-        C17 fold 0
-        C17 fold 1
-        C17 fold 2
-        C17 fold 3
-        C17 fold 4
+    Examples:
+        GLAS -> C17 0..4       : 3 x 5
+        C17-0 -> C17 1..4      : 3 x 4
+        C16 -> C17 0..4        : 3 x 5
+        C16 -> GLAS            : 3 x 1
     """
     n_rows = len(method_order)
-    n_cols = len(folds)
+    n_cols = len(target_folds)
+
+    fig_width = max(5.0, 4.4 * n_cols)
 
     fig, axes = plt.subplots(
         n_rows,
         n_cols,
-        figsize=(22, 10),
+        figsize=(fig_width, 10),
         sharex=True,
         sharey=True,
     )
 
     if n_rows == 1:
         axes = np.expand_dims(axes, axis=0)
+
     if n_cols == 1:
         axes = np.expand_dims(axes, axis=1)
 
     for row_idx, method in enumerate(method_order):
-        for col_idx, fold in enumerate(folds):
+        for col_idx, fold in enumerate(target_folds):
             ax = axes[row_idx, col_idx]
 
             res = results[method][fold]
@@ -542,28 +596,24 @@ def plot_grid(
             ax.set_xlim(1, 100)
             ax.set_ylim(0, 1)
 
-            # Titles only on first row, as in your example.
             if row_idx == 0:
                 ax.set_title(
-                    f"C17 center {fold}",
+                    display_domain(target_dataset, fold),
                     fontsize=14,
                 )
 
-            # Method name on the left of each row.
             if col_idx == 0:
                 ax.set_ylabel(
-                    f"{method}\nForeground precision",
+                    f"{method}\nBackground precision",
                     fontsize=13,
                 )
 
-            # x label only on bottom row.
             if row_idx == n_rows - 1:
                 ax.set_xlabel(
-                    "Top-ranked CAM pixels (%)",
+                    "Lowest-activation CAM pixels (%)",
                     fontsize=13,
                 )
 
-            # Small annotation with number of positive/cancer images.
             ax.text(
                 0.98,
                 0.04,
@@ -574,16 +624,20 @@ def plot_grid(
                 fontsize=13,
             )
 
-    # Cleaner dataset names for the figure title.
-    # Keep the internal dataset name CAMELYON17_512 for loading,
-    # but display CAMELYON17 in the figure.
-    def display_dataset_name(dataset_name):
-        if dataset_name == "CAMELYON17_512":
-            return "CAMELYON17"
-        return dataset_name
+    source_display = display_domain(
+        source_dataset,
+        source_fold if source_dataset == "CAMELYON17_512" else None,
+    )
 
-    source_display = display_dataset_name(source_dataset)
-    target_display = display_dataset_name(target_dataset)
+    if len(target_folds) == 1:
+        target_display = display_domain(
+            target_dataset,
+            target_folds[0]
+            if target_dataset == "CAMELYON17_512"
+            else None,
+        )
+    else:
+        target_display = display_dataset_name(target_dataset)
 
     fig.suptitle(
         f"{source_display} → {target_display}",
@@ -592,14 +646,16 @@ def plot_grid(
     )
 
     fig.tight_layout(rect=[0, 0, 1, 0.975])
+
     fig.savefig(
         output_path,
         dpi=300,
         bbox_inches="tight",
     )
+
     plt.close(fig)
 
-    print(f"\nSaved 3x5 figure to: {output_path}")
+    print(f"\nSaved figure to: {output_path}")
 
 
 # ============================================================
@@ -609,12 +665,18 @@ def plot_grid(
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--cudaid", type=str, default="0")
+    parser.add_argument(
+        "--cudaid",
+        type=str,
+        default="0",
+    )
+
     parser.add_argument(
         "--checkpoint_type",
         type=str,
         default="best_localization",
     )
+
     parser.add_argument(
         "--split",
         type=str,
@@ -622,34 +684,64 @@ def main():
         choices=["train", "val", "test"],
     )
 
+    # --------------------------------------------------------
+    # Source domain
+    # --------------------------------------------------------
     parser.add_argument(
         "--source_dataset",
         type=str,
-        default="GLAS",
+        required=True,
     )
+
+    parser.add_argument(
+        "--source_fold",
+        type=int,
+        default=0,
+    )
+
+    # --------------------------------------------------------
+    # Target domain
+    # --------------------------------------------------------
     parser.add_argument(
         "--target_dataset",
         type=str,
-        default="CAMELYON17_512",
-    )
-    parser.add_argument(
-        "--folds",
-        nargs="+",
-        type=int,
-        default=[0, 1, 2, 3, 4],
+        required=True,
     )
 
-    # The three GLAS source checkpoints.
+    parser.add_argument(
+        "--target_folds",
+        nargs="+",
+        type=int,
+        required=True,
+        help=(
+            "Target folds/centers to evaluate. "
+            "Example: --target_folds 1 2 3 4"
+        ),
+    )
+
+    # If source and target are C17, this automatically removes
+    # source_fold from target_folds.
+    parser.add_argument(
+        "--skip_same_c17_center",
+        type=str2bool,
+        default=True,
+    )
+
+    # --------------------------------------------------------
+    # Same model inputs as your original script
+    # --------------------------------------------------------
     parser.add_argument(
         "--pixelcam_path",
         type=str,
         required=True,
     )
+
     parser.add_argument(
         "--sat_path",
         type=str,
         required=True,
     )
+
     parser.add_argument(
         "--deepmil_path",
         type=str,
@@ -660,6 +752,17 @@ def main():
         "--pixel_wise_classification",
         type=str2bool,
         default=False,
+        help=(
+            "Kept only for backward compatibility with existing shell "
+            "scripts. Pixel-wise classification is now selected "
+            "automatically: PixelCAM/EnergyCAM=True, SAT/DeepMIL=False."
+        ),
+    )
+
+    parser.add_argument(
+        "--positive_class",
+        type=int,
+        default=1,
     )
 
     parser.add_argument(
@@ -667,7 +770,7 @@ def main():
         type=str,
         default=None,
         help=(
-            "Folder containing GLAS/, CAMELYON17_512/, etc. "
+            "Folder containing GLAS/, CAMELYON17_512/, CAMELYON512/, etc. "
             "Default: $DATASETSH/datasets"
         ),
     )
@@ -675,15 +778,27 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default="glas_to_camelyon17_pixel_precision_3x5.png",
+        required=True,
     )
+
     parser.add_argument(
         "--results_pickle",
         type=str,
-        default="glas_to_camelyon17_pixel_precision_3x5.pickle",
+        required=True,
     )
 
     parsedargs = parser.parse_args()
+
+    # Expand ~ and environment variables in model paths.
+    parsedargs.pixelcam_path = os.path.expandvars(
+        os.path.expanduser(parsedargs.pixelcam_path)
+    )
+    parsedargs.sat_path = os.path.expandvars(
+        os.path.expanduser(parsedargs.sat_path)
+    )
+    parsedargs.deepmil_path = os.path.expandvars(
+        os.path.expanduser(parsedargs.deepmil_path)
+    )
 
     if parsedargs.data_root is None:
         if "DATASETSH" not in os.environ:
@@ -691,6 +806,7 @@ def main():
                 "DATASETSH is not defined. Either export DATASETSH "
                 "or pass --data_root explicitly."
             )
+
         data_root = os.path.join(
             os.environ["DATASETSH"],
             "datasets",
@@ -700,15 +816,60 @@ def main():
 
     os.makedirs("tmp_outd", exist_ok=True)
 
+    output_parent = os.path.dirname(parsedargs.output)
+    if output_parent:
+        os.makedirs(output_parent, exist_ok=True)
+
+    pickle_parent = os.path.dirname(parsedargs.results_pickle)
+    if pickle_parent:
+        os.makedirs(pickle_parent, exist_ok=True)
+
+    # --------------------------------------------------------
+    # Remove source center from C17 -> C17 evaluation.
+    # --------------------------------------------------------
+    target_folds = list(parsedargs.target_folds)
+
+    if (
+        parsedargs.skip_same_c17_center
+        and parsedargs.source_dataset == "CAMELYON17_512"
+        and parsedargs.target_dataset == "CAMELYON17_512"
+    ):
+        target_folds = [
+            fold
+            for fold in target_folds
+            if fold != parsedargs.source_fold
+        ]
+
+    if len(target_folds) == 0:
+        raise ValueError(
+            "No target folds remain after filtering."
+        )
+
+    print("\n" + "#" * 90)
+    print(
+        "SOURCE:",
+        display_domain(
+            parsedargs.source_dataset,
+            parsedargs.source_fold
+            if parsedargs.source_dataset == "CAMELYON17_512"
+            else None,
+        ),
+    )
+    print(
+        "TARGET:",
+        display_dataset_name(parsedargs.target_dataset),
+        "| folds:",
+        target_folds,
+    )
+    print("#" * 90)
+
     # ========================================================
     # INIT DLLOGGER
-    # get_model(args) uses DLLogger internally, so the logger
-    # must exist before loading PixelCAM / SAT / DeepMIL.
     # ========================================================
     log_backends = [
         ArbTextStreamBackend(
             Verbosity.VERBOSE,
-            join("tmp_outd", "pixel_precision_grid_log.txt"),
+            join("tmp_outd", "background_precision_grid_log.txt"),
         ),
         ArbStdOutBackend(Verbosity.VERBOSE),
     ]
@@ -736,19 +897,40 @@ def main():
         for method in method_order
     }
 
-    # --------------------------------------------------------
-    # Loop over the three GLAS source models
-    # --------------------------------------------------------
+    # ========================================================
+    # Loop over PixelCAM / SAT / DeepMIL
+    # ========================================================
     for display_method in method_order:
         print("\n" + "=" * 90)
         print(f"METHOD: {display_method}")
         print("=" * 90)
 
-        source_args, source_args_dict, model, loaded_method_name = load_source_model(
+        # ----------------------------------------------------
+        # Automatic pixel-classifier configuration
+        # ----------------------------------------------------
+        # The first CLI slot is the PixelCAM-family model. In your C16
+        # experiments this slot contains EnergyCAM, which is treated in
+        # the same family here. SAT and DeepMIL do not instantiate the
+        # auxiliary pixel classifier.
+        use_pixel_wise_classification = (
+            display_method == "PixelCAM"
+        )
+
+        print(
+            "pixel_wise_classification = "
+            f"{use_pixel_wise_classification}"
+        )
+
+        (
+            source_args,
+            source_args_dict,
+            model,
+            loaded_method_name,
+        ) = load_source_model(
             exp_path=model_paths[display_method],
             checkpoint_type=parsedargs.checkpoint_type,
             cudaid=parsedargs.cudaid,
-            pixel_wise_classification=parsedargs.pixel_wise_classification,
+            pixel_wise_classification=use_pixel_wise_classification,
             tmp_outd="tmp_outd",
         )
 
@@ -757,15 +939,48 @@ def main():
             f"method stored in checkpoint: {loaded_method_name}"
         )
 
+        checkpoint_dataset = getattr(
+            source_args,
+            "dataset",
+            None,
+        )
+
+        checkpoint_fold = getattr(
+            source_args,
+            "fold",
+            None,
+        )
+
+        if (
+            checkpoint_dataset is not None
+            and checkpoint_dataset != parsedargs.source_dataset
+        ):
+            print(
+                "WARNING: --source_dataset="
+                f"{parsedargs.source_dataset}, "
+                f"but checkpoint dataset={checkpoint_dataset}"
+            )
+
+        if (
+            checkpoint_fold is not None
+            and int(checkpoint_fold) != int(parsedargs.source_fold)
+        ):
+            print(
+                "WARNING: --source_fold="
+                f"{parsedargs.source_fold}, "
+                f"but checkpoint fold={checkpoint_fold}"
+            )
+
         # ----------------------------------------------------
-        # Evaluate the same source model on C17 folds 0..4
+        # Evaluate source model on all requested target folds
         # ----------------------------------------------------
-        for fold in parsedargs.folds:
+        for fold in target_folds:
             print("\n" + "-" * 80)
             print(
                 f"{display_method}: "
-                f"{parsedargs.source_dataset} -> "
-                f"{parsedargs.target_dataset} fold {fold}"
+                f"{display_domain(parsedargs.source_dataset, parsedargs.source_fold if parsedargs.source_dataset == 'CAMELYON17_512' else None)} "
+                f"-> "
+                f"{display_domain(parsedargs.target_dataset, fold if parsedargs.target_dataset == 'CAMELYON17_512' else None)}"
             )
             print("-" * 80)
 
@@ -778,17 +993,21 @@ def main():
                 data_root=data_root,
             )
 
-            percentages, mean_precision, std_precision, n_images = (
-                compute_foreground_precision_curve(
-                    model=model,
-                    eval_args=eval_args,
-                    loader=loader,
-                    metadata_root=metadata_root,
-                    target_dataset=parsedargs.target_dataset,
-                    data_root=data_root,
-                    split=parsedargs.split,
-                    cudaid=parsedargs.cudaid,
-                )
+            (
+                percentages,
+                mean_precision,
+                std_precision,
+                n_images,
+            ) = compute_background_precision_curve(
+                model=model,
+                eval_args=eval_args,
+                loader=loader,
+                metadata_root=metadata_root,
+                target_dataset=parsedargs.target_dataset,
+                data_root=data_root,
+                split=parsedargs.split,
+                cudaid=parsedargs.cudaid,
+                positive_class=parsedargs.positive_class,
             )
 
             results[display_method][fold] = {
@@ -798,7 +1017,7 @@ def main():
                 "n_images": n_images,
             }
 
-            print(f"Number of cancer images: {n_images}")
+            print(f"Number of positive/cancer images: {n_images}")
 
             for p in [1, 2, 5, 10, 20, 30, 50, 75, 100]:
                 idx = p - 1
@@ -808,14 +1027,16 @@ def main():
                     f"+/- {std_precision[idx]:.4f}"
                 )
 
-        # Free GPU memory before loading the next architecture.
+            # Save progressively.
+            with open(parsedargs.results_pickle, "wb") as f:
+                pickle.dump(results, f)
+
         del model
         torch.cuda.empty_cache()
 
-    # --------------------------------------------------------
-    # Save raw numbers so plotting can be changed later without
-    # recomputing every CAM.
-    # --------------------------------------------------------
+    # ========================================================
+    # Final save + plot
+    # ========================================================
     with open(parsedargs.results_pickle, "wb") as f:
         pickle.dump(results, f)
 
@@ -824,15 +1045,13 @@ def main():
         f"{parsedargs.results_pickle}"
     )
 
-    # --------------------------------------------------------
-    # Final 3 x 5 figure
-    # --------------------------------------------------------
     plot_grid(
         results=results,
         method_order=method_order,
-        folds=parsedargs.folds,
+        target_folds=target_folds,
         output_path=parsedargs.output,
         source_dataset=parsedargs.source_dataset,
+        source_fold=parsedargs.source_fold,
         target_dataset=parsedargs.target_dataset,
     )
 

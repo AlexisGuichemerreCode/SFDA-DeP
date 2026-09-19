@@ -1379,7 +1379,7 @@ class Trainer(Basic):
 
 
                     probs = torch.softmax(cl_logits, dim=1)      # [B, C]
-                    key_arg["probs"] = probs
+                    
                     pred_class = probs.argmax(dim=1)             # [B]
                     entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1)  # [B]
 
@@ -1394,6 +1394,7 @@ class Trainer(Basic):
                         key_args = cdcl_out
 
                     key_args["entropy"] = entropy
+                    key_args["probs"] = probs
 
                     #loss = self.loss(epoch=self.epoch,model=self.model,cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global,key_arg=cdcl_out)
                     loss = self.loss(epoch=self.epoch,model=self.model,fcams=fcams, cl_logits=cl_logits,glabel=y_global,pseudo_glabel=y_pl_global,seeds=seeds,key_arg=key_args)

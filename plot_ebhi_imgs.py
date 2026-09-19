@@ -1,10 +1,49 @@
+import os
 import random
 from collections import defaultdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import numpy as np
 from PIL import Image
+
+
+# ============================================================
+# FONT
+# ============================================================
+
+FONT_PATH = os.path.expanduser("~/fonts/times.ttf")
+
+if not os.path.isfile(FONT_PATH):
+    raise FileNotFoundError(
+        f"Font file not found: {FONT_PATH}\n"
+        "Please check that ~/fonts/times.ttf exists."
+    )
+
+fm.fontManager.addfont(FONT_PATH)
+font_name = fm.FontProperties(fname=FONT_PATH).get_name()
+
+plt.rcParams["font.family"] = font_name
+plt.rcParams["font.size"] = 12
+plt.rcParams["axes.titlesize"] = 14
+plt.rcParams["axes.labelsize"] = 12
+
+# Embed TrueType fonts in PDF/PS output.
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["ps.fonttype"] = 42
+
+
+# ============================================================
+# FIGURE FONT SIZES
+# ============================================================
+
+CLASS_TITLE_FONTSIZE = 18
+IMAGE_MASK_FONTSIZE = 14
+
+GROUP_TITLE_FONTSIZE = 16
+CORRUPTION_TITLE_FONTSIZE = 13
+TARGET_CLASS_FONTSIZE = 14
 
 
 # ============================================================
@@ -554,21 +593,22 @@ def create_source_figure(
             fig,
             gs[0, image_col:mask_col + 1],
             class_name,
-            fontsize=10,
+            fontsize=CLASS_TITLE_FONTSIZE,
+            fontweight="bold",
         )
 
         add_text_axis(
             fig,
             gs[1, image_col],
             "Image",
-            fontsize=8,
+            fontsize=IMAGE_MASK_FONTSIZE,
         )
 
         add_text_axis(
             fig,
             gs[1, mask_col],
             "Mask",
-            fontsize=8,
+            fontsize=IMAGE_MASK_FONTSIZE,
         )
 
     # --------------------------------------------------------
@@ -985,7 +1025,8 @@ def create_target_shift_figure(
             fig,
             gs[0, start:end + 1],
             group_name,
-            fontsize=11,
+            fontsize=GROUP_TITLE_FONTSIZE,
+            fontweight="bold",
         )
 
     # --------------------------------------------------------
@@ -996,7 +1037,8 @@ def create_target_shift_figure(
         fig,
         gs[1, 0],
         "Class",
-        fontsize=10,
+        fontsize=CORRUPTION_TITLE_FONTSIZE,
+        fontweight="bold",
     )
 
     for image_idx, col_info in enumerate(image_columns):
@@ -1006,7 +1048,7 @@ def create_target_shift_figure(
             fig,
             gs[1, grid_col],
             col_info["title"],
-            fontsize=8,
+            fontsize=CORRUPTION_TITLE_FONTSIZE,
         )
 
     # --------------------------------------------------------
@@ -1030,8 +1072,9 @@ def create_target_shift_figure(
                 0
             ],
             class_name,
-            fontsize=9,
+            fontsize=TARGET_CLASS_FONTSIZE,
             rotation=90,
+            fontweight="bold",
         )
 
         for sample_idx in range(n_per_class):
