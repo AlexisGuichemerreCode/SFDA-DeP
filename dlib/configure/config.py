@@ -912,6 +912,9 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'random_select_ratio':  0.1,  # ratio of images to select
         'entropy_threshold': None, # minimum entropy to consider to forget for unlearning
         'retain_all_others': False,  # retain all other samples not selected for unlearning
+        'esfda_top2': True,  # select top 2 samples to shift label
+        'esfda_top_no_dom': False,  # select samples with no dominant class
+        'esfda_rand_underpred': False,  # select samples randomly from underpredicted classes
         'dynamic_selection': False,  # dynamically select samples based on entropy each epoch
         'resample_every': 5,  # resample every n epochs
         'select_best_on_train' : False,  # select model for unlearning based on train set, fake label
@@ -919,6 +922,8 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'balance_stable_to_flips' : False,  # balance the number of stable and flips
         'stable_match_strategy': False,  # match the number of stable and flips
         'activate_load_mask': False,  # activate loading mask  
+
+
 
         'entropy_probabilistic': False,
         'entropy_gt': False,

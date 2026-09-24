@@ -2285,7 +2285,10 @@ class Trainer(Basic):
                                     random_select_ratio=self.args.random_select_ratio,
                                     reverse_imgs=self.args.esfda_reverse_imgs,
                                     entropy_threshold=self.args.entropy_threshold,
-                                    retain_all_others=self.args.retain_all_others
+                                    retain_all_others=self.args.retain_all_others,
+                                    top2=self.args.esfda_top2,
+                                    top_no_dom=self.args.esfda_top_no_dom,
+                                    rand_underpred=self.args.esfda_rand_underpred,
                                 )
 
 
@@ -2737,340 +2740,1086 @@ class Trainer(Basic):
         stable_per_class=200,
         sub_flippable_ratio=1.0,
         entropy_threshold=None,
-        retain_all_others=False,   
+        retain_all_others=False,
+
+        # ============================================================
+        # NEW: strategy used to assign labels to Dforget
+        # ============================================================
+        top2=True,
+        top_no_dom=False,
+        rand_underpred=False,
     ):
-        """
-        Select flippable (forget) and stable (retain) image indices using entropy-based
-        uncertainty estimation. High-entropy samples are flipped (assigned top-2 label)
-        while the rest keep their top-1 prediction.
+            """
+            Select flippable (forget) and stable (retain) image indices using
+            entropy-based uncertainty estimation.
 
-        Args:
-            model: model used to compute entropy and top-k predictions.
-            loader: dataloader dictionary containing 'train'.
-            select_imgs_ratio: proportion of high-entropy images to consider.
-            random_select_ratio: random sub-sampling ratio of selected images.
-            reverse_imgs: if True, entropy is sorted descending (highest first).
-            stable_per_class: (unused legacy argument).
-            sub_flippable_ratio: (unused legacy argument).
-            entropy_threshold: if provided, overrides ratio selection with absolute threshold.
-            retain_all_others: if True → ALL non-flipped images become Xretain.
+            Forget-label strategies:
+                top2=True:
+                    assign the second most probable class.
 
-        Returns:
-            selected_flippable: set of indices to forget.
-            reinforce_indices: empty set  (legacy).
-            idx_to_pred: mapping idx → predicted class.
-            entropy_all: mapping idx → entropy value.
-            flippable_subset: same as selected_flippable.
-            stable_selected: list of retained indices.
-            stable_labels: list of stable predicted labels.
-        """
+                top_no_dom=True:
+                    assign the most probable class that is NOT in the
+                    over-predicted / dominant classes.
 
-        model.eval()
-        loader = loader['train']
+                rand_underpred=True:
+                    randomly assign one of the under-predicted classes.
+            """
 
-        # --- Storage structures ---
-        entropy_list = []        # List of (idx, entropy) for the classes selected to flip
-        entropy_all = {}         # idx -> entropy
-        idx_to_pred = {}         # idx -> predicted class
-        idx_to_target = {}       # idx -> GT label (for analysis)
-        idx_to_top1 = {}         # idx -> top-1 prediction
-        idx_to_top2 = {}         # idx -> top-2 prediction
-        by_class_all = {c: [] for c in range(self.args.num_classes)}  # class -> list of (idx, entropy)
-        probs_all = {}   # idx -> probability vector
-        idx_to_name = {}
+            model.eval()
+            loader = loader['train']
 
+            # ============================================================
+            # Check strategy
+            # ============================================================
+            n_strategies = int(top2) + int(top_no_dom) + int(rand_underpred)
 
-        K = self.args.num_classes
-        pred_count = torch.zeros(K)        # accumulate class frequencies
-        total_samples = 0                  # count total images
+            if n_strategies != 1:
+                raise ValueError(
+                    "Exactly one forget-label strategy must be active: "
+                    "top2, top_no_dom, or rand_underpred."
+                )
 
-        # Classes that are over-predicted and from which we will select Dforget
-        freeze_classes = [c for c, _ in self.overpred_class]
-        if len(freeze_classes) == 0:
-            # Fallback: freeze all classes that appear in predictions
-            freeze_classes = list(set(idx_to_pred.values()))
-
-        # ========================================================
-        # Pass through the dataset once: compute probabilities,
-        # entropy, top-k predictions, and store mappings.
-        # ========================================================
-        for batch_idx, (
-            images, targets, p_glabel, index,
-            raw_imgs, std_cams, masks, views, _
-        ) in tqdm(
-            enumerate(loader),
-            ncols=constants.NCOLS,
-            total=len(loader)
-        ):
-
-            images = images.cuda(self.args.c_cudaid)
-            logits = model(images)
-            probs = F.softmax(logits, dim=1)
-            preds = probs.argmax(dim=1)
-
-            # UPDATE GLOBAL CLASS COUNT
-            for c in preds:
-                pred_count[c.item()] += 1
-
-            total_samples += preds.size(0)
-
-
-
-            C = probs.size(1)
-            k = 2 if C >= 2 else 1
-            top2_vals, top2_idx = probs.topk(k=k, dim=1, largest=True, sorted=True)
-
-            entropy = -torch.sum(probs * torch.log(probs + 1e-6), dim=1)
-
-            # --- Process each sample in the batch ---
-            for i in range(images.size(0)):
-                idx = index[i]
-                idx_to_name[idx] = idx
-                pred = preds[i].item()
-                gt = targets[i].item()
-                ent = entropy[i].item()
-
-                # Save prediction and entropy
-                idx_to_pred[idx] = pred
-                idx_to_target[idx] = gt
-                entropy_all[idx] = ent
-                probs_all[idx] = probs[i].detach().cpu()
-
-                # Save top-1 and top-2
-                t1 = int(top2_idx[i, 0].item())
-                t2 = int(top2_idx[i, 1].item()) if C >= 2 else t1
-                idx_to_top1[idx] = t1
-                idx_to_top2[idx] = t2
-
-                # Select candidates only from the over-predicted classes
-                if pred in freeze_classes:
-                    entropy_list.append((idx, ent))
-
-                # Track per-class distributions
-                if pred in by_class_all:
-                    by_class_all[pred].append((idx, ent))
-
-        # ========================================================
-        # STEP 3 : Compute GLOBAL KL(U || predicted distribution)
-        # ========================================================
-        p_hat = pred_count / total_samples
-        U = torch.ones(K) / K
-        KL_global = torch.sum(U * (torch.log(U + 1e-12) - torch.log(p_hat + 1e-12)))
-        self.KL_global = KL_global.item()
-
-
-
-        # ========================================================
-        # Sort entropy in descending order → highest uncertainty first
-        # ========================================================
-        if reverse_imgs:
-            entropy_list.sort(key=lambda x: x[1], reverse=True)
-        else:
-            entropy_list.sort(key=lambda x: x[1])
-
-        py_random.seed(self.seed)
-
-        # ========================================================
-        # Select images to forget: threshold-based or ratio-based
-        # ========================================================
-        if entropy_threshold is not None:
-            preselected_indices = [(idx, e) for (idx, e) in entropy_list if e >= entropy_threshold]
-            if len(preselected_indices) == 0:
-                print(f"[WARN] No images above entropy threshold {entropy_threshold}.")
-        else:
-            max_n = int(len(entropy_list) * select_imgs_ratio)
-            preselected_indices = entropy_list[:max_n]
-
-        # Random subsampling
-        final_n = max(1, int(len(preselected_indices) * random_select_ratio))
-        if final_n < len(preselected_indices):
-            selected_indices = py_random.sample(preselected_indices, final_n)
-        else:
-            selected_indices = preselected_indices
-
-        selected_flippable = set(idx for (idx, _) in selected_indices)
-        flippable_subset = selected_flippable
-
-        forget_info = {
-            idx: {
-                "pred_before": idx_to_pred[idx],
-                "forget_label": idx_to_pred[idx],
-                "entropy": entropy_all[idx],
-                "top1": idx_to_top1[idx],
-                "top2": idx_to_top2[idx],
+            # --- Storage structures ---
+            entropy_list = []
+            entropy_all = {}
+            idx_to_pred = {}
+            idx_to_target = {}
+            idx_to_top1 = {}
+            idx_to_top2 = {}
+            by_class_all = {
+                c: [] for c in range(self.args.num_classes)
             }
-            for idx in selected_flippable
-        }
+            probs_all = {}
+            idx_to_name = {}
 
+            K = self.args.num_classes
 
+            pred_count = torch.zeros(K)
+            total_samples = 0
 
-        # forget indices (deterministic)
-        # --------------------------------------------------------
-        selected_flippable_list = sorted(selected_flippable)
+            # ============================================================
+            # Dominant / under-predicted classes
+            # ============================================================
+            freeze_classes = [
+                c for c, _ in self.overpred_class
+            ]
 
-        # Initial predicted class BEFORE flip, aligned with indices
-        forget_initial_preds = [
-            idx_to_pred[idx] for idx in selected_flippable_list
-        ]
+            underpred_classes = [
+                c for c, _ in self.underpred_class
+            ]
 
+            # ============================================================
+            # Pass through dataset
+            # ============================================================
+            for batch_idx, (
+                images,
+                targets,
+                p_glabel,
+                index,
+                raw_imgs,
+                std_cams,
+                masks,
+                views,
+                _
+            ) in tqdm(
+                enumerate(loader),
+                ncols=constants.NCOLS,
+                total=len(loader)
+            ):
 
+                images = images.cuda(self.args.c_cudaid)
 
-        # ========================================================
-        # Assign labels:
-        #  - flippable -> top-2
-        #  - stable    -> top-1
-        # ========================================================
-        assigned_labels_map = {}
-        for idx in idx_to_pred.keys():
-            if idx in selected_flippable:
-                assigned_labels_map[idx] = idx_to_top2.get(idx, idx_to_top1[idx])
-            else:
-                assigned_labels_map[idx] = idx_to_top1[idx]
+                logits = model(images)
+                probs = F.softmax(logits, dim=1)
+                preds = probs.argmax(dim=1)
 
-        self.assigned_labels_map = assigned_labels_map
-        reinforce_indices = set()   # Placeholder for legacy logic
+                # UPDATE GLOBAL CLASS COUNT
+                for c in preds:
+                    pred_count[c.item()] += 1
 
-        # ========================================================
-        # Select Xretain (stable) set
-        # ========================================================
-        stable_selected = []
-        stable_labels = []
+                total_samples += preds.size(0)
 
-        # All samples seen during traversal
-        all_seen = list(idx_to_pred.keys())
+                C = probs.size(1)
 
-        # ========================================================
-        # NEW OPTION: retain absolutely all non-forgotten images
-        # ========================================================
-        if retain_all_others:
-            # Xretain = all_seen \ Xforget
-            stable_selected = [idx for idx in all_seen if idx not in flippable_subset]
-            stable_labels   = [idx_to_pred[idx] for idx in stable_selected]
+                k = 2 if C >= 2 else 1
 
-        else:
-            # ====================================================
-            # Original behavior:
-            # two cases depending on stable_match_strategy
-            # ====================================================
-            preserve_all = self.args.stable_match_strategy
+                top2_vals, top2_idx = probs.topk(
+                    k=k,
+                    dim=1,
+                    largest=True,
+                    sorted=True
+                )
 
-            if not preserve_all:
-                # Simple retain: keep everything not forgotten
-                nonflipped = [idx for idx in all_seen if idx not in flippable_subset]
-                stable_selected = nonflipped
-                stable_labels = [idx_to_pred[idx] for idx in stable_selected]
+                entropy = -torch.sum(
+                    probs * torch.log(probs + 1e-6),
+                    dim=1
+                )
 
-            else:
-                # Class-balanced retain among freeze_classes
-                total_target = len(flippable_subset)
+                # ========================================================
+                # Process each sample
+                # ========================================================
+                for i in range(images.size(0)):
 
-                if total_target > 0 and len(freeze_classes) > 0:
-                    # Compute quotas
-                    total_candidates = sum(len(by_class_all[c]) for c in freeze_classes)
-                    if total_candidates == 0:
-                        targets_per_class = {c: 0 for c in freeze_classes}
-                    else:
-                        quotas = {
-                            c: (len(by_class_all[c]) / total_candidates) * total_target
-                            for c in freeze_classes
-                        }
-                        base = {c: int(quotas[c]) for c in freeze_classes}
-                        allocated = sum(base.values())
-                        remainder = total_target - allocated
+                    idx = index[i]
 
-                        # Distribute remainder
-                        fracs = sorted(
-                            [(c, quotas[c] - base[c]) for c in freeze_classes],
-                            key=lambda t: t[1],
-                            reverse=True
+                    idx_to_name[idx] = idx
+
+                    pred = preds[i].item()
+                    gt = targets[i].item()
+                    ent = entropy[i].item()
+
+                    idx_to_pred[idx] = pred
+                    idx_to_target[idx] = gt
+                    entropy_all[idx] = ent
+
+                    # Store probability vector on CPU
+                    probs_all[idx] = probs[i].detach().cpu()
+
+                    # ----------------------------------------------------
+                    # Top-1 / Top-2
+                    # ----------------------------------------------------
+                    t1 = int(top2_idx[i, 0].item())
+
+                    t2 = (
+                        int(top2_idx[i, 1].item())
+                        if C >= 2
+                        else t1
+                    )
+
+                    idx_to_top1[idx] = t1
+                    idx_to_top2[idx] = t2
+
+                    # ----------------------------------------------------
+                    # Candidate forget samples:
+                    # predicted as one of the dominant classes
+                    # ----------------------------------------------------
+                    if pred in freeze_classes:
+                        entropy_list.append(
+                            (idx, ent)
                         )
-                        targets_per_class = base
-                        for c, _ in fracs:
-                            if remainder <= 0:
-                                break
-                            targets_per_class[c] += 1
-                            remainder -= 1
 
-                    # Sort by entropy ascending (most confident retained first) 
-                    for c in by_class_all.keys():
-                        by_class_all[c].sort(key=lambda x: x[1])
+                    # Track per-class distributions
+                    if pred in by_class_all:
+                        by_class_all[pred].append(
+                            (idx, ent)
+                        )
 
-                    # Select stable samples for each class
-                    for c in freeze_classes:
-                        pool = [(idx, ent) for (idx, ent) in by_class_all[c]
-                                if idx not in flippable_subset]
+            # ============================================================
+            # Fallback if no over-predicted class
+            # ============================================================
+            if len(freeze_classes) == 0:
 
-                        take = min(targets_per_class.get(c, 0), len(pool))
-                        chosen = pool[:take]
-                        stable_selected.extend([idx for (idx, _) in chosen])
-                        stable_labels.extend([c] * take)
+                freeze_classes = sorted(
+                    set(idx_to_pred.values())
+                )
 
-        # ========================================================
-        # Compute monitoring statistics (correctness of flip/retain)
-        # ========================================================
-        flip_correct = sum(1 for idx in flippable_subset
-                        if idx_to_pred.get(idx) == idx_to_target.get(idx))
-        flip_total = len(flippable_subset)
-        flip_acc = flip_correct / flip_total if flip_total > 0 else 0.0
+                entropy_list = [
+                    (idx, entropy_all[idx])
+                    for idx in idx_to_pred
+                    if idx_to_pred[idx] in freeze_classes
+                ]
 
-        stable_correct = sum(1 for idx in stable_selected
-                            if idx_to_pred.get(idx) == idx_to_target.get(idx))
-        stable_total = len(stable_selected)
-        stable_acc = stable_correct / stable_total if stable_total > 0 else 0.0
+            # ============================================================
+            # Compute GLOBAL KL(U || predicted distribution)
+            # ============================================================
+            p_hat = pred_count / total_samples
 
-        results = {
-            "retain": stable_acc,
-            "forget": flip_acc
-        }
+            U = torch.ones(K) / K
 
-        # Save metrics
-        out_txt = os.path.join(self.args.outd, "results_unlearning_acc.txt")
-        out_pkl = os.path.join(self.args.outd, "results__unlearning_acc.pkl")
+            KL_global = torch.sum(
+                U * (
+                    torch.log(U + 1e-12)
+                    - torch.log(p_hat + 1e-12)
+                )
+            )
 
-        with open(out_txt, "a") as f:
-            f.write(f"Epoch {self.epoch}\n")
-            f.write(f"Nb retain : {len(stable_selected)}\n")
-            f.write(f"retain acc : {stable_acc:.4f}\n")
-            f.write(f"Nb forget : {len(flippable_subset)}\n")
-            f.write(f"forget acc : {flip_acc:.4f}\n")
-            f.write("\n")
+            self.KL_global = KL_global.item()
 
-        # Load previous results if exists
-        if os.path.exists(out_pkl):
-            with open(out_pkl, "rb") as f:
-                history = pkl.load(f)
-        else:
-            history = []
+            # ============================================================
+            # Sort entropy
+            # ============================================================
+            if reverse_imgs:
+                entropy_list.sort(
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+            else:
+                entropy_list.sort(
+                    key=lambda x: x[1]
+                )
 
-        history.append(results)
+            py_random.seed(self.seed)
 
-        with open(out_pkl, "wb") as f:
-            pkl.dump(history, f)
+            # ============================================================
+            # Select images to forget
+            # ============================================================
+            if entropy_threshold is not None:
 
-        Forget_labels = [assigned_labels_map[idx] for idx in selected_flippable]
-        Retain_labels = [assigned_labels_map[idx] for idx in stable_selected]
+                preselected_indices = [
+                    (idx, e)
+                    for (idx, e) in entropy_list
+                    if e >= entropy_threshold
+                ]
+
+                if len(preselected_indices) == 0:
+                    print(
+                        f"[WARN] No images above entropy threshold "
+                        f"{entropy_threshold}."
+                    )
+
+            else:
+
+                max_n = int(
+                    len(entropy_list)
+                    * select_imgs_ratio
+                )
+
+                preselected_indices = (
+                    entropy_list[:max_n]
+                )
+
+            # ============================================================
+            # Random subsampling
+            # ============================================================
+            if len(preselected_indices) > 0:
+
+                final_n = max(
+                    1,
+                    int(
+                        len(preselected_indices)
+                        * random_select_ratio
+                    )
+                )
+
+            else:
+                final_n = 0
+
+            if 0 < final_n < len(preselected_indices):
+
+                selected_indices = py_random.sample(
+                    preselected_indices,
+                    final_n
+                )
+
+            else:
+                selected_indices = preselected_indices
+
+            selected_flippable = set(
+                idx for (idx, _) in selected_indices
+            )
+
+            flippable_subset = selected_flippable
+
+            # ============================================================
+            # Information about Dforget
+            # ============================================================
+            forget_info = {
+
+                idx: {
+
+                    "pred_before": idx_to_pred[idx],
+
+                    "forget_label": idx_to_pred[idx],
+
+                    "entropy": entropy_all[idx],
+
+                    "top1": idx_to_top1[idx],
+
+                    "top2": idx_to_top2[idx],
+
+                }
+
+                for idx in selected_flippable
+            }
+
+            # ============================================================
+            # Forget indices
+            # ============================================================
+            selected_flippable_list = sorted(
+                selected_flippable
+            )
+
+            forget_initial_preds = [
+                idx_to_pred[idx]
+                for idx in selected_flippable_list
+            ]
+
+            # ============================================================
+            # ASSIGN LABELS
+            #
+            # Stable samples:
+            #     always Top-1
+            #
+            # Forget samples:
+            #     top2
+            #     OR top non-dominant
+            #     OR random under-predicted
+            # ============================================================
+            assigned_labels_map = {}
+
+            for idx in idx_to_pred.keys():
+
+                # ========================================================
+                # RETAIN -> Top-1
+                # ========================================================
+                if idx not in selected_flippable:
+
+                    assigned_labels_map[idx] = (
+                        idx_to_top1[idx]
+                    )
+
+                    continue
+
+                # ========================================================
+                # DFORGET STRATEGY 1:
+                # TOP-2
+                # ========================================================
+                if top2:
+
+                    assigned_labels_map[idx] = (
+                        idx_to_top2.get(
+                            idx,
+                            idx_to_top1[idx]
+                        )
+                    )
+
+                # ========================================================
+                # DFORGET STRATEGY 2:
+                # TOP NON-DOMINANT
+                # ========================================================
+                elif top_no_dom:
+
+                    probs_i = probs_all[idx]
+
+                    non_dominant_classes = [
+                        c
+                        for c in range(K)
+                        if c not in freeze_classes
+                    ]
+
+                    if len(non_dominant_classes) > 0:
+
+                        best_non_dominant = max(
+                            non_dominant_classes,
+                            key=lambda c: float(
+                                probs_i[c].item()
+                            )
+                        )
+
+                        assigned_labels_map[idx] = int(
+                            best_non_dominant
+                        )
+
+                    else:
+
+                        # Fallback -> Top-2
+                        assigned_labels_map[idx] = (
+                            idx_to_top2.get(
+                                idx,
+                                idx_to_top1[idx]
+                            )
+                        )
+
+                # ========================================================
+                # DFORGET STRATEGY 3:
+                # RANDOM UNDER-PREDICTED CLASS
+                # ========================================================
+                elif rand_underpred:
+
+                    if len(underpred_classes) > 0:
+
+                        assigned_labels_map[idx] = int(
+                            py_random.choice(
+                                underpred_classes
+                            )
+                        )
+
+                    else:
+
+                        # Fallback -> Top-2
+                        assigned_labels_map[idx] = (
+                            idx_to_top2.get(
+                                idx,
+                                idx_to_top1[idx]
+                            )
+                        )
+
+            from collections import Counter
+
+            forget_assigned_counts = Counter(
+                assigned_labels_map[idx]
+                for idx in selected_flippable
+            )
+
+            print(
+                "Forget assigned-label counts:",
+                dict(sorted(forget_assigned_counts.items()))
+            )
+
+            self.assigned_labels_map = (
+                assigned_labels_map
+            )
+
+            # Add assigned label for monitoring
+            for idx in selected_flippable:
+
+                forget_info[idx][
+                    "assigned_label"
+                ] = assigned_labels_map[idx]
+
+            reinforce_indices = set()
+
+            # ============================================================
+            # Select Xretain
+            # ============================================================
+            stable_selected = []
+            stable_labels = []
+
+            all_seen = list(
+                idx_to_pred.keys()
+            )
+
+            # ============================================================
+            # Retain all non-forgotten images
+            # ============================================================
+            if retain_all_others:
+
+                stable_selected = [
+                    idx
+                    for idx in all_seen
+                    if idx not in flippable_subset
+                ]
+
+                stable_labels = [
+                    idx_to_pred[idx]
+                    for idx in stable_selected
+                ]
+
+            else:
+
+                preserve_all = (
+                    self.args.stable_match_strategy
+                )
+
+                if not preserve_all:
+
+                    nonflipped = [
+                        idx
+                        for idx in all_seen
+                        if idx not in flippable_subset
+                    ]
+
+                    stable_selected = nonflipped
+
+                    stable_labels = [
+                        idx_to_pred[idx]
+                        for idx in stable_selected
+                    ]
+
+                else:
+
+                    total_target = len(
+                        flippable_subset
+                    )
+
+                    if (
+                        total_target > 0
+                        and len(freeze_classes) > 0
+                    ):
+
+                        total_candidates = sum(
+                            len(by_class_all[c])
+                            for c in freeze_classes
+                        )
+
+                        if total_candidates == 0:
+
+                            targets_per_class = {
+                                c: 0
+                                for c in freeze_classes
+                            }
+
+                        else:
+
+                            quotas = {
+
+                                c:
+                                (
+                                    len(by_class_all[c])
+                                    / total_candidates
+                                )
+                                * total_target
+
+                                for c in freeze_classes
+                            }
+
+                            base = {
+                                c: int(quotas[c])
+                                for c in freeze_classes
+                            }
+
+                            allocated = sum(
+                                base.values()
+                            )
+
+                            remainder = (
+                                total_target
+                                - allocated
+                            )
+
+                            fracs = sorted(
+
+                                [
+                                    (
+                                        c,
+                                        quotas[c]
+                                        - base[c]
+                                    )
+                                    for c
+                                    in freeze_classes
+                                ],
+
+                                key=lambda t: t[1],
+
+                                reverse=True
+                            )
+
+                            targets_per_class = base
+
+                            for c, _ in fracs:
+
+                                if remainder <= 0:
+                                    break
+
+                                targets_per_class[c] += 1
+
+                                remainder -= 1
+
+                        # Most confident retain samples first
+                        for c in by_class_all.keys():
+
+                            by_class_all[c].sort(
+                                key=lambda x: x[1]
+                            )
+
+                        for c in freeze_classes:
+
+                            pool = [
+
+                                (idx, ent)
+
+                                for (idx, ent)
+                                in by_class_all[c]
+
+                                if idx
+                                not in flippable_subset
+                            ]
+
+                            take = min(
+
+                                targets_per_class.get(
+                                    c,
+                                    0
+                                ),
+
+                                len(pool)
+                            )
+
+                            chosen = pool[:take]
+
+                            stable_selected.extend(
+                                [
+                                    idx
+                                    for (idx, _)
+                                    in chosen
+                                ]
+                            )
+
+                            stable_labels.extend(
+                                [c] * take
+                            )
+
+            # ============================================================
+            # Monitoring
+            # ============================================================
+            flip_correct = sum(
+
+                1
+                for idx in flippable_subset
+
+                if idx_to_pred.get(idx)
+                == idx_to_target.get(idx)
+            )
+
+            flip_total = len(
+                flippable_subset
+            )
+
+            flip_acc = (
+                flip_correct / flip_total
+                if flip_total > 0
+                else 0.0
+            )
+
+            stable_correct = sum(
+
+                1
+                for idx in stable_selected
+
+                if idx_to_pred.get(idx)
+                == idx_to_target.get(idx)
+            )
+
+            stable_total = len(
+                stable_selected
+            )
+
+            stable_acc = (
+                stable_correct / stable_total
+                if stable_total > 0
+                else 0.0
+            )
+
+            results = {
+
+                "retain": stable_acc,
+
+                "forget": flip_acc
+            }
+
+            # ============================================================
+            # Save monitoring
+            # ============================================================
+            out_txt = os.path.join(
+                self.args.outd,
+                "results_unlearning_acc.txt"
+            )
+
+            out_pkl = os.path.join(
+                self.args.outd,
+                "results__unlearning_acc.pkl"
+            )
+
+            with open(out_txt, "a") as f:
+
+                f.write(
+                    f"Epoch {self.epoch}\n"
+                )
+
+                f.write(
+                    f"Nb retain : "
+                    f"{len(stable_selected)}\n"
+                )
+
+                f.write(
+                    f"retain acc : "
+                    f"{stable_acc:.4f}\n"
+                )
+
+                f.write(
+                    f"Nb forget : "
+                    f"{len(flippable_subset)}\n"
+                )
+
+                f.write(
+                    f"forget acc : "
+                    f"{flip_acc:.4f}\n"
+                )
+
+                f.write("\n")
+
+            if os.path.exists(out_pkl):
+
+                with open(out_pkl, "rb") as f:
+                    history = pkl.load(f)
+
+            else:
+
+                history = []
+
+            history.append(results)
+
+            with open(out_pkl, "wb") as f:
+                pkl.dump(
+                    history,
+                    f
+                )
+
+            # ============================================================
+            # Labels actually assigned
+            # ============================================================
+            Forget_labels = [
+                assigned_labels_map[idx]
+                for idx in selected_flippable
+            ]
+
+            Retain_labels = [
+                assigned_labels_map[idx]
+                for idx in stable_selected
+            ]
+
+            # ============================================================
+            # Return
+            # ============================================================
+            return (
+                selected_flippable,
+                reinforce_indices,
+                idx_to_pred,
+                entropy_all,
+                flippable_subset,
+                stable_selected,
+                stable_labels,
+                probs_all,
+                KL_global,
+                assigned_labels_map,
+                forget_info
+            )
+
+    # @torch.no_grad()
+    # def select_flippable_indices_entropy(
+    #     self,
+    #     model,
+    #     loader,
+    #     select_imgs_ratio=0.1,
+    #     random_select_ratio=1.0,
+    #     reverse_imgs=True,
+    #     stable_per_class=200,
+    #     sub_flippable_ratio=1.0,
+    #     entropy_threshold=None,
+    #     retain_all_others=False,   
+    # ):
+    #     """
+    #     Select flippable (forget) and stable (retain) image indices using entropy-based
+    #     uncertainty estimation. High-entropy samples are flipped (assigned top-2 label)
+    #     while the rest keep their top-1 prediction.
+
+    #     Args:
+    #         model: model used to compute entropy and top-k predictions.
+    #         loader: dataloader dictionary containing 'train'.
+    #         select_imgs_ratio: proportion of high-entropy images to consider.
+    #         random_select_ratio: random sub-sampling ratio of selected images.
+    #         reverse_imgs: if True, entropy is sorted descending (highest first).
+    #         stable_per_class: (unused legacy argument).
+    #         sub_flippable_ratio: (unused legacy argument).
+    #         entropy_threshold: if provided, overrides ratio selection with absolute threshold.
+    #         retain_all_others: if True → ALL non-flipped images become Xretain.
+
+    #     Returns:
+    #         selected_flippable: set of indices to forget.
+    #         reinforce_indices: empty set  (legacy).
+    #         idx_to_pred: mapping idx → predicted class.
+    #         entropy_all: mapping idx → entropy value.
+    #         flippable_subset: same as selected_flippable.
+    #         stable_selected: list of retained indices.
+    #         stable_labels: list of stable predicted labels.
+    #     """
+
+    #     model.eval()
+    #     loader = loader['train']
+
+    #     # --- Storage structures ---
+    #     entropy_list = []        # List of (idx, entropy) for the classes selected to flip
+    #     entropy_all = {}         # idx -> entropy
+    #     idx_to_pred = {}         # idx -> predicted class
+    #     idx_to_target = {}       # idx -> GT label (for analysis)
+    #     idx_to_top1 = {}         # idx -> top-1 prediction
+    #     idx_to_top2 = {}         # idx -> top-2 prediction
+    #     by_class_all = {c: [] for c in range(self.args.num_classes)}  # class -> list of (idx, entropy)
+    #     probs_all = {}   # idx -> probability vector
+    #     idx_to_name = {}
 
 
-        # return (
-        #     selected_flippable,       
-        #     stable_selected,           
-        #     assigned_labels_map,       
-        #     KL_global 
-        #     )
+    #     K = self.args.num_classes
+    #     pred_count = torch.zeros(K)        # accumulate class frequencies
+    #     total_samples = 0                  # count total images
 
-        return (
-            selected_flippable,
-            reinforce_indices,
-            idx_to_pred,
-            entropy_all,
-            flippable_subset,
-            stable_selected,
-            stable_labels,
-            probs_all,
-            KL_global,
-            assigned_labels_map,
-            forget_info                 
-        )
+    #     # Classes that are over-predicted and from which we will select Dforget
+    #     freeze_classes = [c for c, _ in self.overpred_class]
+    #     if len(freeze_classes) == 0:
+    #         # Fallback: freeze all classes that appear in predictions
+    #         freeze_classes = list(set(idx_to_pred.values()))
+
+    #     # ========================================================
+    #     # Pass through the dataset once: compute probabilities,
+    #     # entropy, top-k predictions, and store mappings.
+    #     # ========================================================
+    #     for batch_idx, (
+    #         images, targets, p_glabel, index,
+    #         raw_imgs, std_cams, masks, views, _
+    #     ) in tqdm(
+    #         enumerate(loader),
+    #         ncols=constants.NCOLS,
+    #         total=len(loader)
+    #     ):
+
+    #         images = images.cuda(self.args.c_cudaid)
+    #         logits = model(images)
+    #         probs = F.softmax(logits, dim=1)
+    #         preds = probs.argmax(dim=1)
+
+    #         # UPDATE GLOBAL CLASS COUNT
+    #         for c in preds:
+    #             pred_count[c.item()] += 1
+
+    #         total_samples += preds.size(0)
+
+
+
+    #         C = probs.size(1)
+    #         k = 2 if C >= 2 else 1
+    #         top2_vals, top2_idx = probs.topk(k=k, dim=1, largest=True, sorted=True)
+
+    #         entropy = -torch.sum(probs * torch.log(probs + 1e-6), dim=1)
+
+    #         # --- Process each sample in the batch ---
+    #         for i in range(images.size(0)):
+    #             idx = index[i]
+    #             idx_to_name[idx] = idx
+    #             pred = preds[i].item()
+    #             gt = targets[i].item()
+    #             ent = entropy[i].item()
+
+    #             # Save prediction and entropy
+    #             idx_to_pred[idx] = pred
+    #             idx_to_target[idx] = gt
+    #             entropy_all[idx] = ent
+    #             probs_all[idx] = probs[i].detach().cpu()
+
+    #             # Save top-1 and top-2
+    #             t1 = int(top2_idx[i, 0].item())
+    #             t2 = int(top2_idx[i, 1].item()) if C >= 2 else t1
+    #             idx_to_top1[idx] = t1
+    #             idx_to_top2[idx] = t2
+
+    #             # Select candidates only from the over-predicted classes
+    #             if pred in freeze_classes:
+    #                 entropy_list.append((idx, ent))
+
+    #             # Track per-class distributions
+    #             if pred in by_class_all:
+    #                 by_class_all[pred].append((idx, ent))
+
+    #     # ========================================================
+    #     # STEP 3 : Compute GLOBAL KL(U || predicted distribution)
+    #     # ========================================================
+    #     p_hat = pred_count / total_samples
+    #     U = torch.ones(K) / K
+    #     KL_global = torch.sum(U * (torch.log(U + 1e-12) - torch.log(p_hat + 1e-12)))
+    #     self.KL_global = KL_global.item()
+
+
+
+    #     # ========================================================
+    #     # Sort entropy in descending order → highest uncertainty first
+    #     # ========================================================
+    #     if reverse_imgs:
+    #         entropy_list.sort(key=lambda x: x[1], reverse=True)
+    #     else:
+    #         entropy_list.sort(key=lambda x: x[1])
+
+    #     py_random.seed(self.seed)
+
+    #     # ========================================================
+    #     # Select images to forget: threshold-based or ratio-based
+    #     # ========================================================
+    #     if entropy_threshold is not None:
+    #         preselected_indices = [(idx, e) for (idx, e) in entropy_list if e >= entropy_threshold]
+    #         if len(preselected_indices) == 0:
+    #             print(f"[WARN] No images above entropy threshold {entropy_threshold}.")
+    #     else:
+    #         max_n = int(len(entropy_list) * select_imgs_ratio)
+    #         preselected_indices = entropy_list[:max_n]
+
+    #     # Random subsampling
+    #     final_n = max(1, int(len(preselected_indices) * random_select_ratio))
+    #     if final_n < len(preselected_indices):
+    #         selected_indices = py_random.sample(preselected_indices, final_n)
+    #     else:
+    #         selected_indices = preselected_indices
+
+    #     selected_flippable = set(idx for (idx, _) in selected_indices)
+    #     flippable_subset = selected_flippable
+
+    #     forget_info = {
+    #         idx: {
+    #             "pred_before": idx_to_pred[idx],
+    #             "forget_label": idx_to_pred[idx],
+    #             "entropy": entropy_all[idx],
+    #             "top1": idx_to_top1[idx],
+    #             "top2": idx_to_top2[idx],
+    #         }
+    #         for idx in selected_flippable
+    #     }
+
+
+
+    #     # forget indices (deterministic)
+    #     # --------------------------------------------------------
+    #     selected_flippable_list = sorted(selected_flippable)
+
+    #     # Initial predicted class BEFORE flip, aligned with indices
+    #     forget_initial_preds = [
+    #         idx_to_pred[idx] for idx in selected_flippable_list
+    #     ]
+
+
+
+    #     # ========================================================
+    #     # Assign labels:
+    #     #  - flippable -> top-2
+    #     #  - stable    -> top-1
+    #     # ========================================================
+    #     assigned_labels_map = {}
+    #     for idx in idx_to_pred.keys():
+    #         if idx in selected_flippable:
+    #             assigned_labels_map[idx] = idx_to_top2.get(idx, idx_to_top1[idx])
+    #         else:
+    #             assigned_labels_map[idx] = idx_to_top1[idx]
+
+    #     self.assigned_labels_map = assigned_labels_map
+    #     reinforce_indices = set()   # Placeholder for legacy logic
+
+    #     # ========================================================
+    #     # Select Xretain (stable) set
+    #     # ========================================================
+    #     stable_selected = []
+    #     stable_labels = []
+
+    #     # All samples seen during traversal
+    #     all_seen = list(idx_to_pred.keys())
+
+    #     # ========================================================
+    #     # NEW OPTION: retain absolutely all non-forgotten images
+    #     # ========================================================
+    #     if retain_all_others:
+    #         # Xretain = all_seen \ Xforget
+    #         stable_selected = [idx for idx in all_seen if idx not in flippable_subset]
+    #         stable_labels   = [idx_to_pred[idx] for idx in stable_selected]
+
+    #     else:
+    #         # ====================================================
+    #         # Original behavior:
+    #         # two cases depending on stable_match_strategy
+    #         # ====================================================
+    #         preserve_all = self.args.stable_match_strategy
+
+    #         if not preserve_all:
+    #             # Simple retain: keep everything not forgotten
+    #             nonflipped = [idx for idx in all_seen if idx not in flippable_subset]
+    #             stable_selected = nonflipped
+    #             stable_labels = [idx_to_pred[idx] for idx in stable_selected]
+
+    #         else:
+    #             # Class-balanced retain among freeze_classes
+    #             total_target = len(flippable_subset)
+
+    #             if total_target > 0 and len(freeze_classes) > 0:
+    #                 # Compute quotas
+    #                 total_candidates = sum(len(by_class_all[c]) for c in freeze_classes)
+    #                 if total_candidates == 0:
+    #                     targets_per_class = {c: 0 for c in freeze_classes}
+    #                 else:
+    #                     quotas = {
+    #                         c: (len(by_class_all[c]) / total_candidates) * total_target
+    #                         for c in freeze_classes
+    #                     }
+    #                     base = {c: int(quotas[c]) for c in freeze_classes}
+    #                     allocated = sum(base.values())
+    #                     remainder = total_target - allocated
+
+    #                     # Distribute remainder
+    #                     fracs = sorted(
+    #                         [(c, quotas[c] - base[c]) for c in freeze_classes],
+    #                         key=lambda t: t[1],
+    #                         reverse=True
+    #                     )
+    #                     targets_per_class = base
+    #                     for c, _ in fracs:
+    #                         if remainder <= 0:
+    #                             break
+    #                         targets_per_class[c] += 1
+    #                         remainder -= 1
+
+    #                 # Sort by entropy ascending (most confident retained first) 
+    #                 for c in by_class_all.keys():
+    #                     by_class_all[c].sort(key=lambda x: x[1])
+
+    #                 # Select stable samples for each class
+    #                 for c in freeze_classes:
+    #                     pool = [(idx, ent) for (idx, ent) in by_class_all[c]
+    #                             if idx not in flippable_subset]
+
+    #                     take = min(targets_per_class.get(c, 0), len(pool))
+    #                     chosen = pool[:take]
+    #                     stable_selected.extend([idx for (idx, _) in chosen])
+    #                     stable_labels.extend([c] * take)
+
+    #     # ========================================================
+    #     # Compute monitoring statistics (correctness of flip/retain)
+    #     # ========================================================
+    #     flip_correct = sum(1 for idx in flippable_subset
+    #                     if idx_to_pred.get(idx) == idx_to_target.get(idx))
+    #     flip_total = len(flippable_subset)
+    #     flip_acc = flip_correct / flip_total if flip_total > 0 else 0.0
+
+    #     stable_correct = sum(1 for idx in stable_selected
+    #                         if idx_to_pred.get(idx) == idx_to_target.get(idx))
+    #     stable_total = len(stable_selected)
+    #     stable_acc = stable_correct / stable_total if stable_total > 0 else 0.0
+
+    #     results = {
+    #         "retain": stable_acc,
+    #         "forget": flip_acc
+    #     }
+
+    #     # Save metrics
+    #     out_txt = os.path.join(self.args.outd, "results_unlearning_acc.txt")
+    #     out_pkl = os.path.join(self.args.outd, "results__unlearning_acc.pkl")
+
+    #     with open(out_txt, "a") as f:
+    #         f.write(f"Epoch {self.epoch}\n")
+    #         f.write(f"Nb retain : {len(stable_selected)}\n")
+    #         f.write(f"retain acc : {stable_acc:.4f}\n")
+    #         f.write(f"Nb forget : {len(flippable_subset)}\n")
+    #         f.write(f"forget acc : {flip_acc:.4f}\n")
+    #         f.write("\n")
+
+    #     # Load previous results if exists
+    #     if os.path.exists(out_pkl):
+    #         with open(out_pkl, "rb") as f:
+    #             history = pkl.load(f)
+    #     else:
+    #         history = []
+
+    #     history.append(results)
+
+    #     with open(out_pkl, "wb") as f:
+    #         pkl.dump(history, f)
+
+    #     Forget_labels = [assigned_labels_map[idx] for idx in selected_flippable]
+    #     Retain_labels = [assigned_labels_map[idx] for idx in stable_selected]
+
+
+    #     # return (
+    #     #     selected_flippable,       
+    #     #     stable_selected,           
+    #     #     assigned_labels_map,       
+    #     #     KL_global 
+    #     #     )
+
+    #     return (
+    #         selected_flippable,
+    #         reinforce_indices,
+    #         idx_to_pred,
+    #         entropy_all,
+    #         flippable_subset,
+    #         stable_selected,
+    #         stable_labels,
+    #         probs_all,
+    #         KL_global,
+    #         assigned_labels_map,
+    #         forget_info                 
+    #     )
 
 
     # @torch.no_grad()
@@ -4491,6 +5240,19 @@ class Trainer(Basic):
                 assigned_labels_map[idx] = (
                     idx_to_top1[idx]
                 )
+
+        from collections import Counter
+
+        forget_assigned_counts = Counter(
+            assigned_labels_map[idx]
+            for idx in selected_flippable
+        )
+
+        print(
+            "Forget assigned-label counts:",
+            dict(sorted(forget_assigned_counts.items()))
+        )
+
 
         self.assigned_labels_map = assigned_labels_map
 

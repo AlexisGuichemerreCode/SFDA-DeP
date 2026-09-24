@@ -719,6 +719,10 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--disable_train_augmentations', type=str2bool, default=None,)
     parser.add_argument('--esfda_select_imgs', type=str2bool, default=None,)
     parser.add_argument('--esfda_select_imgs_ratio', type=float, default=None,)
+    parser.add_argument('--esfda_top2', type=str2bool, default=None,)
+    parser.add_argument('--esfda_top_no_dom', type=str2bool, default=None,)
+    parser.add_argument('--esfda_rand_underpred', type=str2bool, default=None,)
+
     parser.add_argument('--random_select_ratio', type=float, default=None,)
     parser.add_argument('--retain_all_others', type=str2bool, default=None,)
     parser.add_argument('--dynamic_selection', type=str2bool, default=None,)
