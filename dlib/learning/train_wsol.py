@@ -1110,11 +1110,10 @@ class Trainer(Basic):
         assert std_cams.ndim == 4
         cams = std_cams.detach()
 
-        # cams: (bsz, 1, h, w) == image_size.
         assert cams.ndim == 4
-        # Quick fix: todo...
+
         cams = torch.nan_to_num(cams, nan=0.0, posinf=1., neginf=0.0)
-        # todo: unnecessary. cams and images have same size.
+
         cams = F.interpolate(cams,
                              image_size,
                              mode='bilinear',
@@ -1296,16 +1295,24 @@ class Trainer(Basic):
                 cutmix_holder = [target_a, target_b, lam]
 
         if args.sf_uda:
-
             if args.pixel_wise_classification and args.ece_adapt:
                 out = self.model(images) 
+                cl_logits = out
+                probs = torch.softmax(cl_logits, dim=1)      # [B, C]
+                pred_class = probs.argmax(dim=1)             # [B]
+                entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1)  # [B]
+
                 _, _, h, w = self.model.encoder_last_features.shape
                 interpolation_mode = 'bilinear'
-                if std_cams is None:
-                    cams_inter = self.get_pseudo_cams_minibatch(images=images,
-                                                            targets=z_label)
+
+                if self.epoch >= self.args.resample_every and self.args.loc_self_learning == True:
+                    cams_inter = self.get_pseudo_cams_minibatch(images=images,targets=pred_class)
                 else:
-                    cams_inter = std_cams
+                    if std_cams is None:
+                        cams_inter = self.get_pseudo_cams_minibatch(images=images,
+                                                                targets=pred_class)
+                    else:
+                        cams_inter = std_cams
 
                 if self.args.low_res:
                     fcams=self.model.cams
@@ -1323,11 +1330,43 @@ class Trainer(Basic):
                                 mode=interpolation_mode,
                                 align_corners=False)
 
-                    seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
-
+                    seeds = self.sl_mask_builder(cams_inter, class_idx=pred_class)
+                    
             else:
                 seeds = None
                 fcams = None
+            
+            # if args.pixel_wise_classification and args.ece_adapt:
+            #     out = self.model(images) 
+            #     _, _, h, w = self.model.encoder_last_features.shape
+            #     interpolation_mode = 'bilinear'
+            #     if std_cams is None:
+            #         cams_inter = self.get_pseudo_cams_minibatch(images=images,
+            #                                                 targets=z_label)
+            #     else:
+            #         cams_inter = std_cams
+
+            #     if self.args.low_res:
+            #         fcams=self.model.cams
+            #     else:
+            #         _, _, i, x = cams_inter.shape
+            #         fcams= F.interpolate(self.model.cams,
+            #                     (i, x),
+            #                     mode=interpolation_mode,
+            #                     align_corners=False)
+
+            #     with torch.no_grad():
+            #         if self.args.low_res:
+            #             cams_inter = F.interpolate(cams_inter,
+            #                     (h, w),
+            #                     mode=interpolation_mode,
+            #                     align_corners=False)
+
+            #         seeds = self.sl_mask_builder(cams_inter, class_idx=p_glabel)
+
+            # else:
+            #     seeds = None
+            #     fcams = None
 
             if args.task == constants.STD_CL:
                 if args.faust:
