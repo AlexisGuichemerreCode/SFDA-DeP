@@ -2748,6 +2748,7 @@ class Trainer(Basic):
         top2=True,
         top_no_dom=False,
         rand_underpred=False,
+        dominant_random=False,  # NEW
     ):
             """
             Select flippable (forget) and stable (retain) image indices using
@@ -2953,7 +2954,22 @@ class Trainer(Basic):
             # ============================================================
             # Select images to forget
             # ============================================================
-            if entropy_threshold is not None:
+
+            if dominant_random:
+
+                # Random selection among dominant-class predictions
+                # Same forgetting budget as entropy-based selection
+
+                max_n = int(
+                    len(entropy_list) * select_imgs_ratio
+                )
+
+                preselected_indices = py_random.sample(
+                    entropy_list,
+                    max_n
+                )
+
+            elif entropy_threshold is not None:
 
                 preselected_indices = [
                     (idx, e)
@@ -2970,13 +2986,10 @@ class Trainer(Basic):
             else:
 
                 max_n = int(
-                    len(entropy_list)
-                    * select_imgs_ratio
+                    len(entropy_list) * select_imgs_ratio
                 )
 
-                preselected_indices = (
-                    entropy_list[:max_n]
-                )
+                preselected_indices = entropy_list[:max_n]
 
             # ============================================================
             # Random subsampling
@@ -6511,7 +6524,16 @@ class Trainer(Basic):
             p_glabel = self._fill_minibatch(p_glabel, mbatchsz)
             raw_imgs = self._fill_minibatch(raw_imgs, mbatchsz)
             aug_images = self._fill_minibatch(aug_images, mbatchsz)
-            index = self._fill_minibatch_list(index, mbatchsz)
+            #index = self._fill_minibatch_list(index, mbatchsz)
+
+            if not (self.args.nrc or self.args.esfda):
+                index = self._fill_minibatch_list(index, mbatchsz)
+
+            # Verify batch alignment
+            assert len(index) == images.size(0), (
+                f"Batch mismatch: {images.size(0)} images "
+                f"but {len(index)} indices"
+            )
 
             images = images.cuda(self.args.c_cudaid)
             targets = targets.cuda(self.args.c_cudaid)

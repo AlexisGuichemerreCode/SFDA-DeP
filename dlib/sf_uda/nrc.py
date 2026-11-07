@@ -67,7 +67,7 @@ class Nrc(object):
         with torch.no_grad():
             
 
-            for id, (data, label, plabel, index, _, _, _, _) in enumerate(iter(self.train_loader_trg)):
+            for id, (data, label, plabel, index, _, _, _, _, _) in enumerate(iter(self.train_loader_trg)):
                 #feat =  self.feature_extractor(data.cuda())[layer_to_extract_feat].squeeze(2).squeeze(2)
                 out = self.model(data.cuda())
                 feat = self.model.lin_ft

@@ -910,6 +910,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         'esfda_select_imgs': False,  # select images to shift label
         'esfda_select_imgs_ratio':  0.1,  # ratio of images to select
         'random_select_ratio':  0.1,  # ratio of images to select
+        'dominant_random': False,
         'entropy_threshold': None, # minimum entropy to consider to forget for unlearning
         'retain_all_others': False,  # retain all other samples not selected for unlearning
         'esfda_top2': True,  # select top 2 samples to shift label
