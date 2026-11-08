@@ -724,7 +724,7 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_rand_underpred', type=str2bool, default=None,)
 
     parser.add_argument('--random_select_ratio', type=float, default=None,)
-    parser.add_argument('--dominant_random', type=float, default=None,)
+    parser.add_argument('--dominant_random', type=str2bool, default=None,)
     parser.add_argument('--retain_all_others', type=str2bool, default=None,)
     parser.add_argument('--dynamic_selection', type=str2bool, default=None,)
     parser.add_argument('--resample_every', type=float, default=None,)
