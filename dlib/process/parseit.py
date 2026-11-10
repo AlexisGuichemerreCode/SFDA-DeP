@@ -584,6 +584,12 @@ def get_args(args: dict, eval: bool = False):
                         help='ENG: lambda value for loss .')
 
     # Domain adaptation
+
+    parser.add_argument('--no_validation_protocol', type=str2bool, default=None,
+                            help='If true, we do not use the validation protocol.')
+    parser.add_argument('--epoch_measure', type=int, default=None,
+                                help='nb every eopch we measure performance during adaptation.')
+    
     parser.add_argument('--target_domain_ds_to_compute_stats', type=str, default=None,
                         help='Name of the target domain dataset to compute '
                              'the stats.')

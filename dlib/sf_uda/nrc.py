@@ -50,7 +50,14 @@ class Nrc(object):
         self.model = model_trg
         self.train_loader_trg = train_loader_trg
         self.num_sample=len(train_loader_trg.dataset)
-        self.fea_bank=torch.randn(self.num_sample,2048)
+
+        if self.model.encoder_name == "deit_sat_tiny_patch16_224":
+            self.fea_bank=torch.randn(self.num_sample,192)
+        elif self.model.encoder_name == "deit_sat_base_patch16_224":
+            self.fea_bank=torch.randn(self.num_sample,768)
+        else:
+            self.fea_bank=torch.randn(self.num_sample,2048)
+            
         self.score_bank = torch.randn(self.num_sample, 2).cuda()
         self.name=[]
 

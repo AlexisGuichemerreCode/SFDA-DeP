@@ -1,6 +1,7 @@
 import datetime as dt
 import sys
 from copy import deepcopy
+from os.path import join
 
 from dlib.process.parseit import parse_input
 
@@ -21,6 +22,32 @@ import dlib.dllogger as DLLogger
 
 
 
+
+
+def measure_test_performance(trainer, epoch):
+    """Append the current model's test metrics, without selecting a checkpoint."""
+    trainer.evaluate(epoch=epoch, split=constants.TESTSET)
+    trainer.report(epoch=epoch, split=constants.TESTSET)
+
+    path = join(trainer.args.outd, 'test_performance_no_validation.txt')
+    with open(path, 'w' if epoch == 0 else 'a') as stream:
+        if epoch == 0:
+            stream.write('no_validation_protocol=True; '
+                         f'epoch_measure={trainer.args.epoch_measure}\n\n')
+        stream.write(f'EPOCH {epoch} - TEST SET (current model)\n')
+        for metric, meter in trainer.performance_meters[constants.TESTSET].items():
+            if trainer._skip_print_metric(metric=metric,
+                                          _split=constants.TESTSET,
+                                          split=constants.TESTSET):
+                continue
+            if meter.current_value is not None:
+                stream.write(f'{metric}: {meter.current_value}\n')
+        if trainer.args.localization_avail:
+            stream.write(trainer.perf_gist_to_str(constants.TESTSET, epoch))
+        stream.write('\n\n')
+
+    DLLogger.log(f'Test metrics appended to {path}')
+    DLLogger.flush()
 
 
 def main():
@@ -67,11 +94,14 @@ def main():
 
     DLLogger.log(fmsg("Start epoch 0 ..."))
 
-    trainer.evaluate(epoch=0, split=constants.VALIDSET)
-    trainer.model_selection(epoch=0)
+    if args.no_validation_protocol:
+        measure_test_performance(trainer, epoch=0)
+    else:
+        trainer.evaluate(epoch=0, split=constants.VALIDSET)
+        trainer.model_selection(epoch=0)
 
-    trainer.print_performances()
-    trainer.report(epoch=0, split=constants.VALIDSET)
+        trainer.print_performances()
+        trainer.report(epoch=0, split=constants.VALIDSET)
 
     # if args.ds_to_compute_acc_trainset_source_target in [constants.CAMELYON512, constants.GLAS, constants.CAMELYON17_512]:
     #         if args.measure_loc:
@@ -87,7 +117,11 @@ def main():
 
         train_performance = trainer.train(
             split=constants.TRAINSET, epoch=epoch)
-        trainer.evaluate(epoch, split=constants.VALIDSET)
+        if args.no_validation_protocol:
+            if epoch % args.epoch_measure == 0:
+                measure_test_performance(trainer, epoch)
+        else:
+            trainer.evaluate(epoch, split=constants.VALIDSET)
 
         if args.entropy_models:
             trainer.update_best_entropy_model(epoch, split=constants.TRAINSET)
@@ -103,11 +137,13 @@ def main():
         #     trainer.compute_acc_on_source_and_target(epoch)
         #     trainer.compute_loc_on_source_and_target(epoch)
 
-        trainer.model_selection(epoch=epoch)
+        if not args.no_validation_protocol:
+            trainer.model_selection(epoch=epoch)
 
         trainer.report_train(train_performance, epoch)
-        trainer.print_performances()
-        trainer.report(epoch, split=constants.VALIDSET)
+        if not args.no_validation_protocol:
+            trainer.print_performances()
+            trainer.report(epoch, split=constants.VALIDSET)
         DLLogger.log(fmsg(("Epoch {} done.".format(epoch))))
 
         trainer.adjust_learning_rate()
@@ -202,6 +238,11 @@ def main():
 
     #if args.measure_loc and not args.save_unlearning_model_all_criterion:
         #trainer.save_best_cl_train_models(criterion=constants.PXVALIDSET)
+
+    if args.no_validation_protocol:
+        trainer.save_args()
+        bye(trainer.args)
+        return
 
     trainer.save_checkpoints()
 

@@ -699,6 +699,9 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # target wsol method is specified in main, above. using method,
         # spatial_pooling, dataset, fold, encoder_name.
 
+        'no_validation_protocol': False,  # skip validation and monitor the current model on test.
+        'epoch_measure': 1,  # positive interval between test evaluations in this protocol.
+
         'target_domain_ds_to_compute_stats': None, #Name of the target domain dataset to compute the stats
         'ds_to_compute_acc_trainset_source_target' : None, #Compute the accuracy on the source and target test set
         'fold_came_compute': 7, #fold 7 to use by default to measure stats on target came

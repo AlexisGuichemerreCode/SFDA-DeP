@@ -8730,6 +8730,10 @@ class Trainer(Basic):
     def evaluate(self, epoch, split, checkpoint_type=None, fcam_argmax=False):
         torch.cuda.empty_cache()
         assert split in [constants.TESTSET, constants.VALIDSET]
+        test_without_validation = (
+            split == constants.TESTSET and checkpoint_type is None
+            and getattr(self.args, 'no_validation_protocol', False)
+        )
 
         if split == constants.TESTSET:
             splitpx = split
@@ -8755,12 +8759,17 @@ class Trainer(Basic):
 
         outd = None
         if split == constants.TESTSET:
-            assert checkpoint_type is not None
-            if fcam_argmax:
-                outd = join(self.args.outd, checkpoint_type, 'argmax-true',
-                            split)
+            if test_without_validation:
+                outd = join(self.args.outd, 'no_validation', f'epoch-{epoch}', split)
+                if fcam_argmax:
+                    outd = join(outd, 'argmax-true')
             else:
-                outd = join(self.args.outd, checkpoint_type, split)
+                assert checkpoint_type is not None
+                if fcam_argmax:
+                    outd = join(self.args.outd, checkpoint_type, 'argmax-true',
+                                split)
+                else:
+                    outd = join(self.args.outd, checkpoint_type, split)
         elif split == constants.VALIDSET:
             _chpt = 'training' if checkpoint_type is None else checkpoint_type
             if fcam_argmax:
@@ -8808,7 +8817,7 @@ class Trainer(Basic):
         if cmdx:
             cam_curve_interval = constants.VALID_FAST_CAM_CURVE_INTERVAL
 
-        if split == constants.VALIDSET:
+        if split == constants.VALIDSET or test_without_validation:
             best_valid_tau = None
         elif split == constants.TESTSET:
             if checkpoint_type == constants.BEST_LOC:
@@ -8891,7 +8900,7 @@ class Trainer(Basic):
                     with open(join(_outd, 'curves.pkl'), 'wb') as fc:
                         pkl.dump(curves, fc, protocol=pkl.HIGHEST_PROTOCOL)
 
-            if split == constants.TESTSET:
+            if split == constants.TESTSET and not test_without_validation:
                 title = get_tag(self.args, checkpoint_type=checkpoint_type)
 
                 if fcam_argmax:
