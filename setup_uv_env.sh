@@ -22,7 +22,8 @@ UV="${UV:-$(command -v uv || echo "$HOME/.local/bin/uv")}"
 "$UV" pip install --python .venv/bin/python \
   torch==2.0.0+cu117 torchvision==0.15.1+cu117 \
   --index-url https://download.pytorch.org/whl/cu117 \
-  --extra-index-url https://pypi.org/simple
+  --extra-index-url https://pypi.org/simple \
+  --index-strategy unsafe-best-match
 "$UV" pip install --python .venv/bin/python -r reqs_uv.txt
 
 ART="${1:-}"
