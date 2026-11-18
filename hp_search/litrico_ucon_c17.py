@@ -170,8 +170,13 @@ def jobs(methods, folds):
     return out
 
 
+# root holding exps/ (repo by default; on Compute Canada results are copied
+# to $SCRATCH/benchmark_wsol_histo -> use --exps-root there).
+EXPS_ROOT = [REPO]
+
+
 def exp_dir(exp_id, fold):
-    base = join(REPO, 'exps', 'CAMELYON17_512', 'resnet50', 'STD_CL',
+    base = join(EXPS_ROOT[0], 'exps', 'CAMELYON17_512', 'resnet50', 'STD_CL',
                 'PixelCAM')
     return join(base, f'id_{exp_id}-tsk_STD_CL-ds_CAMELYON17_512-fold_{fold}'
                       f'-mag_None-runmode_search-mode-mth_PixelCAM-spooling_'
@@ -436,7 +441,11 @@ def main():
     ap.add_argument('--csv', default=join(REPO, 'hp_c17_litrico_ucon.csv'))
     ap.add_argument('--queue-file',
                     default=join(REPO, 'outputjobs', 'hp_serve_queue.txt'))
+    ap.add_argument('--exps-root', default=REPO,
+                    help='folder containing exps/ (CC: '
+                         '$SCRATCH/benchmark_wsol_histo)')
     a = ap.parse_args()
+    EXPS_ROOT[0] = os.path.expandvars(a.exps_root)
 
     js = jobs(a.methods, a.folds)
     if a.mode == 'list':
