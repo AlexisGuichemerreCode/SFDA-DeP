@@ -21,6 +21,8 @@ One grid definition, used by all modes (identical exp_ids everywhere):
            with --submit). Accounts are used round-robin (--accounts).
              python hp_search/litrico_ucon_c17.py slurm --cluster nibi \
                  --folds 3 --accounts def-egranger rrg-josedolz --submit
+  serve    persistent GPU queue fed by appending exp_ids to --queue-file
+           (used to pull pending SLURM jobs onto free local GPUs).
   collect  per (method, target): pick config with best validation
            classification, report its test metrics (csv + table).
 """
@@ -220,6 +222,84 @@ def run_local(js, gpus, per_gpu):
         print('  FAILED', f)
 
 
+# ------------------------------------------------------------------ serve
+def gpu_load(gpus):
+    """Number of compute processes per GPU index (all users/runners)."""
+    q = subprocess.run(['nvidia-smi', '--query-gpu=index,uuid',
+                        '--format=csv,noheader'], capture_output=True,
+                       text=True).stdout
+    uuid2idx = {}
+    for line in q.strip().splitlines():
+        i, u = [x.strip() for x in line.split(',')]
+        uuid2idx[u] = int(i)
+    a = subprocess.run(['nvidia-smi', '--query-compute-apps=gpu_uuid',
+                        '--format=csv,noheader'], capture_output=True,
+                       text=True).stdout
+    load = {g: 0 for g in gpus}
+    for u in a.strip().splitlines():
+        i = uuid2idx.get(u.strip())
+        if i in load:
+            load[i] += 1
+    return load
+
+
+def run_serve(queue_file, gpus, per_gpu):
+    """Persistent queue fed by appending exp_ids to `queue_file` (one per
+    line). A line 'STOP' ends the server once everything finished.
+    A job starts only on a GPU with < per_gpu compute processes (counted
+    with nvidia-smi, so other runners on the machine are respected)."""
+    by_id = {j['exp_id']: j for j in jobs(METHODS, TARGET_FOLDS)}
+    logdir = join(REPO, 'outputjobs', 'hp_c17_litrico_ucon')
+    os.makedirs(logdir, exist_ok=True)
+    seen, running, pending = set(), [], []
+    stop = False
+    print(f'serve: {queue_file} gpus={gpus} per_gpu={per_gpu}', flush=True)
+    while True:
+        if isfile(queue_file):
+            for line in open(queue_file):
+                e = line.strip()
+                if not e or e in seen:
+                    continue
+                seen.add(e)
+                if e == 'STOP':
+                    stop = True
+                elif e in by_id and not is_done(by_id[e]):
+                    pending.append(by_id[e])
+                    print(f"[{time.strftime('%H:%M:%S')}] QUEUED {e}",
+                          flush=True)
+                elif e not in by_id:
+                    print(f'unknown exp_id: {e}', flush=True)
+        for cur in list(running):
+            p, j, fh, g = cur
+            rc = p.poll()
+            if rc is None:
+                continue
+            fh.close()
+            running.remove(cur)
+            st = 'OK' if (rc == 0 and is_done(j)) else f'FAIL({rc})'
+            print(f"[{time.strftime('%H:%M:%S')}] {st} gpu{g} "
+                  f"{j['exp_id']}", flush=True)
+        while pending:
+            load = gpu_load(gpus)
+            g = min(gpus, key=lambda x: load[x])
+            if load[g] >= per_gpu:
+                break
+            j = pending.pop(0)
+            env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(g))
+            fh = open(join(logdir, j['exp_id'] + '.log'), 'w')
+            p = subprocess.Popen([sys.executable, 'main.py'] + j['args'],
+                                 cwd=REPO, env=env, stdout=fh,
+                                 stderr=subprocess.STDOUT)
+            running.append((p, j, fh, g))
+            print(f"[{time.strftime('%H:%M:%S')}] START gpu{g} "
+                  f"{j['exp_id']}", flush=True)
+            time.sleep(45)  # let the job allocate memory before recount.
+        if stop and not pending and not running:
+            print('serve: STOP and all finished.', flush=True)
+            return
+        time.sleep(20)
+
+
 # ------------------------------------------------------------------ slurm
 def run_slurm(js, cluster, accounts, wall, submit):
     c = CLUSTERS[cluster]
@@ -327,7 +407,8 @@ def collect(js, out_csv):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('mode', choices=['list', 'local', 'slurm', 'collect'])
+    ap.add_argument('mode', choices=['list', 'local', 'serve', 'slurm',
+                                     'collect'])
     ap.add_argument('--methods', nargs='+', default=METHODS)
     ap.add_argument('--folds', nargs='+', type=int, default=TARGET_FOLDS)
     ap.add_argument('--gpus', nargs='+', type=int, default=[0])
@@ -337,6 +418,8 @@ def main():
     ap.add_argument('--time', default='3:00:00')
     ap.add_argument('--submit', action='store_true')
     ap.add_argument('--csv', default=join(REPO, 'hp_c17_litrico_ucon.csv'))
+    ap.add_argument('--queue-file',
+                    default=join(REPO, 'outputjobs', 'hp_serve_queue.txt'))
     a = ap.parse_args()
 
     js = jobs(a.methods, a.folds)
@@ -346,6 +429,8 @@ def main():
         print(len(js), 'jobs')
     elif a.mode == 'local':
         run_local(js, a.gpus, a.per_gpu)
+    elif a.mode == 'serve':
+        run_serve(a.queue_file, a.gpus, a.per_gpu)
     elif a.mode == 'slurm':
         assert a.cluster, '--cluster required'
         run_slurm(js, a.cluster, a.accounts, a.time, a.submit)
