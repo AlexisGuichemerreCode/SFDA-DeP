@@ -1,6 +1,6 @@
 """
 HP search: ESFDA (ours) on EBHI, source fold 0 (PixelCAM / ResNet50,
-best_localization source checkpoint) -> target folds 1 and 8.
+best_localization source checkpoint) -> target folds 1, 6 and 8.
 
 Grid, exp_ids and main.py arguments reproduce
 configs_cc/python_script/create_pxcam_esfda_EBHI.py exactly (same key order,
@@ -25,7 +25,7 @@ import litrico_ucon_c17 as base  # noqa: E402
 
 SOURCE_DS = 'EBHI'
 SOURCE_FOLD = 0
-TARGET_FOLDS = [1, 8]
+TARGET_FOLDS = [1, 6, 8]
 METHOD = 'PixelCAM'
 STEP = 20
 
