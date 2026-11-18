@@ -42,6 +42,12 @@ TARGET_FOLDS = [1, 2, 3, 4]
 METHODS = ['litrico', 'ucon']
 WSOL = 'PIXELCAM'
 
+# Experiment-level settings. Other experiments (e.g. esfda_ebhi.py) reuse
+# this module and override them (and `jobs`).
+TAG = 'c17_litrico_ucon'      # names of log / script folders.
+DATASET = 'CAMELYON17_512'    # dataset dir + tarball name ($SCRATCH).
+SLURM_TAG = 'c17_0_litrico_ucon'  # configs_cc/ script + slurm log folders.
+
 COMMON = [
     '--task', 'STD_CL', '--encoder_name', 'resnet50',
     '--arch', 'STDClassifier', '--runmode', 'search-mode',
@@ -136,9 +142,9 @@ source ~/Venvs/wsol_ted_loc/bin/activate
 
 echo 'Start moving dataset into the current node....'
 mkdir -p $SLURM_TMPDIR/datasets/wsol-done-right
-cp ~/scratch/CAMELYON17_512.tar.gz $SLURM_TMPDIR/datasets/wsol-done-right/
-tar -xf $SLURM_TMPDIR/datasets/wsol-done-right/CAMELYON17_512.tar.gz -C $SLURM_TMPDIR/datasets/wsol-done-right/
-rm $SLURM_TMPDIR/datasets/wsol-done-right/CAMELYON17_512.tar.gz
+cp ~/scratch/{dataset}.tar.gz $SLURM_TMPDIR/datasets/wsol-done-right/
+tar -xf $SLURM_TMPDIR/datasets/wsol-done-right/{dataset}.tar.gz -C $SLURM_TMPDIR/datasets/wsol-done-right/
+rm $SLURM_TMPDIR/datasets/wsol-done-right/{dataset}.tar.gz
 echo 'Finished moving/extracting dataset into the current node....'
 
 cd {root}
@@ -176,9 +182,9 @@ EXPS_ROOT = [REPO]
 
 
 def exp_dir(exp_id, fold):
-    base = join(EXPS_ROOT[0], 'exps', 'CAMELYON17_512', 'resnet50', 'STD_CL',
+    base = join(EXPS_ROOT[0], 'exps', DATASET, 'resnet50', 'STD_CL',
                 'PixelCAM')
-    return join(base, f'id_{exp_id}-tsk_STD_CL-ds_CAMELYON17_512-fold_{fold}'
+    return join(base, f'id_{exp_id}-tsk_STD_CL-ds_{DATASET}-fold_{fold}'
                       f'-mag_None-runmode_search-mode-mth_PixelCAM-spooling_'
                       f'WGAP-arch_STDClassifier-ecd_resnet50')
 
@@ -189,7 +195,7 @@ def is_done(job) -> bool:
 
 # ------------------------------------------------------------------ local
 def run_local(js, gpus, per_gpu):
-    logdir = join(REPO, 'outputjobs', 'hp_c17_litrico_ucon')
+    logdir = join(REPO, 'outputjobs', f'hp_{TAG}')
     os.makedirs(logdir, exist_ok=True)
     todo = [j for j in js if not is_done(j)]
     print(f'{len(js)} jobs, {len(js) - len(todo)} already done, '
@@ -261,7 +267,7 @@ def run_serve(queue_file, gpus, per_gpu):
     A job starts only on a GPU with < per_gpu compute processes (counted
     with nvidia-smi, so other runners on the machine are respected)."""
     by_id = {j['exp_id']: j for j in jobs(METHODS, TARGET_FOLDS)}
-    logdir = join(REPO, 'outputjobs', 'hp_c17_litrico_ucon')
+    logdir = join(REPO, 'outputjobs', f'hp_{TAG}')
     os.makedirs(logdir, exist_ok=True)
     n_read, running, pending = 0, [], []
     stop = False
@@ -325,16 +331,17 @@ def run_serve(queue_file, gpus, per_gpu):
 def run_slurm(js, cluster, accounts, wall, submit):
     c = CLUSTERS[cluster]
     root = c['root']
-    outdir = join(root, 'configs_cc', 'generated_scripts_hp_c17_0_litrico_ucon',
+    outdir = join(root, 'configs_cc', f'generated_scripts_hp_{SLURM_TAG}',
                   cluster)
-    logdir = join(root, 'configs_cc', 'slurm_logs', 'hp_c17_0_litrico_ucon')
+    logdir = join(root, 'configs_cc', 'slurm_logs', f'hp_{SLURM_TAG}')
     os.makedirs(outdir, exist_ok=True)
     os.makedirs(logdir, exist_ok=True)
     n = 0
     for i, j in enumerate([j for j in js if not is_done(j)]):
         acc = accounts[i % len(accounts)]
         name = j['exp_id']
-        script = SLURM_HEADER.format(account=acc, logdir=logdir, name=name,
+        script = SLURM_HEADER.format(dataset=DATASET, account=acc,
+                                     logdir=logdir, name=name,
                                      gres=c['gres'], time=wall, root=root)
         script += 'python main.py ' + ' '.join(j['args']) + '\n'
         path = join(outdir, name + '.sh')
@@ -438,7 +445,9 @@ def main():
     ap.add_argument('--accounts', nargs='+', default=['def-egranger'])
     ap.add_argument('--time', default='3:00:00')
     ap.add_argument('--submit', action='store_true')
-    ap.add_argument('--csv', default=join(REPO, 'hp_c17_litrico_ucon.csv'))
+    ap.add_argument('--csv', default=join(REPO, f'hp_{TAG}.csv'))
+    ap.add_argument('--ids-file', default=None,
+                    help='only use the exp_ids listed in this file')
     ap.add_argument('--queue-file',
                     default=join(REPO, 'outputjobs', 'hp_serve_queue.txt'))
     ap.add_argument('--exps-root', default=REPO,
@@ -448,6 +457,9 @@ def main():
     EXPS_ROOT[0] = os.path.expandvars(a.exps_root)
 
     js = jobs(a.methods, a.folds)
+    if a.ids_file:
+        keep = {l.strip() for l in open(a.ids_file) if l.strip()}
+        js = [j for j in js if j['exp_id'] in keep]
     if a.mode == 'list':
         for j in js:
             print(('DONE ' if is_done(j) else 'TODO ') + j['exp_id'])
