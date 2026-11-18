@@ -243,6 +243,13 @@ def gpu_load(gpus):
     return load
 
 
+def running_elsewhere(exp_id) -> bool:
+    """True if a main.py process for this exp_id runs on this machine."""
+    r = subprocess.run(['pgrep', '-f', f'main.py .*--exp_id {exp_id}( |$)'],
+                       capture_output=True, text=True)
+    return r.returncode == 0
+
+
 def run_serve(queue_file, gpus, per_gpu):
     """Persistent queue fed by appending exp_ids to `queue_file` (one per
     line). A line 'STOP' ends the server once everything finished.
@@ -251,24 +258,29 @@ def run_serve(queue_file, gpus, per_gpu):
     by_id = {j['exp_id']: j for j in jobs(METHODS, TARGET_FOLDS)}
     logdir = join(REPO, 'outputjobs', 'hp_c17_litrico_ucon')
     os.makedirs(logdir, exist_ok=True)
-    seen, running, pending = set(), [], []
+    n_read, running, pending = 0, [], []
     stop = False
     print(f'serve: {queue_file} gpus={gpus} per_gpu={per_gpu}', flush=True)
     while True:
         if isfile(queue_file):
-            for line in open(queue_file):
+            # lines are consumed by position: appending an exp_id again
+            # re-queues it (e.g. retry after a failure).
+            lines = open(queue_file).read().splitlines()
+            for line in lines[n_read:]:
                 e = line.strip()
-                if not e or e in seen:
+                if not e:
                     continue
-                seen.add(e)
                 if e == 'STOP':
                     stop = True
-                elif e in by_id and not is_done(by_id[e]):
+                elif e not in by_id:
+                    print(f'unknown exp_id: {e}', flush=True)
+                elif any(j['exp_id'] == e for j in pending):
+                    pass
+                elif not is_done(by_id[e]):
                     pending.append(by_id[e])
                     print(f"[{time.strftime('%H:%M:%S')}] QUEUED {e}",
                           flush=True)
-                elif e not in by_id:
-                    print(f'unknown exp_id: {e}', flush=True)
+            n_read = len(lines)
         for cur in list(running):
             p, j, fh, g = cur
             rc = p.poll()
@@ -285,6 +297,10 @@ def run_serve(queue_file, gpus, per_gpu):
             if load[g] >= per_gpu:
                 break
             j = pending.pop(0)
+            if is_done(j) or running_elsewhere(j['exp_id']):
+                print(f"[{time.strftime('%H:%M:%S')}] SKIP (done or already "
+                      f"running) {j['exp_id']}", flush=True)
+                continue
             env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(g))
             fh = open(join(logdir, j['exp_id'] + '.log'), 'w')
             p = subprocess.Popen([sys.executable, 'main.py'] + j['args'],
