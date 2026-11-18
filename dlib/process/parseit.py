@@ -683,6 +683,48 @@ def get_args(args: dict, eval: bool = False):
                         help='lambdaS for RGV method for SFUDA.')
     parser.add_argument('--betaS', type=float, default=None,
                         help='betaS for RGV method for SFUDA.')
+
+    # LITRICO (CVPR 2023)
+    parser.add_argument('--litrico', type=str2bool, default=None,
+                        help='USE/NOT Litrico et al. method for SFUDA.')
+    parser.add_argument('--litrico_n_strong_views', type=int, default=None)
+    parser.add_argument('--litrico_num_neighbors', type=int, default=None)
+    parser.add_argument('--litrico_temporal_length', type=int, default=None)
+    parser.add_argument('--litrico_queue_size', type=int, default=None)
+    parser.add_argument('--litrico_moco_m', type=float, default=None)
+    parser.add_argument('--litrico_moco_t', type=float, default=None)
+    parser.add_argument('--litrico_label_refinement', type=str2bool,
+                        default=None)
+    parser.add_argument('--litrico_neg_learning', type=str2bool, default=None)
+    parser.add_argument('--litrico_reweighting', type=str2bool, default=None)
+    parser.add_argument('--litrico_cls', type=str2bool, default=None)
+    parser.add_argument('--litrico_cls_lambda', type=float, default=None)
+    parser.add_argument('--litrico_ctr', type=str2bool, default=None)
+    parser.add_argument('--litrico_ctr_lambda', type=float, default=None)
+    parser.add_argument('--litrico_div', type=str2bool, default=None)
+    parser.add_argument('--litrico_div_lambda', type=float, default=None)
+
+    # UCON-SFDA (ICLR 2025)
+    parser.add_argument('--ucon', type=str2bool, default=None,
+                        help='USE/NOT UCon-SFDA method for SFUDA.')
+    parser.add_argument('--ucon_n_strong_views', type=int, default=None)
+    parser.add_argument('--ucon_k', type=int, default=None)
+    parser.add_argument('--ucon_alpha', type=float, default=None)
+    parser.add_argument('--ucon_beta', type=float, default=None)
+    parser.add_argument('--ucon_alpha_decay', type=str2bool, default=None)
+    parser.add_argument('--ucon_pos', type=str2bool, default=None)
+    parser.add_argument('--ucon_pos_lambda', type=float, default=None)
+    parser.add_argument('--ucon_neg', type=str2bool, default=None)
+    parser.add_argument('--ucon_neg_lambda', type=float, default=None)
+    parser.add_argument('--ucon_dc', type=str2bool, default=None)
+    parser.add_argument('--ucon_dc_lambda', type=float, default=None)
+    parser.add_argument('--ucon_dc_temp', type=float, default=None)
+    parser.add_argument('--ucon_pl', type=str2bool, default=None)
+    parser.add_argument('--ucon_pl_lambda', type=float, default=None)
+    parser.add_argument('--ucon_partial_k_type', type=str, default=None)
+    parser.add_argument('--ucon_partial_k', type=int, default=None)
+    parser.add_argument('--ucon_tau_type', type=str, default=None)
+    parser.add_argument('--ucon_tau', type=float, default=None)
     
 
     # 4- SFUDA-DE
@@ -1549,7 +1591,7 @@ def get_args(args: dict, eval: bool = False):
     if args.sf_uda:
         assert args.task in [constants.STD_CL, constants.NEGEV], args.task
 
-        l_sf_uda_techs = [args.shot, args.faust, args.adadsa, args.sdda, args.nrc, args.sfde, args.cdcl, args.esfda, args.pxsfde, args.rgv, args.grsfda, args.fine_tuning]
+        l_sf_uda_techs = [args.shot, args.faust, args.adadsa, args.sdda, args.nrc, args.sfde, args.cdcl, args.esfda, args.pxsfde, args.rgv, args.grsfda, args.fine_tuning, args.litrico, args.ucon]
 
         assert any(l_sf_uda_techs)
         assert sum(l_sf_uda_techs) == 1, 'Only one SFUDA must be active.'
@@ -1614,6 +1656,25 @@ def get_args(args: dict, eval: bool = False):
 
         elif args.grsfda:
             pass
+
+        elif args.litrico:
+            assert any([args.litrico_cls, args.litrico_ctr, args.litrico_div])
+            assert args.litrico_n_strong_views >= 2, \
+                args.litrico_n_strong_views
+            assert args.litrico_num_neighbors >= 1
+            assert args.litrico_temporal_length >= 1
+            assert 0. <= args.litrico_moco_m < 1., args.litrico_moco_m
+            assert args.litrico_moco_t > 0., args.litrico_moco_t
+            assert not args.faust
+
+        elif args.ucon:
+            assert any([args.ucon_pos, args.ucon_neg, args.ucon_dc,
+                        args.ucon_pl])
+            assert args.ucon_n_strong_views >= 1, args.ucon_n_strong_views
+            assert args.ucon_k >= 1, args.ucon_k
+            assert args.ucon_partial_k_type in ['fixed', 'cal']
+            assert args.ucon_tau_type in ['fixed', 'stat', 'cal']
+            assert not args.faust
 
         else:
             raise NotImplementedError
@@ -1846,7 +1907,9 @@ def copy_code(dest,
             "cd {} && ".format(dest),
             "cd .. && ",
             "tar -cf {}.tar.gz {}  && ".format(head, head),
-            "rm -rf {}".format(head)
+            # NFS: files held open (e.g. by VS Code) leave .nfs* files and make
+            # rm fail even though the tar archive was created. Do not crash.
+            "(rm -rf {} || true)".format(head)
                ]
 
         cmd = "".join(cmds)

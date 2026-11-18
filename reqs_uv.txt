@@ -1,0 +1,25 @@
+# Pinned to the working local env (SFDA_env_wsol_histology_clone, Python 3.10).
+# torch/torchvision are installed separately from the cu117 index by
+# setup_uv_env.sh. bilateralfilter / colorbilateralfilter are NOT needed
+# (optional imports, only for the CRF losses).
+compress-pickle==2.1.0
+efficientnet_pytorch==0.7.1
+kornia==0.8.1
+matplotlib==3.10.3
+munch==4.0.0
+numba==0.61.2
+numpy==1.26.4
+opencv-python==4.12.0.88
+pandas==2.3.1
+pillow==11.3.0
+pretrainedmodels==0.7.4
+pynndescent==0.5.13
+PyYAML==6.0.2
+scikit-image==0.25.2
+scikit-learn==1.7.0
+scipy==1.15.3
+seaborn==0.13.2
+texttable==1.7.0
+timm==0.9.8
+tqdm==4.67.1
+umap-learn==0.5.9.post2

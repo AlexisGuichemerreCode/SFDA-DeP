@@ -23,7 +23,17 @@ sys.path.append(
          "crf/crfwrapper/bilateralfilter/build/lib.linux-x86_64-3.7")
 )
 
-from bilateralfilter import bilateralfilter, bilateralfilter_batch
+# Optional compiled extension: only needed when the dense CRF loss is used.
+try:
+    from bilateralfilter import bilateralfilter, bilateralfilter_batch
+except ImportError:  # not installed: fail only if actually used.
+    def _missing_bilateralfilter(*args, **kwargs):
+        raise ImportError(
+            "bilateralfilter is not installed. It is only needed for the "
+            "dense CRF loss. Build crf/crfwrapper/bilateralfilter or "
+            "disable this loss.")
+    bilateralfilter = _missing_bilateralfilter
+    bilateralfilter_batch = _missing_bilateralfilter
 
 
 __all__ = ['DenseCRFLoss']

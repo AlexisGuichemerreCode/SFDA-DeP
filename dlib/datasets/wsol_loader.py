@@ -76,6 +76,62 @@ def get_eval_transforms_global(crop_size):
     ])
 
 
+# ==============================================================================
+# SFUDA strong augmentations (Litrico et al. CVPR 2023 / UCon-SFDA ICLR 2025)
+# ==============================================================================
+class _SimCLRGaussianBlur(object):
+    """Gaussian blur augmentation used in SimCLR / MoCo-v2 / AdaContrast.
+    Same as the one used in the official Litrico and UCon-SFDA repos."""
+
+    def __init__(self, sigma=(0.1, 2.0)):
+        self.sigma = sigma
+
+    def __call__(self, x: Image.Image) -> Image.Image:
+        from PIL import ImageFilter
+        sigma = random.uniform(self.sigma[0], self.sigma[1])
+        return x.filter(ImageFilter.GaussianBlur(radius=sigma))
+
+
+def get_sfuda_strong_transform(mode: str, crop_size: int):
+    """
+    Strong augmentation for SFUDA methods that need extra strongly augmented
+    views of each target sample.
+
+    - 'litrico': AdaContrast/MoCo-v2 strong aug, as in
+      https://github.com/MattiaLitrico/Guiding-Pseudo-labels-with-Uncertainty-Estimation-for-Source-free-Unsupervised-Domain-Adaptation/blob/main/datasets.py
+    - 'ucon': `image_train_mocov2` of
+      https://github.com/xugezheng/UCon_SFDA/blob/main/utils_dataloader.py
+    """
+    if mode == constants.SFUDA_STRONG_AUG_LITRICO:
+        return transforms.Compose([
+            transforms.RandomResizedCrop(crop_size, scale=(0.2, 1.0)),
+            transforms.RandomApply(
+                [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.RandomApply([_SimCLRGaussianBlur([0.1, 2.0])], p=0.5),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
+        ])
+
+    elif mode == constants.SFUDA_STRONG_AUG_UCON:
+        return transforms.Compose([
+            transforms.RandomResizedCrop(crop_size, scale=(0.2, 1.0)),
+            transforms.RandomApply(
+                [transforms.ColorJitter(0.8, 0.8, 0.5, 0.2)], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.RandomRotation(degrees=[-2, 2]),
+            transforms.RandomPosterize(8, p=0.2),
+            transforms.RandomEqualize(p=0.2),
+            transforms.RandomApply([_SimCLRGaussianBlur([0.1, 2.0])], p=0.5),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(IMAGE_MEAN_VALUE, IMAGE_STD_VALUE)
+        ])
+
+    raise NotImplementedError(mode)
+
+
 
 
 class WSOLImageLabelDataset(Dataset):
@@ -95,7 +151,9 @@ class WSOLImageLabelDataset(Dataset):
                  sfuda_faust: bool = False,
                  sfuda_n_rnd_views: int = 0,
                  sfda_aug_transform=None,
-                 sfuda_eval_transform = None
+                 sfuda_eval_transform = None,
+                 sfuda_n_strong_views: int = 0,
+                 sfuda_strong_transform=None
                  ):
 
         self.load_tr_masks = load_tr_masks
@@ -119,6 +177,16 @@ class WSOLImageLabelDataset(Dataset):
 
         assert isinstance(sfuda_faust, bool), type(sfuda_faust)
         self.sfuda_faust = sfuda_faust
+
+        # SFUDA: Litrico / UCon-SFDA strong views (stored in `views`).
+        assert isinstance(sfuda_n_strong_views, int), type(sfuda_n_strong_views)
+        assert sfuda_n_strong_views >= 0, sfuda_n_strong_views
+        self.sfuda_n_strong_views = sfuda_n_strong_views
+        self.sfuda_strong_transform = sfuda_strong_transform
+        if sfuda_n_strong_views > 0:
+            assert not sfuda_faust, 'FAUST views and strong views conflict.'
+            assert set_mode == constants.DS_TRAIN, set_mode
+            assert sfuda_strong_transform is not None
 
         # SFUDA, FAUST
         if sfuda_n_rnd_views > 0:
@@ -292,6 +360,12 @@ class WSOLImageLabelDataset(Dataset):
             assert self.sfuda_eval_transform is not None
             clean_img = self.get_clean_img(img_origin)  # c, h, w
             views = clean_img.unsqueeze(0)  # 1, c, h, w
+
+        elif self.sfuda_n_strong_views > 0:
+            # Litrico / UCon-SFDA: n strong views. n, c, h, w
+            views = torch.stack(
+                [self.sfuda_strong_transform(img_origin.copy())
+                 for _ in range(self.sfuda_n_strong_views)], dim=0)
 
         return image, image_label, im_pl, image_id, raw_img, std_cam, mask, \
                views, aug_images
@@ -564,7 +638,9 @@ def get_data_loader(data_roots,
                     sfuda_faust: bool = False,  # FAUST
                     sfuda_n_rnd_views: int = 0,  # FAUST
                     sfda_aug_transform=None,
-                    disable_train_augmentations: bool = False
+                    disable_train_augmentations: bool = False,
+                    sfuda_n_strong_views: int = 0,  # Litrico / UCon-SFDA
+                    sfuda_strong_aug: str = None  # Litrico / UCon-SFDA
                     ):
 
     def get_eval_tranforms():
@@ -737,7 +813,13 @@ def get_data_loader(data_roots,
                 False,
                 sfuda_n_rnd_views=get_sfuda_n_rnd_views(split),
                 sfuda_eval_transform=get_sfuda_eval_transform(split),
-                sfda_aug_transform=sfda_aug_transform if split == constants.TRAINSET else None
+                sfda_aug_transform=sfda_aug_transform if split == constants.TRAINSET else None,
+                sfuda_n_strong_views=(sfuda_n_strong_views
+                                      if split == constants.TRAINSET else 0),
+                sfuda_strong_transform=(
+                    get_sfuda_strong_transform(sfuda_strong_aug, crop_size)
+                    if (split == constants.TRAINSET and
+                        sfuda_n_strong_views > 0) else None)
             )
         for split in _SPLITS
     }

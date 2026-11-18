@@ -56,7 +56,18 @@ __all__ = [
     'UdaNANrc'
     
     #RGV
-    'RgvSemanticAlignmentLoss'
+    'RgvSemanticAlignmentLoss',
+
+    # Litrico et al. CVPR 2023
+    'LitricoClsLoss',
+    'LitricoContrastiveLoss',
+    'LitricoDiversityLoss',
+
+    # UCon-SFDA ICLR 2025
+    'UConPosLoss',
+    'UConNegLoss',
+    'UConDispersionControlLoss',
+    'UConPartialLabelLoss',
 
     ]
 
@@ -1249,3 +1260,231 @@ class RgvSemanticAlignmentLoss(ElementaryLoss):
 
         return self.lambda_ * loss_val
 
+
+
+# ==============================================================================
+#  Litrico et al., CVPR 2023. "Guiding Pseudo-labels with Uncertainty
+#  Estimation for Source-free Unsupervised Domain Adaptation".
+#  Port of the losses of the official `train_target.py`. Inputs are produced
+#  by `dlib.sf_uda.litrico.Litrico.step()`.
+# ==============================================================================
+
+class _SfudaKeyArgLoss(ElementaryLoss):
+    """Base for losses that only read `key_arg`."""
+    def _check(self, epoch, key_arg):
+        super(_SfudaKeyArgLoss, self).forward(epoch=epoch)
+        return self.is_on() and (key_arg is not None)
+
+
+class LitricoClsLoss(_SfudaKeyArgLoss):
+    """
+    Uncertainty-reweighted classification loss on the strong view with the
+    refined pseudo-labels of the weak view. Negative learning (default in the
+    official code) or standard CE.
+    """
+    def __init__(self, **kwargs):
+        super(LitricoClsLoss, self).__init__(**kwargs)
+        self.neg_learning = True
+        self.reweighting = True
+
+    def set_it(self, neg_learning: bool, reweighting: bool):
+        self.neg_learning = neg_learning
+        self.reweighting = reweighting
+
+    @staticmethod
+    def nl_criterion(output, y, n_cls):
+        output = torch.log(torch.clamp(1. - F.softmax(output, dim=1),
+                                       min=1e-5, max=1.))
+        rnd = torch.randint(1, n_cls, (len(y), 1), device=y.device)
+        labels_neg = ((y.unsqueeze(-1) + rnd) % n_cls).view(-1)
+        return F.nll_loss(output, labels_neg, reduction='none')
+
+    def forward(self, epoch=0, model=None, cams_inter=None, fcams=None,
+                cl_logits=None, seg_logits=None, glabel=None,
+                pseudo_glabel=None, masks=None, raw_img=None, x_in=None,
+                im_recon=None, seeds=None, cutmix_holder=None,
+                key_arg: dict = None):
+        if not self._check(epoch, key_arg):
+            return self._zero
+
+        logits_q = key_arg['logits_q'].float()
+        pl = key_arg['pseudo_labels_w']
+        w = key_arg['weights']
+        n_cls = logits_q.shape[1]
+
+        if self.neg_learning:
+            l = self.nl_criterion(logits_q, pl, n_cls)
+        else:
+            l = F.cross_entropy(logits_q, pl, reduction='none')
+
+        if self.reweighting:
+            l = w * l
+
+        return self.lambda_ * l.mean()
+
+
+class LitricoContrastiveLoss(_SfudaKeyArgLoss):
+    """
+    MoCo InfoNCE where negatives sharing a temporal pseudo-label with the
+    query are removed.
+    """
+    def forward(self, epoch=0, model=None, cams_inter=None, fcams=None,
+                cl_logits=None, seg_logits=None, glabel=None,
+                pseudo_glabel=None, masks=None, raw_img=None, x_in=None,
+                im_recon=None, seeds=None, cutmix_holder=None,
+                key_arg: dict = None):
+        if not self._check(epoch, key_arg):
+            return self._zero
+
+        logits_ins = key_arg['logits_ins'].float()
+        pseudo_labels = key_arg['mem_labels_query']  # b, T
+        mem_labels = key_arg['mem_labels_queue']  # K, T
+
+        labels_ins = torch.zeros(logits_ins.shape[0], dtype=torch.long,
+                                 device=logits_ins.device)
+        mask = torch.ones_like(logits_ins, dtype=torch.bool)
+        mask[:, 1:] = torch.all(
+            pseudo_labels.unsqueeze(1) != mem_labels.unsqueeze(0), dim=2)
+        logits_ins = torch.where(
+            mask, logits_ins,
+            torch.tensor(float('-inf'), device=logits_ins.device))
+
+        return self.lambda_ * F.cross_entropy(logits_ins, labels_ins)
+
+
+class LitricoDiversityLoss(_SfudaKeyArgLoss):
+    """div(logits_w) + div(logits_q): negative entropy of the mean
+    prediction."""
+    @staticmethod
+    def div(logits, epsilon=1e-8):
+        probs = F.softmax(logits.float(), dim=1)
+        probs_mean = probs.mean(dim=0)
+        return -torch.sum(-probs_mean * torch.log(probs_mean + epsilon))
+
+    def forward(self, epoch=0, model=None, cams_inter=None, fcams=None,
+                cl_logits=None, seg_logits=None, glabel=None,
+                pseudo_glabel=None, masks=None, raw_img=None, x_in=None,
+                im_recon=None, seeds=None, cutmix_holder=None,
+                key_arg: dict = None):
+        if not self._check(epoch, key_arg):
+            return self._zero
+
+        loss = self.div(key_arg['logits_w']) + self.div(key_arg['logits_q'])
+        return self.lambda_ * loss
+
+
+# ==============================================================================
+#  UCon-SFDA, ICLR 2025. "Revisiting Source-Free Domain Adaptation: a New
+#  Perspective via Uncertainty Control".
+#  Port of the losses of the official `train_target_UCon_SFDA.py`. Inputs are
+#  produced by `dlib.sf_uda.ucon.UCon.step()`.
+# ==============================================================================
+
+class UConPosLoss(_SfudaKeyArgLoss):
+    """CL-POS: consistency with the K nearest neighbors (score bank)."""
+    def forward(self, epoch=0, model=None, cams_inter=None, fcams=None,
+                cl_logits=None, seg_logits=None, glabel=None,
+                pseudo_glabel=None, masks=None, raw_img=None, x_in=None,
+                im_recon=None, seeds=None, cutmix_holder=None,
+                key_arg: dict = None):
+        if not self._check(epoch, key_arg):
+            return self._zero
+
+        softmax_out = key_arg['softmax_out'].float()
+        score_near = key_arg['score_near']  # b, K, C
+        k = score_near.shape[1]
+        softmax_out_un = softmax_out.unsqueeze(1).expand(-1, k, -1)
+        # same (non-standard) use of kl_div as the official code (AaD).
+        loss = torch.mean(
+            (F.kl_div(softmax_out_un, score_near,
+                      reduction='none').sum(-1)).sum(1))
+        return self.lambda_ * loss
+
+
+class UConNegLoss(_SfudaKeyArgLoss):
+    """CL-NEG: alpha * mean_i sum_{j != i} p_i . p_j (alpha decayed)."""
+    def forward(self, epoch=0, model=None, cams_inter=None, fcams=None,
+                cl_logits=None, seg_logits=None, glabel=None,
+                pseudo_glabel=None, masks=None, raw_img=None, x_in=None,
+                im_recon=None, seeds=None, cutmix_holder=None,
+                key_arg: dict = None):
+        if not self._check(epoch, key_arg):
+            return self._zero
+
+        softmax_out = key_arg['softmax_out'].float()
+        b = softmax_out.shape[0]
+        mask = 1. - torch.eye(b, device=softmax_out.device)
+        dot_neg = ((softmax_out @ softmax_out.T) * mask).sum(-1)
+        return self.lambda_ * torch.mean(dot_neg) * key_arg['alpha']
+
+
+class UConDispersionControlLoss(_SfudaKeyArgLoss):
+    """DC: CE between smoothed weak-view prediction (detached) and the
+    strong-view prediction."""
+    def __init__(self, **kwargs):
+        super(UConDispersionControlLoss, self).__init__(**kwargs)
+        self.temp = 1.0
+        self.smooth = 0.1
+
+    def set_it(self, temp: float, smooth: float = 0.1):
+        assert temp > 0, temp
+        self.temp = temp
+        self.smooth = smooth
+
+    def forward(self, epoch=0, model=None, cams_inter=None, fcams=None,
+                cl_logits=None, seg_logits=None, glabel=None,
+                pseudo_glabel=None, masks=None, raw_img=None, x_in=None,
+                im_recon=None, seeds=None, cutmix_holder=None,
+                key_arg: dict = None):
+        if not self._check(epoch, key_arg):
+            return self._zero
+
+        z_w = key_arg['outputs_test'].detach().float()
+        z_s = key_arg['outputs_strong'].float()
+        n_cls = z_w.shape[1]
+
+        targets = F.softmax(z_w / self.temp, dim=-1)
+        if self.smooth > 0:
+            targets = (1 - self.smooth) * targets + self.smooth / n_cls
+        loss = torch.sum(-targets * F.log_softmax(z_s, dim=1), 1).mean()
+        return self.lambda_ * loss
+
+
+class UConPartialLabelLoss(_SfudaKeyArgLoss):
+    """PL: partial-label loss (LW loss, pos part) over selected uncertain
+    samples."""
+    def __init__(self, **kwargs):
+        super(UConPartialLabelLoss, self).__init__(**kwargs)
+        self.smooth = 0.1
+
+    def forward(self, epoch=0, model=None, cams_inter=None, fcams=None,
+                cl_logits=None, seg_logits=None, glabel=None,
+                pseudo_glabel=None, masks=None, raw_img=None, x_in=None,
+                im_recon=None, seeds=None, cutmix_holder=None,
+                key_arg: dict = None):
+        if not self._check(epoch, key_arg):
+            return self._zero
+
+        sel = key_arg['selection_mask']
+        if sel.sum() == 0:
+            return self._zero
+
+        raw_outputs = key_arg['outputs_test'].float()
+        partial_Y = key_arg['partial_Y']
+        n_cls = raw_outputs.shape[1]
+
+        sm_outputs = F.softmax(raw_outputs, dim=1)
+        onezero = torch.zeros_like(sm_outputs)
+        onezero[partial_Y > 0] = 1
+        if self.smooth > 0:
+            onezero = (1 - self.smooth) * onezero + self.smooth / n_cls
+
+        selected_num = sel.sum()
+        mask = sel.unsqueeze(1).expand_as(onezero).float()
+
+        sig_loss1 = -torch.log(sm_outputs + 1e-8)
+        l1 = onezero * sig_loss1 * mask / onezero.sum(dim=-1, keepdim=True)
+        # official: neg_coef = 0 -> negative part dropped (it is 0/0 when all
+        # classes are in the partial set, e.g. binary tasks with k=2).
+        loss = torch.sum(l1) / selected_num
+        return self.lambda_ * loss

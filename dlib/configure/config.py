@@ -868,6 +868,61 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # ======================================================================
 
         # ======================================================================
+        #                             LITRICO
+        # ======================================================================
+        # "Guiding Pseudo-labels with Uncertainty Estimation for Source-free
+        # Unsupervised Domain Adaptation", CVPR 2023,
+        # https://arxiv.org/abs/2303.03770. Defaults = official code.
+        'litrico': False,  # ON/OFF.
+        'litrico_n_strong_views': 2,  # strong views (query, key). >= 2.
+        'litrico_num_neighbors': 10,  # k-NN for pseudo-label refinement.
+        'litrico_temporal_length': 5,  # temporal pseudo-label memory length.
+        'litrico_queue_size': 16384,  # MoCo queue size (min with N).
+        'litrico_moco_m': 0.999,  # momentum of key encoder.
+        'litrico_moco_t': 0.07,  # MoCo temperature.
+        'litrico_label_refinement': True,  # k-NN soft-voting refinement.
+        'litrico_neg_learning': True,  # negative learning (else CE).
+        'litrico_reweighting': True,  # uncertainty (entropy) reweighting.
+        'litrico_cls': True,  # classification loss. ON/OFF.
+        'litrico_cls_lambda': 1.0,
+        'litrico_ctr': True,  # temporal-filtered contrastive loss. ON/OFF.
+        'litrico_ctr_lambda': 1.0,
+        'litrico_div': True,  # diversity loss. ON/OFF.
+        'litrico_div_lambda': 1.0,
+        # ======================================================================
+        #                           END - LITRICO
+        # ======================================================================
+
+        # ======================================================================
+        #                             UCON-SFDA
+        # ======================================================================
+        # "Revisiting Source-Free Domain Adaptation: a New Perspective via
+        # Uncertainty Control", ICLR 2025. https://github.com/xugezheng/UCon_SFDA
+        # Defaults = official argparse defaults.
+        'ucon': False,  # ON/OFF.
+        'ucon_n_strong_views': 1,  # strong views for dispersion control.
+        'ucon_k': 5,  # kappa: number of nearest neighbors.
+        'ucon_alpha': 1.0,  # lambda_CL_neg (initial).
+        'ucon_beta': 5.0,  # decay power of alpha.
+        'ucon_alpha_decay': True,
+        'ucon_pos': True,  # CL-POS. ON/OFF.
+        'ucon_pos_lambda': 1.0,
+        'ucon_neg': True,  # CL-NEG. ON/OFF.
+        'ucon_neg_lambda': 1.0,  # extra multiplier (alpha is applied too).
+        'ucon_dc': True,  # dispersion control. ON/OFF.
+        'ucon_dc_lambda': 1.0,  # lambda_dc (fixed).
+        'ucon_dc_temp': 1.0,
+        'ucon_pl': True,  # partial-label loss. ON/OFF.
+        'ucon_pl_lambda': 1.0,  # lambda_pl.
+        'ucon_partial_k_type': 'fixed',  # 'fixed' or 'cal'.
+        'ucon_partial_k': 1,  # k_pl (if fixed).
+        'ucon_tau_type': 'fixed',  # 'fixed', 'stat' or 'cal'.
+        'ucon_tau': 10.0,  # tau: p_max / p_2nd < tau -> uncertain sample.
+        # ======================================================================
+        #                           END - UCON-SFDA
+        # ======================================================================
+
+        # ======================================================================
         #                               ERL
         # ======================================================================
 

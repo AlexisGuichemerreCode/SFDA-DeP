@@ -763,6 +763,71 @@ def get_loss_target(args):
             )
             semalg_loss.set_it(beta = args.betaS, lambdaS = args.lambdaS)
             masterloss.add(semalg_loss)
+
+        # LITRICO (CVPR 2023)
+        if args.litrico:
+            if args.litrico_cls:
+                litrico_cls = losses.LitricoClsLoss(
+                    cuda_id=args.c_cudaid,
+                    lambda_=args.litrico_cls_lambda,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag
+                )
+                litrico_cls.set_it(neg_learning=args.litrico_neg_learning,
+                                   reweighting=args.litrico_reweighting)
+                masterloss.add(litrico_cls)
+
+            if args.litrico_ctr:
+                masterloss.add(losses.LitricoContrastiveLoss(
+                    cuda_id=args.c_cudaid,
+                    lambda_=args.litrico_ctr_lambda,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag
+                ))
+
+            if args.litrico_div:
+                masterloss.add(losses.LitricoDiversityLoss(
+                    cuda_id=args.c_cudaid,
+                    lambda_=args.litrico_div_lambda,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag
+                ))
+
+        # UCON-SFDA (ICLR 2025)
+        if args.ucon:
+            if args.ucon_pos:
+                masterloss.add(losses.UConPosLoss(
+                    cuda_id=args.c_cudaid,
+                    lambda_=args.ucon_pos_lambda,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag
+                ))
+
+            if args.ucon_neg:
+                masterloss.add(losses.UConNegLoss(
+                    cuda_id=args.c_cudaid,
+                    lambda_=args.ucon_neg_lambda,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag
+                ))
+
+            if args.ucon_dc:
+                ucon_dc = losses.UConDispersionControlLoss(
+                    cuda_id=args.c_cudaid,
+                    lambda_=args.ucon_dc_lambda,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag
+                )
+                ucon_dc.set_it(temp=args.ucon_dc_temp, smooth=0.1)
+                masterloss.add(ucon_dc)
+
+            if args.ucon_pl:
+                masterloss.add(losses.UConPartialLabelLoss(
+                    cuda_id=args.c_cudaid,
+                    lambda_=args.ucon_pl_lambda,
+                    support_background=support_background,
+                    multi_label_flag=multi_label_flag
+                ))
                 
 
 
@@ -1791,8 +1856,8 @@ def get_model(args, eval=False, eval_path_weights=''):
             # set only alpha as learnable param
             model = adadsa.adadsa_freeze_all_model_except_bn_a(model)
 
-        elif args.sdda or args.nrc or args.rgv:
-            model.train()  # adapt/nrc full model.
+        elif args.sdda or args.nrc or args.rgv or args.litrico or args.ucon:
+            model.train()  # adapt/nrc/litrico/ucon full model.
         else:  # todo
             raise NotImplementedError('add more SFUDA methods.')
 

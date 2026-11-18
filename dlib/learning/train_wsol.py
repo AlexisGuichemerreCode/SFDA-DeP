@@ -62,6 +62,8 @@ from dlib.sf_uda import Faust
 from dlib.sf_uda import Sdda
 from dlib.sf_uda import adadsa
 from dlib.sf_uda import Nrc
+from dlib.sf_uda import Litrico
+from dlib.sf_uda import UCon
 from dlib.sf_uda import Sfde
 from dlib.sf_uda import Cdcl
 from dlib.sf_uda import Rgv
@@ -408,7 +410,9 @@ class Trainer(Basic):
             sfuda_faust=self.args.faust,
             sfuda_n_rnd_views=self._get_faust_n_views(),
             sfda_aug_transform=self.args.sfda_aug_transform,
-            disable_train_augmentations = self.args.disable_train_augmentations
+            disable_train_augmentations = self.args.disable_train_augmentations,
+            sfuda_n_strong_views=self._get_sfuda_n_strong_views(),
+            sfuda_strong_aug=self._get_sfuda_strong_aug()
             #chg_staining = self.chg_staining,
             #path_staining = self.path_staining,
             #dist_staining = self.dist_staining
@@ -754,6 +758,46 @@ class Trainer(Basic):
 
         return 0
 
+    def _get_sfuda_n_strong_views(self) -> int:
+        # Litrico (CVPR 2023) / UCon-SFDA (ICLR 2025): extra strong views.
+        if not self.args.sf_uda:
+            return 0
+        if self.args.litrico:
+            return self.args.litrico_n_strong_views
+        if self.args.ucon:
+            return self.args.ucon_n_strong_views
+        return 0
+
+    def _get_sfuda_strong_aug(self):
+        if not self.args.sf_uda:
+            return None
+        if self.args.litrico:
+            return constants.SFUDA_STRONG_AUG_LITRICO
+        if self.args.ucon:
+            return constants.SFUDA_STRONG_AUG_UCON
+        return None
+
+    def _get_sfuda_train_eval_loader(self):
+        # target trainset, eval transform, no shuffle.
+        loaders = get_data_loader(
+            data_roots=self.args.data_paths,
+            metadata_root=self.args.metadata_root,
+            batch_size=self.args.batch_size,
+            eval_batch_size=self.args.eval_batch_size,
+            workers=self.args.num_workers,
+            resize_size=self.args.resize_size,
+            crop_size=self.args.crop_size,
+            load_tr_masks=False,
+            mask_root='',
+            proxy_training_set=self.args.proxy_training_set,
+            num_val_sample_per_class=self.args.num_val_sample_per_class,
+            std_cams_folder=None,
+            get_splits_eval=[constants.TRAINSET],
+            sfuda_faust=False,
+            sfuda_n_rnd_views=0
+        )
+        return loaders[constants.TRAINSET]
+
     def build_sfuda_master(self, args):
 
         if not args.sf_uda:
@@ -976,6 +1020,27 @@ class Trainer(Basic):
             train_eval_loader = loaders[constants.TRAINSET]
             return Rgv(model_trg=self.model,
                     train_loader_trg=train_eval_loader,num_classes=self.args.num_classes, device = self.args.c_cudaid)
+
+        elif args.litrico:
+            return Litrico(args=self.args,
+                           model_trg=self.model,
+                           train_eval_loader=self._get_sfuda_train_eval_loader(),
+                           n_cls=self.args.num_classes,
+                           num_neighbors=self.args.litrico_num_neighbors,
+                           temporal_length=self.args.litrico_temporal_length,
+                           queue_size=self.args.litrico_queue_size,
+                           moco_m=self.args.litrico_moco_m,
+                           moco_t=self.args.litrico_moco_t
+                           )
+
+        elif args.ucon:
+            return UCon(args=self.args,
+                        model_trg=self.model,
+                        train_eval_loader=self._get_sfuda_train_eval_loader(),
+                        n_cls=self.args.num_classes,
+                        n_iters_per_epoch=len(self.loaders[constants.TRAINSET]),
+                        max_epochs=self.args.max_epochs
+                        )
         
         else:
             raise NotImplementedError('SFUDA: unspecified method.')
@@ -1383,6 +1448,35 @@ class Trainer(Basic):
 
                     logits = cl_logits
                     loss = self.loss(epoch=self.epoch, key_arg=faust_out)
+
+                elif args.litrico:
+                    key_arg = self.sfuda_master.step(images_w=images,
+                                                     views=views,
+                                                     image_ids=index,
+                                                     epoch=self.epoch)
+                    cl_logits = key_arg['logits_w']
+                    loss = self.loss(epoch=self.epoch,
+                                     model=self.model,
+                                     cl_logits=cl_logits,
+                                     glabel=y_global,
+                                     pseudo_glabel=y_pl_global,
+                                     key_arg=key_arg
+                                     )
+                    logits = cl_logits
+
+                elif args.ucon:
+                    key_arg = self.sfuda_master.step(images_w=images,
+                                                     views=views,
+                                                     image_ids=index)
+                    cl_logits = key_arg['outputs_test']
+                    loss = self.loss(epoch=self.epoch,
+                                     model=self.model,
+                                     cl_logits=cl_logits,
+                                     glabel=y_global,
+                                     pseudo_glabel=y_pl_global,
+                                     key_arg=key_arg
+                                     )
+                    logits = cl_logits
 
                 elif args.nrc:
                     output = self.model(images)
@@ -2027,7 +2121,7 @@ class Trainer(Basic):
         assert isinstance(mbatchsz, int)
         assert mbatchsz > 0
 
-        if _x.shape[0] == mbatchsz or self.args.nrc or self.args.esfda:
+        if _x.shape[0] == mbatchsz or self.args.nrc or self.args.esfda or self.args.litrico or self.args.ucon:
             return _x
 
         s = _x.shape[0]
@@ -2130,6 +2224,10 @@ class Trainer(Basic):
 
     def _sf_uda_before_epoch_process(self):
         assert self.args.sf_uda
+
+        if self.args.litrico or self.args.ucon:
+            # Litrico: rebuild k-NN bank. UCon: update tau.
+            self.sfuda_master.on_epoch_start()
 
 
         if self.args.rgv:
@@ -2489,7 +2587,7 @@ class Trainer(Basic):
             elif self.args.adadsa:
                 self.model = adadsa.adadsa_freeze_all_model_except_bn_a(
                     self.model)
-            elif self.args.nrc or self.args.rgv:
+            elif self.args.nrc or self.args.rgv or self.args.litrico or self.args.ucon:
                 pass
             else:  # todo
                 raise NotImplementedError('Add more SFUDA methods.')
@@ -6565,7 +6663,7 @@ class Trainer(Basic):
             aug_images = self._fill_minibatch(aug_images, mbatchsz)
             #index = self._fill_minibatch_list(index, mbatchsz)
 
-            if not (self.args.nrc or self.args.esfda):
+            if not (self.args.nrc or self.args.esfda or self.args.litrico or self.args.ucon):
                 index = self._fill_minibatch_list(index, mbatchsz)
 
             # Verify batch alignment

@@ -87,6 +87,13 @@ from dlib.losses.sf_uda import UdaErl
 from dlib.losses.sf_uda import UdaNLL
 
 from dlib.losses.sf_uda import RgvSemanticAlignmentLoss
+from dlib.losses.sf_uda import LitricoClsLoss
+from dlib.losses.sf_uda import LitricoContrastiveLoss
+from dlib.losses.sf_uda import LitricoDiversityLoss
+from dlib.losses.sf_uda import UConPosLoss
+from dlib.losses.sf_uda import UConNegLoss
+from dlib.losses.sf_uda import UConDispersionControlLoss
+from dlib.losses.sf_uda import UConPartialLabelLoss
 
 from dlib.losses.core import SatLoss
 

@@ -11,4 +11,5 @@ from dlib.sf_uda.nrc import Nrc
 from dlib.sf_uda.sfde import Sfde
 from dlib.sf_uda.cdcl import Cdcl
 from dlib.sf_uda.rgv import Rgv
-
+from dlib.sf_uda.litrico import Litrico
+from dlib.sf_uda.ucon import UCon

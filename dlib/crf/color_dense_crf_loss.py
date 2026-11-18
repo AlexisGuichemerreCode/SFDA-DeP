@@ -23,8 +23,18 @@ sys.path.append(
          "crf/crfwrapper/colorbilateralfilter/build/lib.linux-x86_64-3.7")
 )
 
-from colorbilateralfilter import colorbilateralfilter
-from colorbilateralfilter import colorbilateralfilter_batch
+# Optional compiled extension: only needed when the color CRF loss is used.
+try:
+    from colorbilateralfilter import colorbilateralfilter
+    from colorbilateralfilter import colorbilateralfilter_batch
+except ImportError:  # not installed: fail only if actually used.
+    def _missing_colorbilateralfilter(*args, **kwargs):
+        raise ImportError(
+            "colorbilateralfilter is not installed. It is only needed for "
+            "the color dense CRF loss. Build crf/crfwrapper/"
+            "colorbilateralfilter or disable this loss.")
+    colorbilateralfilter = _missing_colorbilateralfilter
+    colorbilateralfilter_batch = _missing_colorbilateralfilter
 
 
 __all__ = ['ColorDenseCRFLoss']
