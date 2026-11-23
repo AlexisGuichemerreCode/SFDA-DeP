@@ -505,6 +505,23 @@ def get_loss_target(args):
                     CEFlipLoss.set_it(lambda_=args.CEForget_lambda)
                     masterloss.add(CEFlipLoss)
 
+                redist = getattr(args, 'esfda_forget_redistribution', 'none')
+                if redist not in (None, 'none'):
+                    assert not (args.esfda_flip_labels or
+                                args.esfda_flip_labels_v2 or
+                                args.esfda_flip_labels_v3), (
+                        'esfda_forget_redistribution replaces the forget '
+                        'loss: set esfda_flip_labels/_v2/_v3 to False.')
+                    CERedistForget = losses.CERedistributionForgetLoss(
+                        cuda_id=args.c_cudaid,
+                        support_background=support_background,
+                        multi_label_flag=multi_label_flag)
+                    CERedistForget.set_it(
+                        lambda_=args.CEForget_lambda,
+                        mode=redist,
+                        alpha=float(getattr(args, 'esfda_forget_alpha', 0.5)))
+                    masterloss.add(CERedistForget)
+
                 if args.esfda_flip_labels_v4:
                     CEForgetEntropy = losses.CEForgetEntropyLoss(
                         cuda_id=args.c_cudaid,

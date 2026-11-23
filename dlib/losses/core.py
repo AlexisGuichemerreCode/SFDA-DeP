@@ -16,6 +16,7 @@ from dlib.losses.elb import ELB
 from dlib.losses.entropy import Entropy
 from dlib.losses.energy_marginal import Energy_Marginal
 from dlib.losses.unlearning_sfda import ForgetClassSuppressionLoss
+from dlib.losses.unlearning_sfda import redistribution_forget_loss
 from dlib import crf
 
 from dlib.div_classifiers.parts.spg import get_loss as get_spg_loss
@@ -55,6 +56,7 @@ __all__ = [
     'CEFlipLoss',
     'CEForgetLoss',
     'CEMaxForgetLoss',
+    'CERedistributionForgetLoss',
     'CEForgetEntropyLoss',
     'EntropyFcamsLoss',
 ]
@@ -480,6 +482,85 @@ class CEMaxForgetLoss(ElementaryLoss):
         # Maximize CE  (=> minimize log(p_c))
         # -----------------------------
         return - self.lambda_ * ce_loss
+
+
+class CERedistributionForgetLoss(ElementaryLoss):
+    """
+    Unlearning loss with explicit probability redistribution, applied only
+    to samples selected for forgetting (same mask / forgotten class d as
+    CEForgetLoss and CEMaxForgetLoss).
+
+    L = -sum_j q_j log p_j, with q_d = 0 and
+      'uniform': q_j = 1/(K-1)                                    (j != d)
+      'hybrid' : q_j = (1-alpha) p_j/(1-p_d) + alpha/(K-1)        (j != d)
+    q is a stop-gradient target. hybrid alpha=0 has the same gradient as
+    -log(1-p_d) (CEForgetLoss); hybrid alpha=1 == uniform.
+    """
+
+    def __init__(self, **kwargs):
+        super(CERedistributionForgetLoss, self).__init__(**kwargs)
+
+        self.lambda_: float = 1.0
+        self.mode: str = 'uniform'
+        self.alpha: float = 0.5
+        self.already_set = False
+
+    def set_it(self, lambda_: float, mode: str, alpha: float = 0.5):
+        assert isinstance(lambda_, float)
+        assert 0.0 <= lambda_ <= 1.0
+        assert mode in ('uniform', 'hybrid'), mode
+        assert isinstance(alpha, float)
+        assert 0.0 <= alpha <= 1.0, alpha
+
+        self.lambda_ = lambda_
+        self.mode = mode
+        self.alpha = alpha
+        self.already_set = True
+
+    def forward(self,
+                epoch=0,
+                model=None,
+                cams_inter=None,
+                fcams=None,
+                cl_logits=None,
+                seg_logits=None,
+                glabel=None,
+                pseudo_glabel=None,
+                masks=None,
+                raw_img=None,
+                x_in=None,
+                im_recon=None,
+                seeds=None,
+                cutmix_holder=None,
+                key_arg: dict = None
+                ):
+        super(CERedistributionForgetLoss, self).forward(epoch=epoch)
+        assert self.already_set
+
+        if not self.is_on():
+            return self._zero
+
+        assert cl_logits is not None
+        assert key_arg is not None
+        assert "cal_mask_forget" in key_arg
+        assert "forget_label_batch" in key_arg
+
+        forget_mask = torch.tensor(
+            key_arg["cal_mask_forget"],
+            dtype=torch.bool,
+            device=cl_logits.device
+        )
+
+        if forget_mask.sum() == 0:
+            return self._zero
+
+        logits_forget = cl_logits[forget_mask]                 # [Bf, K]
+        forget_class = key_arg["forget_label_batch"][forget_mask]
+
+        loss_vec = redistribution_forget_loss(
+            logits_forget, forget_class, mode=self.mode, alpha=self.alpha)
+
+        return self.lambda_ * loss_vec.mean()
 
 
 class CEForgetEntropyLoss(ElementaryLoss):

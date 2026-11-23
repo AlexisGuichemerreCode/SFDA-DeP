@@ -806,6 +806,9 @@ def get_args(args: dict, eval: bool = False):
     parser.add_argument('--esfda_flip_labels_v2', type=str2bool, default=None,)
     parser.add_argument('--esfda_flip_labels_v3', type=str2bool, default=None,)
     parser.add_argument('--esfda_flip_labels_v4', type=str2bool, default=None,)
+    parser.add_argument('--esfda_forget_redistribution', type=str, default=None,
+                        choices=['none', 'uniform', 'hybrid'])
+    parser.add_argument('--esfda_forget_alpha', type=float, default=None,)
 
     parser.add_argument('--CEForget_lambda', type=float, default=None,)
     parser.add_argument('--CEForget_entropy_lambda', type=float, default=None,)

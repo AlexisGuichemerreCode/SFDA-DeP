@@ -16,3 +16,7 @@ scripts/*
 metrics_separability/*
 metrics_domain_shift/*
 figures/*
+review.pdf
+
+/hp_search/
+/outputjobs/
