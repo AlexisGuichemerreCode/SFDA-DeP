@@ -1009,7 +1009,7 @@ def get_config(ds: str, fold: int, magnification: str) -> dict:
         # forget-loss probability redistribution: 'none' (off, default),
         # 'uniform' or 'hybrid'. independent loss on the forget samples;
         # do not combine with esfda_flip_labels / _v2 / _v3.
-        'esfda_forget_redistribution': 'none',
+        'esfda_forget_redistribution': 'none',  # or uniform_all / hybrid_all
         'esfda_forget_alpha': 0.5,  # hybrid only. in [0, 1].
         'CEForget_lambda': 0.1,  # lambda of this term. >= 0.
         'CEForget_entropy_lambda': 1.0,

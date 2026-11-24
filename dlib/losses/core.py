@@ -508,7 +508,7 @@ class CERedistributionForgetLoss(ElementaryLoss):
     def set_it(self, lambda_: float, mode: str, alpha: float = 0.5):
         assert isinstance(lambda_, float)
         assert 0.0 <= lambda_ <= 1.0
-        assert mode in ('uniform', 'hybrid'), mode
+        assert mode in ('uniform', 'hybrid', 'uniform_all', 'hybrid_all'), mode
         assert isinstance(alpha, float)
         assert 0.0 <= alpha <= 1.0, alpha
 
@@ -557,8 +557,14 @@ class CERedistributionForgetLoss(ElementaryLoss):
         logits_forget = cl_logits[forget_mask]                 # [Bf, K]
         forget_class = key_arg["forget_label_batch"][forget_mask]
 
+        forget_set = None
+        if self.mode.endswith('_all'):
+            assert "forget_class_set" in key_arg
+            forget_set = key_arg["forget_class_set"]
+
         loss_vec = redistribution_forget_loss(
-            logits_forget, forget_class, mode=self.mode, alpha=self.alpha)
+            logits_forget, forget_class, mode=self.mode, alpha=self.alpha,
+            forget_set=forget_set)
 
         return self.lambda_ * loss_vec.mean()
 

@@ -129,6 +129,32 @@ def test_loss_lowers_p_forgotten_class():
         assert p1 < p0, (k, mode, a, p0, p1)
 
 
+def test_all_modes_zero_on_whole_forget_set():
+    torch.manual_seed(0)
+    logits, d = torch.randn(16, 6), torch.randint(0, 6, (16,))
+    fset = [1, 4]
+    for mode, a in (('uniform_all', 1.0), ('hybrid_all', 0.0),
+                    ('hybrid_all', 0.5)):
+        q = redistribution_forget_target(logits, d, mode, a, fset)
+        assert torch.allclose(q.sum(1), torch.ones(16)), mode
+        assert torch.all(q.gather(1, d[:, None]) == 0), mode
+        assert torch.all(q[:, fset] == 0), mode
+    q = redistribution_forget_target(logits, d, 'uniform_all', 1.0, fset)
+    n_keep = 6 - torch.tensor([len({1, 4, int(x)}) for x in d])
+    assert torch.allclose(q.max(1).values, 1.0 / n_keep.float())
+
+
+def test_all_modes_reduce_to_per_image_and_fallback():
+    torch.manual_seed(0)
+    logits, d = torch.randn(16, 6), torch.randint(0, 6, (16,))
+    for mode, a in (('uniform', 1.0), ('hybrid', 0.3)):
+        ref = redistribution_forget_target(logits, d, mode, a)
+        for fset in ([], list(range(6))):    # F empty / F = all classes
+            q = redistribution_forget_target(logits, d, mode + '_all', a,
+                                             fset)
+            assert torch.allclose(q, ref), (mode, fset)
+
+
 if __name__ == '__main__':
     for name, fn in list(globals().items()):
         if name.startswith('test_') and callable(fn):

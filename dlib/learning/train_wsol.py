@@ -1854,6 +1854,11 @@ class Trainer(Basic):
                         key_arg["y_pred_batch"] = y_pred_batch
                     if forget_label_batch is not None:
                         key_arg["forget_label_batch"] = forget_label_batch
+                        # all classes forgotten over the forget set
+                        # (for esfda_forget_redistribution *_all).
+                        key_arg["forget_class_set"] = sorted(
+                            {int(self.forget_info[i]["pred_before"])
+                             for i in self.flipped_indices})
 
                     if self.args.esfda_flip_labels_weight:
                         if mask_entropy is not None:
