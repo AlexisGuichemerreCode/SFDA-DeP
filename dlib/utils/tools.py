@@ -415,15 +415,19 @@ def bye(args):
         os.makedirs(scratch_exp_fd, exist_ok=True)
         scratch_tmp = dirname(normpath(scratch_exp_fd))  # parent
         _tag = basename(normpath(args.outd))
+        # short archive name: '<_tag>.tar.gz' can exceed the 255-char
+        # filename limit with long exp_ids (tar: File name too long).
+        _arc = 'bye_{}_{}.tar.gz'.format(
+            os.environ.get('SLURM_JOB_ID', 'nojob'), os.getpid())
         cmdx = [
             "cd {} ".format(args.outd),
             "cd .. ",
-            "tar -cf {}.tar.gz {}".format(_tag, _tag),
-            'cp {}.tar.gz {}'.format(_tag, scratch_tmp),
+            "tar -cf {} {}".format(_arc, _tag),
+            'cp {} {}'.format(_arc, scratch_tmp),
             'cd {}'.format(scratch_tmp),
-            'tar -xf {}.tar.gz -C {} --strip-components=1'.format(
-                _tag, basename(normpath(scratch_exp_fd))),
-            "rm {}.tar.gz".format(_tag)
+            'tar -xf {} -C {} --strip-components=1'.format(
+                _arc, basename(normpath(scratch_exp_fd))),
+            "rm {}".format(_arc)
         ]
         cmdx = " && ".join(cmdx)
         print("Running bash-cmds: \n{}".format(cmdx.replace("&& ", "\n")))
